@@ -19,6 +19,8 @@ mod project;
 mod sample;
 mod stitch;
 mod sysmem;
+#[cfg(test)]
+mod testutil;
 
 use std::path::PathBuf;
 

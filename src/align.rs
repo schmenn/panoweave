@@ -508,3 +508,214 @@ pub fn straighten(rots: &mut [M3], use_mask: &[bool]) {
         *r = orthonormalize(&mm(r, &qt));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn m_dist(a: &M3, b: &M3) -> f64 {
+        (0..3).flat_map(|i| (0..3).map(move |j| (a[i][j] - b[i][j]).abs())).fold(0.0, f64::max)
+    }
+
+    /// Control points between cameras with known rotations (world -> camera), no noise.
+    fn synth_cps(rots: &[M3], lens: &Lens, pairs: &[(usize, usize)], per_pair: usize, seed: u64) -> Vec<ControlPoint> {
+        let mut rng = Rng(seed);
+        let mut cps = Vec::new();
+        for &(a, b) in pairs {
+            let mut n = 0;
+            let mut guard = 0;
+            while n < per_pair && guard < 100_000 {
+                guard += 1;
+                // random world direction around the middle between both cameras
+                let ca = mtv(&rots[a], [0.0, 0.0, 1.0]);
+                let cb = mtv(&rots[b], [0.0, 0.0, 1.0]);
+                let mid = normalize([ca[0] + cb[0], ca[1] + cb[1], ca[2] + cb[2]]);
+                let d = normalize([mid[0] + 0.4 * rng.gauss(), mid[1] + 0.3 * rng.gauss(), mid[2] + 0.4 * rng.gauss()]);
+                let (Some(pa), Some(pb)) = (project(lens, mv(&rots[a], d)), project(lens, mv(&rots[b], d))) else { continue };
+                let inside = |p: [f64; 2]| p[0].abs() < 0.5 && p[1].abs() < 0.375;
+                if inside(pa) && inside(pb) {
+                    cps.push(ControlPoint::new(a, b, pa, pb, false));
+                    n += 1;
+                }
+            }
+            assert_eq!(n, per_pair, "could not generate points");
+        }
+        cps
+    }
+
+    #[test]
+    fn lens_fov_roundtrip() {
+        for deg in [20.0, 53.0, 90.0, 120.0] {
+            let l = Lens::from_hfov_deg(deg);
+            assert!((l.hfov_deg() - deg).abs() < 1e-9);
+            assert_eq!(l.k1, 0.0);
+        }
+        // 90 degrees across the long side -> focal length is half the long side
+        assert!((Lens::from_hfov_deg(90.0).f - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ray_project_roundtrip() {
+        for k1 in [0.0, -0.05, 0.03] {
+            let lens = Lens { f: 0.8, k1, from_exif: true };
+            for p in [[0.0, 0.0], [0.3, 0.2], [-0.45, 0.1], [0.1, -0.35]] {
+                let r = ray(&lens, p);
+                assert!((norm(r) - 1.0).abs() < 1e-12);
+                let q = project(&lens, r).unwrap();
+                assert!((q[0] - p[0]).abs() < 1e-6 && (q[1] - p[1]).abs() < 1e-6, "k1 {k1} {p:?} -> {q:?}");
+            }
+        }
+        let lens = Lens::from_hfov_deg(60.0);
+        assert_eq!(ray(&lens, [0.0, 0.0]), [0.0, 0.0, 1.0]);
+        // behind the camera
+        assert!(project(&lens, [0.0, 0.0, -1.0]).is_none());
+    }
+
+    #[test]
+    fn control_point_defaults() {
+        let cp = ControlPoint::new(1, 2, [0.1, 0.2], [0.3, 0.4], true);
+        assert_eq!((cp.a, cp.b), (1, 2));
+        assert!(cp.manual);
+        assert_eq!(cp.weight, 1.0);
+        assert_eq!(cp.kind, CpKind::Point);
+        assert_eq!(cp.err, 0.0);
+    }
+
+    #[test]
+    fn components_group_connected_photos() {
+        let cps = vec![ControlPoint::new(0, 1, [0.0; 2], [0.0; 2], false), ControlPoint::new(2, 3, [0.0; 2], [0.0; 2], false)];
+        let c = components(5, &cps);
+        assert_eq!(c.len(), 5);
+        assert_eq!(c[0], c[1]);
+        assert_eq!(c[2], c[3]);
+        assert_ne!(c[0], c[2]);
+        assert_ne!(c[4], c[0]);
+        assert_ne!(c[4], c[2]);
+    }
+
+    #[test]
+    fn rotation_free_input_stays_identity() {
+        // identical coordinates in both photos: no rotation between them
+        let lens = Lens::from_hfov_deg(60.0);
+        let cps: Vec<ControlPoint> = (0..12)
+            .map(|i| {
+                let p = [-0.4 + 0.07 * i as f64, -0.3 + 0.05 * i as f64];
+                ControlPoint::new(0, 1, p, p, false)
+            })
+            .collect();
+        let lens_of = [0usize, 0];
+        let long = [1000.0, 1000.0];
+        let inp = AlignInput { n: 2, lens_of: &lens_of, long_side: &long };
+        let lenses = [lens];
+        let mut rots = initial_rotations(&inp, &lenses, &cps, 0);
+        assert!(m_dist(&rots[0], &IDENTITY) < 1e-9);
+        assert!(m_dist(&rots[1], &IDENTITY) < 1e-6);
+        let mut ls = lenses.to_vec();
+        let cost = optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions { focal: false, distortion: false, cauchy: false }, 10);
+        assert!(cost < 1e-12, "cost {cost}");
+        assert!(m_dist(&rots[1], &IDENTITY) < 1e-6);
+        assert_eq!(ls[0], lens);
+        assert!(total_cost(&rots, &lens_of, &ls, &cps) < 1e-12);
+        let mut cps = cps;
+        cp_errors(&inp, &rots, &ls, &mut cps);
+        assert!(cps.iter().all(|c| c.err < 1e-6));
+    }
+
+    #[test]
+    fn initial_rotations_recover_known_geometry() {
+        let lens = Lens::from_hfov_deg(50.0);
+        let truth = [camera_from_ypr(0.0, 0.0, 0.0), camera_from_ypr(0.35, 0.02, 0.0), camera_from_ypr(0.7, -0.03, 0.01)];
+        let cps = synth_cps(&truth, &lens, &[(0, 1), (1, 2)], 25, 11);
+        let lens_of = [0usize; 3];
+        let long = [1000.0; 3];
+        let inp = AlignInput { n: 3, lens_of: &lens_of, long_side: &long };
+        let rots = initial_rotations(&inp, &[lens], &cps, 0);
+        for i in 0..3 {
+            assert!(m_dist(&rots[i], &truth[i]) < 1e-6, "photo {i}");
+        }
+    }
+
+    #[test]
+    fn optimize_fixes_perturbed_rotations() {
+        let lens = Lens::from_hfov_deg(50.0);
+        let truth = [camera_from_ypr(0.0, 0.0, 0.0), camera_from_ypr(0.35, 0.02, 0.0), camera_from_ypr(0.7, -0.03, 0.01)];
+        let cps = synth_cps(&truth, &lens, &[(0, 1), (1, 2), (0, 2)], 20, 12);
+        let lens_of = [0usize; 3];
+        let long = [1000.0; 3];
+        let inp = AlignInput { n: 3, lens_of: &lens_of, long_side: &long };
+        let mut rots = vec![
+            truth[0],
+            mm(&truth[1], &rodrigues([0.03, -0.02, 0.01])),
+            mm(&truth[2], &rodrigues([-0.02, 0.04, -0.02])),
+        ];
+        let mut ls = vec![lens];
+        let before = total_cost(&rots, &lens_of, &ls, &cps);
+        let after = optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions { focal: false, distortion: false, cauchy: false }, 50);
+        assert!(after < before * 1e-3 + 1e-12, "before {before} after {after}");
+        for i in 0..3 {
+            assert!(m_dist(&rots[i], &truth[i]) < 1e-3, "photo {i}");
+        }
+    }
+
+    #[test]
+    fn optimize_estimates_focal_length() {
+        let lens = Lens::from_hfov_deg(50.0);
+        let truth = [camera_from_ypr(0.0, 0.0, 0.0), camera_from_ypr(0.35, 0.0, 0.0), camera_from_ypr(0.7, 0.0, 0.0)];
+        let cps = synth_cps(&truth, &lens, &[(0, 1), (1, 2), (0, 2)], 30, 13);
+        let lens_of = [0usize; 3];
+        let long = [1000.0; 3];
+        let inp = AlignInput { n: 3, lens_of: &lens_of, long_side: &long };
+        let mut ls = vec![Lens::from_hfov_deg(58.0)];
+        let mut rots = initial_rotations(&inp, &ls, &cps, 0);
+        optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions { focal: true, distortion: false, cauchy: false }, 80);
+        assert!((ls[0].f - lens.f).abs() / lens.f < 0.01, "f {} vs {}", ls[0].f, lens.f);
+    }
+
+    #[test]
+    fn guess_fov_picks_roughly_right_lens() {
+        let lens = Lens::from_hfov_deg(46.0);
+        let truth = [camera_from_ypr(0.0, 0.0, 0.0), camera_from_ypr(0.3, 0.0, 0.0), camera_from_ypr(0.6, 0.0, 0.0)];
+        let cps = synth_cps(&truth, &lens, &[(0, 1), (1, 2), (0, 2)], 25, 14);
+        let lens_of = [0usize; 3];
+        let long = [1000.0; 3];
+        let inp = AlignInput { n: 3, lens_of: &lens_of, long_side: &long };
+        let mut ls = vec![Lens::from_hfov_deg(100.0)];
+        guess_fov(&inp, &mut ls, &cps, 0);
+        assert!((ls[0].hfov_deg() - 46.0).abs() < 10.0, "got {}", ls[0].hfov_deg());
+        // lenses with photo information are left alone
+        let mut known = vec![Lens { from_exif: true, ..Lens::from_hfov_deg(100.0) }];
+        guess_fov(&inp, &mut known, &cps, 0);
+        assert!((known[0].hfov_deg() - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn straighten_leaves_level_panorama_alone() {
+        let rots0: Vec<M3> = [-0.3, 0.0, 0.3].iter().map(|&y| camera_from_ypr(y, 0.0, 0.0)).collect();
+        let mut rots = rots0.clone();
+        straighten(&mut rots, &[true, true, true]);
+        for i in 0..3 {
+            assert!(m_dist(&rots[i], &rots0[i]) < 1e-9);
+        }
+    }
+
+    #[test]
+    fn straighten_levels_a_tilted_panorama() {
+        let tilt = rodrigues([0.0, 0.0, 0.15]);
+        let mut rots: Vec<M3> = [-0.4, -0.2, 0.0, 0.2, 0.4].iter().map(|&y| mm(&camera_from_ypr(y, 0.0, 0.0), &tilt)).collect();
+        straighten(&mut rots, &[true; 5]);
+        for r in &rots {
+            // all rotations remain proper rotations ...
+            assert!(m_dist(&mm(r, &transpose(r)), &IDENTITY) < 1e-9);
+            // ... and the camera's "down" axis points down in the world again
+            assert!((r[1][1] - 1.0).abs() < 1e-6 && r[1][0].abs() < 1e-6 && r[1][2].abs() < 1e-6, "{r:?}");
+        }
+    }
+
+    #[test]
+    fn straighten_ignores_empty_selection() {
+        let mut rots = vec![camera_from_ypr(0.2, 0.1, 0.0)];
+        let copy = rots.clone();
+        straighten(&mut rots, &[false]);
+        assert_eq!(rots, copy);
+    }
+}

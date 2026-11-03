@@ -64,3 +64,29 @@ pub fn process() -> Option<(u64, u64)> {
 pub fn gb(b: u64) -> f64 {
     b as f64 / (1024.0 * 1024.0 * 1024.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gb_converts_bytes() {
+        assert_eq!(gb(0), 0.0);
+        assert_eq!(gb(1024 * 1024 * 1024), 1.0);
+        assert_eq!(gb(3 * 1024 * 1024 * 1024 / 2), 1.5);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn memory_info_is_plausible_on_windows() {
+        assert!(available().unwrap() > 0);
+        let (cur, peak) = process().unwrap();
+        assert!(cur > 0 && peak >= cur);
+    }
+
+    #[test]
+    fn memory_info_does_not_panic() {
+        let _ = available();
+        let _ = process();
+    }
+}

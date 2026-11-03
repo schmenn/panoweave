@@ -352,3 +352,153 @@ impl Rng {
         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: f64, b: f64, eps: f64) -> bool {
+        (a - b).abs() < eps
+    }
+    fn m_close(a: &M3, b: &M3, eps: f64) -> bool {
+        (0..3).all(|i| (0..3).all(|j| close(a[i][j], b[i][j], eps)))
+    }
+
+    #[test]
+    fn vector_basics() {
+        assert!(close(dot([1.0, 2.0, 3.0], [4.0, -5.0, 6.0]), 12.0, 1e-12));
+        assert_eq!(cross([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]), [0.0, 0.0, 1.0]);
+        assert!(close(norm([3.0, 4.0, 0.0]), 5.0, 1e-12));
+        assert!(close(norm(normalize([2.0, -3.0, 6.0])), 1.0, 1e-12));
+    }
+
+    #[test]
+    fn matrix_ops() {
+        let r = rodrigues([0.3, -0.2, 0.5]);
+        assert!(m_close(&mm(&r, &transpose(&r)), &IDENTITY, 1e-12));
+        let v = [0.4, 0.5, -0.7];
+        let back = mtv(&r, mv(&r, v));
+        assert!((0..3).all(|i| close(back[i], v[i], 1e-12)));
+        assert!(m_close(&mm(&IDENTITY, &r), &r, 1e-15));
+    }
+
+    #[test]
+    fn rodrigues_rotates_about_axis() {
+        // 90 degrees about z maps x to y (right-handed)
+        let r = rodrigues([0.0, 0.0, std::f64::consts::FRAC_PI_2]);
+        let v = mv(&r, [1.0, 0.0, 0.0]);
+        assert!(close(v[0], 0.0, 1e-12) && close(v[1], 1.0, 1e-12) && close(v[2], 0.0, 1e-12));
+        assert!(m_close(&rodrigues([0.0; 3]), &IDENTITY, 1e-15));
+    }
+
+    #[test]
+    fn ypr_roundtrip() {
+        for &(y, p, r) in &[(0.0, 0.0, 0.0), (0.7, 0.2, -0.1), (-2.0, 0.5, 0.3), (3.0, -0.9, 1.0)] {
+            let m = camera_from_ypr(y, p, r);
+            let (y2, p2, r2) = ypr_of(&m);
+            let m2 = camera_from_ypr(y2, p2, r2);
+            assert!(m_close(&m, &m2, 1e-9), "ypr {y} {p} {r}");
+        }
+        let (y, p, r) = ypr_of(&IDENTITY);
+        assert!(close(y, 0.0, 1e-12) && close(p, 0.0, 1e-12) && close(r, 0.0, 1e-12));
+    }
+
+    #[test]
+    fn orthonormalize_gives_rotation() {
+        let mut m = rodrigues([0.2, 0.4, -0.3]);
+        m[0][0] += 0.01;
+        m[1][2] -= 0.02;
+        let o = orthonormalize(&m);
+        assert!(m_close(&mm(&o, &transpose(&o)), &IDENTITY, 1e-12));
+        let z = cross(o[0], o[1]);
+        assert!((0..3).all(|i| close(z[i], o[2][i], 1e-12)));
+    }
+
+    #[test]
+    fn jacobi_diagonal_and_known_matrix() {
+        let (vals, _) = jacobi_eigen(&[vec![3.0, 0.0, 0.0], vec![0.0, 1.0, 0.0], vec![0.0, 0.0, 2.0]]);
+        let mut v = vals.clone();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(close(v[0], 1.0, 1e-12) && close(v[1], 2.0, 1e-12) && close(v[2], 3.0, 1e-12));
+        // [[2,1],[1,2]] has eigenvalues 1 and 3
+        let a = vec![vec![2.0, 1.0], vec![1.0, 2.0]];
+        let (vals, vecs) = jacobi_eigen(&a);
+        for k in 0..2 {
+            let col = [vecs[0][k], vecs[1][k]];
+            for i in 0..2 {
+                let av = a[i][0] * col[0] + a[i][1] * col[1];
+                assert!(close(av, vals[k] * col[i], 1e-9));
+            }
+        }
+        let mut v = vals;
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(close(v[0], 1.0, 1e-9) && close(v[1], 3.0, 1e-9));
+    }
+
+    #[test]
+    fn horn_recovers_rotation() {
+        let r = rodrigues([0.4, -0.3, 0.2]);
+        let mut rng = Rng(7);
+        let pairs: Vec<(V3, V3)> = (0..20)
+            .map(|_| {
+                let a = normalize([rng.gauss(), rng.gauss(), rng.gauss()]);
+                (a, mv(&r, a))
+            })
+            .collect();
+        let est = horn_rotation(&pairs);
+        assert!(m_close(&est, &r, 1e-6));
+    }
+
+    #[test]
+    fn solve_linear_system() {
+        // 2x + y = 5, x - y = 1  ->  x = 2, y = 1
+        let x = solve(vec![vec![2.0, 1.0], vec![1.0, -1.0]], vec![5.0, 1.0]).unwrap();
+        assert!(close(x[0], 2.0, 1e-12) && close(x[1], 1.0, 1e-12));
+        // needs pivoting
+        let x = solve(vec![vec![0.0, 1.0], vec![1.0, 0.0]], vec![3.0, 4.0]).unwrap();
+        assert!(close(x[0], 4.0, 1e-12) && close(x[1], 3.0, 1e-12));
+        // singular
+        assert!(solve(vec![vec![1.0, 2.0], vec![2.0, 4.0]], vec![1.0, 2.0]).is_none());
+    }
+
+    #[test]
+    fn homography_fit_and_apply() {
+        let h_true = [1.1, 0.05, 10.0, -0.03, 0.95, -4.0, 1e-4, -2e-4, 1.0];
+        let src: Vec<(f64, f64)> = vec![(0.0, 0.0), (100.0, 0.0), (100.0, 80.0), (0.0, 80.0), (50.0, 40.0), (20.0, 70.0)];
+        let dst: Vec<(f64, f64)> = src.iter().map(|&(x, y)| h_apply(&h_true, x, y)).collect();
+        let h = fit_homography(&src, &dst).unwrap();
+        for &(x, y) in &src {
+            let (ex, ey) = h_apply(&h_true, x, y);
+            let (gx, gy) = h_apply(&h, x, y);
+            assert!(close(ex, gx, 1e-6) && close(ey, gy, 1e-6));
+        }
+        assert!(fit_homography(&src[..3], &dst[..3]).is_none());
+    }
+
+    #[test]
+    fn matrix33_inverse_and_product() {
+        let m = [2.0, 0.0, 1.0, 0.0, 3.0, 0.0, 1.0, 0.0, 4.0];
+        let inv = inv33(&m).unwrap();
+        let p = mul33(&m, &inv);
+        let id = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        assert!((0..9).all(|i| close(p[i], id[i], 1e-12)));
+        assert!(inv33(&[1.0, 2.0, 3.0, 2.0, 4.0, 6.0, 0.0, 0.0, 1.0]).is_none());
+    }
+
+    #[test]
+    fn rng_is_deterministic_and_in_range() {
+        let mut a = Rng(42);
+        let mut b = Rng(42);
+        for _ in 0..50 {
+            assert_eq!(a.next_u64(), b.next_u64());
+        }
+        let mut r = Rng(5);
+        for _ in 0..1000 {
+            let u = r.unit();
+            assert!((0.0..1.0).contains(&u));
+            assert!(r.below(7) < 7);
+        }
+        let m = (0..4000).map(|_| r.gauss()).sum::<f64>() / 4000.0;
+        assert!(m.abs() < 0.1);
+    }
+}

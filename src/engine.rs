@@ -433,3 +433,206 @@ pub fn align_all(
     let max_err = cps.iter().map(|c| c.err).fold(0.0, f64::max);
     AlignResult { rots, lenses, cps, removed, ms: t0.elapsed().as_millis(), mean_err, max_err, fine: None, fields: Vec::new(), pairs: None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geometry::{mm, transpose};
+    use crate::testutil::{crop, texture};
+
+    #[test]
+    fn coordinates_are_normalised_by_long_side() {
+        // u = (x + 0.5 - w/2) / L, v = (y + 0.5 - h/2) / L, L = max(w, h)
+        let p = norm_coord(0.0, 0.0, 400, 300);
+        assert!((p[0] - (0.5 - 200.0) / 400.0).abs() < 1e-12);
+        assert!((p[1] - (0.5 - 150.0) / 400.0).abs() < 1e-12);
+        // the centre of the image is the origin
+        let c = norm_coord(199.5, 149.5, 400, 300);
+        assert!(c[0].abs() < 1e-12 && c[1].abs() < 1e-12);
+        // portrait: the long side is the height
+        let q = norm_coord(0.0, 0.0, 300, 400);
+        assert!((q[0] - (0.5 - 150.0) / 400.0).abs() < 1e-12);
+        // resolution independent: same relative position gives the same value
+        let a = norm_coord(99.5, 74.5, 200, 150);
+        let b = norm_coord(199.5, 149.5, 400, 300);
+        assert!((a[0] - b[0]).abs() < 1e-12 && (a[1] - b[1]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn denorm_inverts_norm() {
+        for &(x, y, w, h) in &[(0.0f32, 0.0f32, 400usize, 300usize), (123.0, 77.0, 400, 300), (50.0, 399.0, 300, 400)] {
+            let (bx, by) = denorm_coord(norm_coord(x, y, w, h), w, h);
+            assert!((bx - x).abs() < 1e-3 && (by - y).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn hfov_from_35mm_focal_length() {
+        let info = PhotoInfo { focal_35mm: Some(36.0), ..Default::default() };
+        // 36 mm sensor side with a 36 mm lens -> 2 * atan(0.5) = 53.13 degrees
+        assert!((exif_hfov(&info).unwrap() - 53.130102).abs() < 1e-4);
+        let wide = PhotoInfo { focal_35mm: Some(18.0), ..Default::default() };
+        assert!(exif_hfov(&wide).unwrap() > exif_hfov(&info).unwrap());
+        assert!(exif_hfov(&PhotoInfo::default()).is_none());
+    }
+
+    #[test]
+    fn match_settings_defaults() {
+        let s = MatchSettings::default();
+        assert_eq!(s.points_per_pair, 20);
+        assert!(s.points_per_photo >= s.points_per_pair);
+        assert!(s.ignore_sky);
+    }
+
+    fn empty_feats(n: usize) -> Vec<features::Features> {
+        (0..n).map(|_| features::Features { w: 10, h: 10, kps: vec![], desc: vec![] }).collect()
+    }
+
+    #[test]
+    fn few_photos_try_every_pair() {
+        assert!(candidate_pairs(&empty_feats(0)).is_empty());
+        assert!(candidate_pairs(&empty_feats(1)).is_empty());
+        assert_eq!(candidate_pairs(&empty_feats(2)), vec![(0, 1)]);
+        let p = candidate_pairs(&empty_feats(5));
+        assert_eq!(p.len(), 10);
+        assert!(p.iter().all(|&(i, j)| i < j));
+        let at_limit = candidate_pairs(&empty_feats(ALL_PAIRS_LIMIT));
+        assert_eq!(at_limit.len(), ALL_PAIRS_LIMIT * (ALL_PAIRS_LIMIT - 1) / 2);
+    }
+
+    #[test]
+    fn many_photos_keep_neighbours() {
+        let n = ALL_PAIRS_LIMIT + 5;
+        let p = candidate_pairs(&empty_feats(n));
+        assert!(p.len() < n * (n - 1) / 2);
+        for i in 0..n - 1 {
+            assert!(p.contains(&(i, i + 1)), "neighbour {i}");
+        }
+        assert!(p.iter().all(|&(i, j)| i < j && j < n));
+    }
+
+    fn err_cp(a: usize, b: usize, err: f64, manual: bool) -> ControlPoint {
+        let mut c = ControlPoint::new(a, b, [0.0; 2], [0.0; 2], manual);
+        c.err = err;
+        c
+    }
+
+    #[test]
+    fn outliers_are_flagged_per_pair() {
+        let mut cps: Vec<ControlPoint> = (0..10).map(|_| err_cp(0, 1, 1.0, false)).collect();
+        cps.push(err_cp(0, 1, 50.0, false));
+        let rm = statistical_outliers(&cps);
+        assert!(rm[10]);
+        assert!(rm[..10].iter().all(|r| !r));
+    }
+
+    #[test]
+    fn manual_points_are_never_removed() {
+        let mut cps: Vec<ControlPoint> = (0..10).map(|_| err_cp(0, 1, 1.0, false)).collect();
+        cps.push(err_cp(0, 1, 50.0, true));
+        assert!(statistical_outliers(&cps).iter().all(|r| !r));
+    }
+
+    #[test]
+    fn small_pairs_keep_at_least_three_points() {
+        let mut cps: Vec<ControlPoint> = (0..30).map(|_| err_cp(1, 2, 1.0, false)).collect();
+        cps.extend([err_cp(0, 1, 1.0, false), err_cp(0, 1, 1.0, false), err_cp(0, 1, 100.0, false)]);
+        let rm = statistical_outliers(&cps);
+        let kept = (30..33).filter(|&k| !rm[k]).count();
+        assert!(kept >= 3);
+    }
+
+    #[test]
+    fn equal_errors_remove_nothing() {
+        let cps: Vec<ControlPoint> = (0..8).map(|_| err_cp(0, 1, 2.0, false)).collect();
+        assert!(statistical_outliers(&cps).iter().all(|r| !r));
+        assert!(statistical_outliers(&[]).is_empty());
+    }
+
+    #[test]
+    fn mean_sd_values() {
+        assert_eq!(mean_sd(&[]), (0.0, 0.0));
+        let (m, sd) = mean_sd(&[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]);
+        assert!((m - 5.0).abs() < 1e-12 && (sd - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn align_without_points_does_not_panic() {
+        let lens = Lens { f: 1.0, k1: 0.0, from_exif: true };
+        let r = align_all(&[0, 0], &[lens], &[100.0, 100.0], &[], &AlignSettings::default(), &|_, _| {});
+        assert_eq!(r.rots.len(), 2);
+        assert_eq!(r.mean_err, 0.0);
+        assert_eq!(r.removed, 0);
+    }
+
+    #[test]
+    fn rotation_free_points_align_to_identity() {
+        let lens = Lens::from_hfov_deg(60.0);
+        let cps: Vec<ControlPoint> = (0..15)
+            .map(|i| {
+                let p = [-0.4 + 0.05 * i as f64, 0.2 - 0.025 * i as f64];
+                ControlPoint::new(0, 1, p, p, false)
+            })
+            .collect();
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false };
+        let lens = Lens { from_exif: true, ..lens };
+        let r = align_all(&[0, 0], &[lens], &[1000.0, 1000.0], &cps, &s, &|_, _| {});
+        for i in 0..2 {
+            for a in 0..3 {
+                for b in 0..3 {
+                    let id = if a == b { 1.0 } else { 0.0 };
+                    assert!((r.rots[i][a][b] - id).abs() < 1e-6);
+                }
+            }
+        }
+        assert!(r.max_err < 1e-4, "max_err {}", r.max_err);
+    }
+
+    fn rotation_angle(a: &M3, b: &M3) -> f64 {
+        let r = mm(a, &transpose(b));
+        let tr = r[0][0] + r[1][1] + r[2][2];
+        ((tr - 1.0) / 2.0).clamp(-1.0, 1.0).acos()
+    }
+
+    /// End to end: cut a synthetic texture into three overlapping views with a known shift,
+    /// find the points, align and compare with the truth.
+    #[test]
+    fn end_to_end_three_overlapping_crops() {
+        let big = texture(520, 260, 77);
+        // 320 x 260 views, shifted by 100 px each
+        let views: Vec<RgbImage> = (0..3).map(|i| crop(&big, i * 100, 0, 320, 260)).collect();
+        let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
+        let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
+
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false }, &|_, _| {});
+        assert!(mr.keypoints > 100);
+        assert!(mr.pairs.iter().any(|p| (p.a, p.b) == (0, 1)), "pairs {:?}", mr.pairs.iter().map(|p| (p.a, p.b, p.points)).collect::<Vec<_>>());
+        assert!(mr.pairs.iter().any(|p| (p.a, p.b) == (1, 2)));
+        // every found point must agree with the true shift: x_b = x_a - 100 * (b - a)
+        let mut bad = 0;
+        for cp in &mr.cps {
+            let (ax, ay) = denorm_coord(cp.pa, 320, 260);
+            let (bx, by) = denorm_coord(cp.pb, 320, 260);
+            let dx = 100.0 * (cp.b as f32 - cp.a as f32);
+            if (bx - (ax - dx)).abs() > 2.0 || (by - ay).abs() > 2.0 {
+                bad += 1;
+            }
+        }
+        assert!(!mr.cps.is_empty());
+        assert!(bad * 20 <= mr.cps.len(), "{bad} of {} points off the true shift", mr.cps.len());
+
+        let lens_of = [0usize; 3];
+        let long = [320.0; 3];
+        let lens = Lens::from_hfov_deg(50.0);
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false };
+        let r = align_all(&lens_of, &[lens], &long, &mr.cps, &s, &|_, _| {});
+        assert!(r.mean_err < 2.0, "mean error {} px", r.mean_err);
+        // equal shifts mean equal rotations between neighbours, and about twice that between 0 and 2
+        let a01 = rotation_angle(&r.rots[0], &r.rots[1]);
+        let a12 = rotation_angle(&r.rots[1], &r.rots[2]);
+        let a02 = rotation_angle(&r.rots[0], &r.rots[2]);
+        assert!(a01 > 0.05 && a12 > 0.05);
+        assert!((a01 - a12).abs() < 0.25 * a01.max(a12), "{a01} vs {a12}");
+        assert!((a02 - (a01 + a12)).abs() < 0.15 * a02, "{a02} vs {}", a01 + a12);
+    }
+}
