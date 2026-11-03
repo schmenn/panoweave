@@ -4,6 +4,16 @@ A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitiv
 
 > Status: early development (v0.1.0). Windows is the primary target; nothing is published as a release yet.
 
+## Screenshots
+
+| Photos and lenses | Control points |
+|---|---|
+| ![Photos step](docs/photos.png) | ![Points step](docs/points.png) |
+
+| Alignment result and pair check | Export |
+|---|---|
+| ![Align step](docs/align.png) | ![Export step](docs/export.png) |
+
 ## Features
 
 - **Guided workflow** with five steps: Photos, Points, Align, Frame, Export
@@ -14,7 +24,7 @@ A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitiv
 - **Alignment:** rotation model with shared lenses and Levenberg-Marquardt bundle adjustment
 - **Patch matching refinement:** ZNCC/SSD/SAD matching on a pyramid with weighted rounds that are rolled back if they make things worse, plus a parallax mode
 - **Pair check and connection graph:** weak pairs and unconnected photo groups are reported instead of hidden
-- **Export:** multi-band blending, gain compensation, and a seam preference for the sharpest photo
+- **Export:** multi-band blending, gain compensation, and a seam preference for the sharpest photo; optional target width in pixels and 16-bit TIFF; a cancelled export never leaves a half-written file
 - **Exposure fusion** (Mertens) for bracketed exposures
 - **Cancel button** that stops long steps within about a second
 
@@ -74,7 +84,17 @@ cargo test
 ## Known limitations
 
 - Photos with no overlap to the rest are not connected automatically. Use the manual point editor.
-- `src/app.rs` is large and is planned to be split into one module per step.
+- `src/app/mod.rs` and `src/app/points.rs` are still large (about 1000 lines each) and are planned to be split further.
+- A running export cannot be interrupted while the encoder is writing; a cancel takes effect afterwards and the file is discarded.
+
+## License
+
+Licensed under either of
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT license](LICENSE-MIT)
+
+at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project shall be dual licensed as above, without any additional terms or conditions.
 
 ## Acknowledgements
 
