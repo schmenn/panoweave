@@ -3,3 +3,4 @@
 *.running-old*.exe
 /testdata/
 /local/
+/.claude/
