@@ -676,3 +676,165 @@ pub fn remove_masked(f: &mut Features, mask: &SkyMask) -> usize {
     });
     before - f.kps.len()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::imgutil::to_gray;
+    use crate::testutil::{solid, texture};
+
+    fn corr(x: f32, y: f32, dist: u32) -> Corr {
+        Corr { ax: x, ay: y, bx: x, by: y, dist }
+    }
+
+    #[test]
+    fn hamming_counts_differing_bits() {
+        let a = [0u64, 0, 0, 0];
+        assert_eq!(hamming(&a, &a), 0);
+        assert_eq!(hamming(&a, &[1, 0, 0, 0]), 1);
+        assert_eq!(hamming(&[u64::MAX; 4], &a), 256);
+        assert_eq!(hamming(&[0b1010, 0, 0, 1 << 63], &[0b0110, 0, 0, 0]), 3);
+    }
+
+    #[test]
+    fn plain_surface_has_no_keypoints() {
+        let g = to_gray(&solid(160, 120, [90, 90, 90]));
+        let f = detect(&g, 500);
+        assert!(f.kps.is_empty());
+        assert_eq!(f.kps.len(), f.desc.len());
+    }
+
+    #[test]
+    fn texture_gives_consistent_keypoints() {
+        let g = to_gray(&texture(240, 180, 21));
+        let f = detect(&g, 300);
+        assert!(f.kps.len() >= 20, "only {} keypoints", f.kps.len());
+        assert!(f.kps.len() <= 300);
+        assert_eq!(f.kps.len(), f.desc.len());
+        assert_eq!((f.w, f.h), (240, 180));
+        assert!(f.kps.iter().all(|k| k.x >= 0.0 && k.y >= 0.0 && k.x < 240.0 && k.y < 180.0 && k.scale > 0.0));
+    }
+
+    #[test]
+    fn detection_is_deterministic() {
+        let g = to_gray(&texture(200, 150, 22));
+        let a = detect(&g, 200);
+        let b = detect(&g, 200);
+        assert_eq!(a.kps.len(), b.kps.len());
+        assert_eq!(a.desc, b.desc);
+    }
+
+    #[test]
+    fn identical_images_match_themselves() {
+        let g = to_gray(&texture(240, 180, 23));
+        let f = detect(&g, 300);
+        let m = match_descriptors(&f, &f, 0.9);
+        assert!(m.len() >= f.kps.len() / 2, "{} of {}", m.len(), f.kps.len());
+        assert!(m.iter().all(|&(i, j, d)| i == j && d == 0));
+    }
+
+    #[test]
+    fn match_pair_finds_known_translation() {
+        let big = texture(360, 200, 24);
+        let a = crate::testutil::crop(&big, 0, 0, 260, 200);
+        let b = crate::testutil::crop(&big, 60, 0, 260, 200);
+        let fa = detect(&to_gray(&a), 600);
+        let fb = detect(&to_gray(&b), 600);
+        let pm = match_pair(&fa, &fb, 100, 1).expect("pair should match");
+        // point (x, y) in a is at (x - 60, y) in b
+        let (x, y) = h_apply(&pm.h, 150.0, 100.0);
+        assert!((x - 90.0).abs() < 2.0 && (y - 100.0).abs() < 2.0, "({x}, {y})");
+        assert!(pm.corrs.len() >= 12 && pm.corrs.len() <= 100);
+        let good = pm.corrs.iter().filter(|c| ((c.bx - (c.ax - 60.0)).powi(2) + (c.by - c.ay).powi(2)).sqrt() < 3.0).count();
+        assert!(good as f32 >= 0.9 * pm.corrs.len() as f32, "{good} of {}", pm.corrs.len());
+    }
+
+    #[test]
+    fn unrelated_images_do_not_match() {
+        let fa = detect(&to_gray(&texture(240, 180, 31)), 300);
+        let fb = detect(&to_gray(&texture(240, 180, 32)), 300);
+        assert!(match_pair(&fa, &fb, 100, 1).is_none());
+    }
+
+    #[test]
+    fn thin_limits_and_spreads_points() {
+        let few = vec![corr(1.0, 1.0, 5), corr(2.0, 2.0, 5)];
+        assert_eq!(thin(few, 100, 100, 10).len(), 2);
+        // 100 points crowded in one corner and 4 in the others: all corners must stay represented
+        let mut many: Vec<Corr> = (0..100).map(|i| corr(1.0 + (i % 10) as f32 * 0.1, 1.0 + (i / 10) as f32 * 0.1, 1)).collect();
+        many.extend([corr(95.0, 5.0, 50), corr(5.0, 95.0, 50), corr(95.0, 95.0, 50), corr(50.0, 50.0, 50)]);
+        let t = thin(many, 100, 100, 8);
+        assert_eq!(t.len(), 8);
+        assert!(t.iter().any(|c| c.ax > 90.0 && c.ay > 90.0));
+        assert!(t.iter().any(|c| c.ax > 90.0 && c.ay < 10.0));
+    }
+
+    #[test]
+    fn blue_sky_is_detected_as_sky() {
+        let img = solid(192, 128, [90, 140, 220]);
+        let m = sky_mask(&img, &to_gray(&img));
+        assert!(m.fraction() > 0.95, "fraction {}", m.fraction());
+        assert!(m.contains(10.0, 10.0));
+        assert!(m.contains(190.0, 126.0));
+        // outside the picture
+        assert!(!m.contains(-1.0, 5.0));
+        assert!(!m.contains(5.0, -1.0));
+        assert!(!m.contains(1e6, 5.0));
+    }
+
+    #[test]
+    fn grey_cloud_is_detected_as_sky() {
+        let img = solid(192, 128, [200, 200, 205]);
+        let m = sky_mask(&img, &to_gray(&img));
+        assert!(m.fraction() > 0.95);
+    }
+
+    #[test]
+    fn textured_ground_is_not_sky() {
+        let img = texture(192, 128, 41);
+        let m = sky_mask(&img, &to_gray(&img));
+        assert!(m.fraction() < 0.1, "fraction {}", m.fraction());
+    }
+
+    #[test]
+    fn dark_surface_is_not_sky() {
+        let img = solid(192, 128, [30, 25, 20]);
+        let m = sky_mask(&img, &to_gray(&img));
+        assert_eq!(m.fraction(), 0.0);
+    }
+
+    #[test]
+    fn sky_below_the_ground_is_not_connected() {
+        // top half: textured ground, bottom half: blue. Sky must touch the top edge, so none is found.
+        let mut img = texture(192, 128, 42);
+        for y in 64..128 {
+            for x in 0..192 {
+                img.put_pixel(x, y, image::Rgb([90, 140, 220]));
+            }
+        }
+        let m = sky_mask(&img, &to_gray(&img));
+        assert!(m.fraction() < 0.1);
+    }
+
+    #[test]
+    fn remove_masked_drops_points_in_sky_only() {
+        let kp = |x: f32, y: f32| Keypoint { x, y, score: 1.0, scale: 1.0 };
+        let mut f = Features { w: 100, h: 100, kps: vec![kp(10.0, 10.0), kp(60.0, 60.0)], desc: vec![[1; 4], [2; 4]] };
+        // grid of 10 x 10 cells of 10 px; the top-left quarter is sky
+        let mut sky = vec![false; 100];
+        for y in 0..5 {
+            for x in 0..5 {
+                sky[y * 10 + x] = true;
+            }
+        }
+        let mask = SkyMask { cell: 10.0, gw: 10, gh: 10, sky };
+        let removed = remove_masked(&mut f, &mask);
+        assert_eq!(removed, 1);
+        assert_eq!(f.kps.len(), 1);
+        assert_eq!(f.desc, vec![[2; 4]]);
+        assert_eq!(f.kps[0].x, 60.0);
+        // nothing masked, nothing removed
+        let none = SkyMask { cell: 10.0, gw: 10, gh: 10, sky: vec![false; 100] };
+        assert_eq!(remove_masked(&mut f, &none), 0);
+    }
+}

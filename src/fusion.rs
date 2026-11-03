@@ -245,3 +245,110 @@ pub fn fuse(images: &[RgbImage], fw: &FusionWeights) -> RgbImage {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{solid, texture};
+
+    #[test]
+    fn default_weights_are_one() {
+        let w = FusionWeights::default();
+        assert_eq!((w.contrast, w.saturation, w.exposure), (1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn empty_stack_gives_placeholder() {
+        let out = fuse(&[], &FusionWeights::default());
+        assert_eq!(out.dimensions(), (1, 1));
+    }
+
+    #[test]
+    fn weights_are_positive_and_finite() {
+        let img = texture(40, 30, 4);
+        let px = to_f32(&img);
+        let wm = weight_map(&px, 40, 30, &FusionWeights::default());
+        assert_eq!(wm.len(), 40 * 30);
+        assert!(wm.iter().all(|v| v.is_finite() && *v > 0.0));
+    }
+
+    #[test]
+    fn well_exposed_pixels_weigh_more_than_clipped() {
+        let mid = to_f32(&solid(8, 8, [128, 128, 128]));
+        let white = to_f32(&solid(8, 8, [255, 255, 255]));
+        let fw = FusionWeights::default();
+        let wm = weight_map(&mid, 8, 8, &fw)[27];
+        let ww = weight_map(&white, 8, 8, &fw)[27];
+        assert!(wm > ww * 100.0);
+        // switching the exposure term off (power 0) makes them equal
+        let off = FusionWeights { exposure: 0.0, ..fw };
+        let a = weight_map(&mid, 8, 8, &off)[27];
+        let b = weight_map(&white, 8, 8, &off)[27];
+        assert!((a - b).abs() < 1e-6);
+    }
+
+    #[test]
+    fn single_image_is_reproduced() {
+        let img = texture(64, 48, 5);
+        let out = fuse(std::slice::from_ref(&img), &FusionWeights::default());
+        assert_eq!(out.dimensions(), (64, 48));
+        let max_diff = img.as_raw().iter().zip(out.as_raw()).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+        assert!(max_diff <= 2, "max diff {max_diff}");
+    }
+
+    #[test]
+    fn identical_images_fuse_to_themselves() {
+        let img = texture(64, 48, 6);
+        let out = fuse(&[img.clone(), img.clone(), img.clone()], &FusionWeights::default());
+        let max_diff = img.as_raw().iter().zip(out.as_raw()).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+        assert!(max_diff <= 2, "max diff {max_diff}");
+    }
+
+    #[test]
+    fn fusion_stays_between_inputs_and_prefers_good_exposure() {
+        // dark, middle and bright flat grey: the well-exposed one must dominate
+        let stack = [solid(32, 32, [20, 20, 20]), solid(32, 32, [128, 128, 128]), solid(32, 32, [245, 245, 245])];
+        let out = fuse(&stack, &FusionWeights::default());
+        let v = out.get_pixel(16, 16)[0] as i32;
+        assert!((v - 128).abs() < 25, "got {v}");
+        assert!(out.pixels().all(|p| p[0] >= 15 && p[0] <= 250));
+    }
+
+    #[test]
+    fn different_sizes_are_resized_to_first() {
+        let a = texture(48, 32, 7);
+        let b = texture(24, 16, 8);
+        let out = fuse(&[a, b], &FusionWeights::default());
+        assert_eq!(out.dimensions(), (48, 32));
+    }
+
+    #[test]
+    fn pyramid_down_up_sizes_and_constants() {
+        let src = vec![[0.5f32, 0.5, 0.5, 1.0]; 9 * 7];
+        let (d, dw, dh) = down(&src, 9, 7);
+        assert_eq!((dw, dh), (5, 4));
+        assert!(d.iter().all(|p| (p[0] - 0.5).abs() < 1e-5));
+        let u = up(&d, dw, dh, 9, 7);
+        assert_eq!(u.len(), 63);
+        assert!(u.iter().all(|p| (p[0] - 0.5).abs() < 1e-5));
+    }
+
+    #[test]
+    fn warp_with_identity_keeps_image() {
+        let img = texture(30, 20, 9);
+        let id = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let out = warp(&img, &id, 30, 20);
+        assert_eq!(out.as_raw(), img.as_raw());
+    }
+
+    #[test]
+    fn warp_translation_shifts_content() {
+        let img = texture(40, 20, 10);
+        // reference pixel x samples source pixel x + 5
+        let h = [1.0, 0.0, 5.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let out = warp(&img, &h, 30, 20);
+        for x in 0..30 {
+            assert_eq!(out.get_pixel(x, 7), img.get_pixel(x + 5, 7));
+        }
+    }
+}

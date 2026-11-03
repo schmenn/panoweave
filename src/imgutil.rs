@@ -297,3 +297,153 @@ pub fn put(img: &mut RgbImage, x: u32, y: u32, c: [f32; 3]) {
         ]),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{solid, texture};
+    use std::path::Path;
+
+    #[test]
+    fn to_gray_weights() {
+        let g = to_gray(&solid(4, 3, [255, 255, 255]));
+        assert_eq!((g.w, g.h), (4, 3));
+        assert!(g.data.iter().all(|v| (v - 1.0).abs() < 1e-5));
+        let g = to_gray(&solid(2, 2, [0, 0, 0]));
+        assert!(g.data.iter().all(|v| *v == 0.0));
+        let g = to_gray(&solid(1, 1, [255, 0, 0]));
+        assert!((g.data[0] - 0.299).abs() < 1e-5);
+    }
+
+    #[test]
+    fn gray_access_and_clamping() {
+        let mut g = Gray::new(3, 2);
+        g.data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        assert_eq!(g.at(2, 1), 5.0);
+        assert_eq!(g.at_clamped(-5, -5), 0.0);
+        assert_eq!(g.at_clamped(10, 10), 5.0);
+        assert_eq!(g.at_clamped(1, 5), 4.0);
+    }
+
+    #[test]
+    fn gray_bilinear_sample() {
+        let mut g = Gray::new(2, 1);
+        g.data = vec![0.0, 1.0];
+        assert!((g.sample(0.0, 0.0) - 0.0).abs() < 1e-6);
+        assert!((g.sample(1.0, 0.0) - 1.0).abs() < 1e-6);
+        assert!((g.sample(0.5, 0.0) - 0.5).abs() < 1e-6);
+        // clamped outside
+        assert!((g.sample(-3.0, 0.0) - 0.0).abs() < 1e-6);
+        assert!((g.sample(7.0, 0.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn blur_keeps_constant_and_smooths() {
+        let mut g = Gray::new(20, 20);
+        g.data.iter_mut().for_each(|v| *v = 0.4);
+        let b = blur(&g, 2.0);
+        assert!(b.data.iter().all(|v| (v - 0.4).abs() < 1e-4));
+        // a single bright pixel is spread out but the sum stays about the same
+        let mut g = Gray::new(21, 21);
+        g.data[10 * 21 + 10] = 1.0;
+        let b = blur(&g, 1.5);
+        assert!(b.at(10, 10) < 0.5 && b.at(10, 10) > 0.0);
+        assert!((b.data.iter().sum::<f32>() - 1.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn resize_gray_sizes() {
+        let g = to_gray(&texture(100, 60, 1));
+        let h = resize_gray(&g, 0.5);
+        assert_eq!((h.w, h.h), (50, 30));
+        let d = resize_gray(&g, 2.0);
+        assert_eq!((d.w, d.h), (200, 120));
+        let t = resize_gray(&Gray::new(2, 2), 0.01);
+        assert_eq!((t.w, t.h), (1, 1));
+    }
+
+    #[test]
+    fn srgb_conversions() {
+        let lut = srgb_to_linear_lut();
+        assert_eq!(lut[0], 0.0);
+        assert!((lut[255] - 1.0).abs() < 1e-5);
+        assert!(lut.windows(2).all(|w| w[0] < w[1]));
+        for i in [0usize, 10, 64, 128, 200, 255] {
+            let back = linear_to_srgb(lut[i]) * 255.0;
+            assert!((back - i as f32).abs() < 0.05, "{i} -> {back}");
+        }
+        assert_eq!(linear_to_srgb(-1.0), 0.0);
+        assert!((linear_to_srgb(2.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rgb_linear_sampling_of_solid_image() {
+        let img = solid(8, 8, [128, 128, 128]);
+        let lut = srgb_to_linear_lut();
+        let v = sample_rgb_linear(&img, 3.3, 4.6);
+        assert!((v[0] - lut[128]).abs() < 1e-4 && (v[1] - lut[128]).abs() < 1e-4 && (v[2] - lut[128]).abs() < 1e-4);
+        let c = sample_rgb_linear_cubic(&img, 3.3, 4.6);
+        assert!((c[0] - lut[128]).abs() < 1e-3);
+        assert!(c.iter().all(|v| *v >= 0.0));
+    }
+
+    #[test]
+    fn downscale_rgb_limits_long_side() {
+        let img = texture(300, 150, 2);
+        let s = downscale_rgb(&img, 100);
+        assert_eq!((s.width(), s.height()), (100, 50));
+        // already small enough: unchanged
+        let same = downscale_rgb(&img, 400);
+        assert_eq!(same.dimensions(), img.dimensions());
+        assert_eq!(same.as_raw(), img.as_raw());
+    }
+
+    #[test]
+    fn file_type_detection() {
+        assert!(is_raw(Path::new("x/IMG_0001.CR2")));
+        assert!(is_raw(Path::new("a.dng")));
+        assert!(!is_raw(Path::new("a.jpg")));
+        assert!(!is_raw(Path::new("noext")));
+        assert!(is_supported(Path::new("a.JPG")));
+        assert!(is_supported(Path::new("a.tiff")));
+        assert!(is_supported(Path::new("a.nef")));
+        assert!(!is_supported(Path::new("a.txt")));
+        assert!(!is_supported(Path::new("a")));
+    }
+
+    #[test]
+    fn brightness_ev_follows_exposure() {
+        let base = PhotoInfo { exposure_time: Some(0.01), f_number: Some(8.0), iso: Some(100.0), ..Default::default() };
+        let longer = PhotoInfo { exposure_time: Some(0.02), ..base.clone() };
+        let d = longer.brightness_ev().unwrap() - base.brightness_ev().unwrap();
+        assert!((d - 1.0).abs() < 1e-9, "doubling the time is +1 EV");
+        let high_iso = PhotoInfo { iso: Some(200.0), ..base.clone() };
+        assert!((high_iso.brightness_ev().unwrap() - base.brightness_ev().unwrap() - 1.0).abs() < 1e-9);
+        assert!(PhotoInfo::default().brightness_ev().is_none());
+    }
+
+    #[test]
+    fn read_info_of_missing_file_is_empty() {
+        let i = read_info(Path::new("definitely/not/here.jpg"));
+        assert!(i.focal_mm.is_none() && i.camera.is_none());
+    }
+
+    #[test]
+    fn load_photo_roundtrip_png() {
+        let img = texture(40, 30, 3);
+        let path = std::env::temp_dir().join(format!("panoweave_test_{}_load.png", std::process::id()));
+        img.save(&path).unwrap();
+        let back = load_photo(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(back.dimensions(), (40, 30));
+        assert_eq!(back.as_raw(), img.as_raw());
+        assert!(load_photo(Path::new("definitely/not/here.png")).is_err());
+    }
+
+    #[test]
+    fn put_writes_clamped_pixel() {
+        let mut img = solid(2, 2, [0, 0, 0]);
+        put(&mut img, 1, 1, [1.5, 0.5, -1.0]);
+        assert_eq!(img.get_pixel(1, 1).0, [255, 128, 0]);
+    }
+}
