@@ -313,6 +313,7 @@ pub struct PanoApp {
     out_scale: f32,
     out_format: OutFormat,
     jpeg_quality: u8,
+    export_opts: export::ExportOptions,
     blend: Blend,
     out_path: String,
     last_output: Option<PathBuf>,
@@ -448,6 +449,7 @@ impl PanoApp {
             out_scale: 70.0,
             out_format: OutFormat::Jpeg,
             jpeg_quality: 90,
+            export_opts: export::ExportOptions::default(),
             blend: Blend::Smooth,
             out_path: String::new(),
             last_output: None,
@@ -619,6 +621,7 @@ impl PanoApp {
                             // the patch comparison data are released after the export
                             crate::patch_store::STORE.free_after_export();
                         }
+                        Err(e) if e == stitch::CANCELLED => self.set_status("Export canceled – no file was written.", WARN),
                         Err(e) => self.set_status(format!("{title} stopped: {e}"), BAD),
                     },
                     JobMsg::BracketLoaded(r) => {
