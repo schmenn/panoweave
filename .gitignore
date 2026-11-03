@@ -1,0 +1,5 @@
+/target
+/shots/
+*.running-old*.exe
+/testdata/
+/local/
