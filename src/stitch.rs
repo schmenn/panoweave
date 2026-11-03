@@ -648,6 +648,9 @@ pub enum Blend {
     Feather,
 }
 
+/// Error text of a cancelled render (the GUI shows it as "canceled", not as a failure).
+pub const CANCELLED: &str = "Cancelled";
+
 pub struct Progress<'a> {
     pub report: &'a (dyn Fn(f32, &str) + Sync),
     pub cancel: &'a AtomicBool,
@@ -702,7 +705,7 @@ pub fn render_final(
     let h = ((w as f64 / aspect).round() as usize).max(16);
     let m = Mapper::new(view, cb, w, h);
     let vr = view.rotation();
-    let cancelled = || prog.cancel.load(Ordering::Relaxed);
+    let cancelled = || prog.cancel.load(Ordering::Relaxed) || crate::engine::cancelled();
 
     // quality of every photo (real pixels per angle); needs only the geometry of each photo
     let mut details = Vec::with_capacity(count);
@@ -719,7 +722,7 @@ pub fn render_final(
             let mut ws = alloc(w * h, 0.0f32)?;
             for i in 0..count {
                 if cancelled() {
-                    return Err("Cancelled".into());
+                    return Err(CANCELLED.into());
                 }
                 (prog.report)(i as f32 / count as f32, &format!("Blending photo {} of {}", i + 1, count));
                 let p = load(i, true)?;
@@ -758,7 +761,7 @@ pub fn render_final(
             let mut photos_dims = Vec::new();
             for i in 0..count {
                 if cancelled() {
-                    return Err("Cancelled".into());
+                    return Err(CANCELLED.into());
                 }
                 (prog.report)(0.25 * i as f32 / count as f32, &format!("Finding seams ({} of {})", i + 1, count));
                 let p = load(i, false)?;
@@ -793,7 +796,7 @@ pub fn render_final(
             let mut pyr = BlendPyramid::new(w, h, levels)?;
             for i in 0..count {
                 if cancelled() {
-                    return Err("Cancelled".into());
+                    return Err(CANCELLED.into());
                 }
                 (prog.report)(0.25 + 0.7 * i as f32 / count as f32, &format!("Blending photo {} of {}", i + 1, count));
                 let p = load(i, true)?;
@@ -1131,6 +1134,20 @@ pub fn to_rgba8(col: &[[f32; 3]], cov: &[f32]) -> Vec<u8> {
     out
 }
 
+/// Convert linear float output to 16-bit sRGB RGBA (for 16-bit TIFF).
+pub fn to_rgba16(col: &[[f32; 3]], cov: &[f32]) -> Vec<u16> {
+    let mut out = vec![0u16; col.len() * 4];
+    out.par_chunks_mut(4).enumerate().for_each(|(i, o)| {
+        if cov[i] > 0.0 {
+            for k in 0..3 {
+                o[k] = (linear_to_srgb(col[i][k]).clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+            }
+            o[3] = u16::MAX;
+        }
+    });
+    out
+}
+
 #[cfg(test)]
 mod quality_tests {
     use super::*;
@@ -1152,5 +1169,24 @@ mod quality_tests {
         // a photo without connections only fills gaps, however detailed it is
         let u = quality_factors(&[(3860.0, true), (9000.0, false)]);
         assert!(seam_score(u[0], 0.05) > seam_score(u[1], 1.0));
+    }
+}
+
+#[cfg(test)]
+mod rgba16_tests {
+    use super::*;
+
+    #[test]
+    fn sixteen_bit_matches_eight_bit_and_transparent_outside() {
+        let col = [[0.0f32, 0.5, 1.0], [0.2, 0.2, 0.2]];
+        let cov = [1.0f32, 0.0];
+        let (a, b) = (to_rgba8(&col, &cov), to_rgba16(&col, &cov));
+        for k in 0..3 {
+            assert!((b[k] as f32 / 257.0 - a[k] as f32).abs() <= 1.0);
+        }
+        assert_eq!((a[3], b[3]), (255, 65535));
+        assert!(b[4..].iter().all(|&v| v == 0));
+        // 16 bit really has more levels
+        assert_ne!(b[1] % 257, 0);
     }
 }
