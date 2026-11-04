@@ -18,6 +18,7 @@ mod photo_cache;
 mod imgutil;
 mod project;
 mod sample;
+#[allow(dead_code)] // the painting tool in the UI uses the rest
 mod masks;
 mod seams;
 mod stitch;
