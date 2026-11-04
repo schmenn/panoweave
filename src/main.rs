@@ -20,6 +20,8 @@ mod sample;
 mod stitch;
 #[allow(dead_code)] // wired into the export in a later step
 mod strip;
+#[allow(dead_code)] // wired into the export in a later step
+mod strip_write;
 mod sysmem;
 #[cfg(test)]
 mod testutil;
