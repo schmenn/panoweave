@@ -98,7 +98,7 @@ cargo test
 - Photos with no overlap to the rest are not connected automatically. Use the manual point editor.
 - Smart seams cannot fix every case: where a close object is seen from very different sides and no seam can go around it, a step or ghost remains (for example a pole whose bracket lies between two rows of photos). Masks are meant for those cases.
 - The strip export is about twice as slow as writing the whole picture from memory, and smart seams add some seconds. Panoramas of 1 to 2 gigapixels are planned for but not yet tested (the largest test so far is about 92 megapixels).
-- The brightness correction field evens out most exposure differences between photos, but a faint lighter patch can remain in a smooth sky where the photos differ strongly.
+- The brightness correction and the seam finder even out most exposure differences between photos, but a faint soft colour edge can remain in a smooth sky where two cameras (for example a wide and a tele lens) differ in colour rendering.
 - The parallax mode is off by default and only corrects small shifts (up to a few pixels) near the seams.
 - A few functions in `src/app/` (`ui_align`, `graph_window`, `ui_frame`) are still long.
 - A running export cannot be interrupted while the encoder is writing; a cancel takes effect afterwards and the file is discarded.
