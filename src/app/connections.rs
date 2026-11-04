@@ -363,6 +363,7 @@ impl PanoApp {
                             field: self.fields.get(i).cloned().flatten(),
                             full_long: self.photos[i].long(),
                             trusted: true,
+                            mask: None,
                         })
                         .collect();
                     let (mode, alpha, tile) = (self.ov_mode, self.ov_alpha, self.ov_tile.max(1));
