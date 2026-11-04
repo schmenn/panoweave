@@ -27,7 +27,7 @@ A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitiv
 - **Export:** multi-band blending, gain compensation, and a seam preference for the sharpest photo; optional target width in pixels and 16-bit TIFF; a cancelled export never leaves a half-written file
 - **Memory-independent export:** the panorama is made strip by strip and written straight to the file (JPEG, PNG, TIFF, BigTIFF above 3.5 GB). The strip height follows from the free memory, but it never changes a pixel, so the picture is the same whatever memory the computer has. Free disk space is checked before the export starts.
 - **Smart seams** (optional, off by default): a graph-cut seam finder searches, once for the whole panorama, where the photos agree, so that close objects that two photos see from different sides (poles, lamps, people) are not cut in two. Found on a coarse grid in two steps, so the result does not depend on the strips either.
-- **Masks (in progress):** photos can carry "use here" / "do not use here" masks that steer the seams. The data, the effect on the seams and the project file support are in; the painting tool is being built.
+- **Masks:** paint "use here" (green) and "do not use here" (red) masks on a photo with a brush or lasso (Export step, Blending, "Edit masks..."). They steer the seams, with or without smart seams, are saved in the project file, and a "Show seams" view shows which photo wins where.
 - **Exposure fusion** (Mertens) for bracketed exposures
 - **Cancel button** that stops long steps within about a second
 
@@ -93,7 +93,7 @@ cargo test
 ## Known limitations
 
 - Photos with no overlap to the rest are not connected automatically. Use the manual point editor.
-- Smart seams cannot fix every case: where a close object is seen from very different sides and no seam can go around it, a step or ghost remains (for example a pole whose bracket lies between two rows of photos). Masks are meant for those cases once the painting tool is in.
+- Smart seams cannot fix every case: where a close object is seen from very different sides and no seam can go around it, a step or ghost remains (for example a pole whose bracket lies between two rows of photos). Masks are meant for those cases.
 - The strip export is about twice as slow as writing the whole picture from memory, and smart seams add some seconds. Panoramas of 1 to 2 gigapixels are planned for but not yet tested (the largest test so far is about 92 megapixels).
 - The parallax mode is off by default and only corrects small shifts (up to a few pixels) near the seams.
 - A few functions in `src/app/` (`ui_align`, `graph_window`, `ui_frame`) are still long.
