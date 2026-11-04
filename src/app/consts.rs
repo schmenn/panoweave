@@ -1,11 +1,11 @@
 use super::*;
 
-/// Magnifier: /CPEditorPanel/MagnifierWidth default 61 px (hugin.exe sub_14019f160).
+/// Magnifier: default width 61 px.
 pub(super) const MAGNIFIER_WIDTH: f32 = 61.0;
-/// Frame colours of the original's point editor (sub_14006cfe0): template RED, search area WHITE.
+/// Frame colours of the original's point editor: template RED, search area WHITE.
 pub(super) const TEMPLATE_FRAME_COLOR: Color32 = Color32::from_rgb(255, 60, 60);
 pub(super) const SEARCH_FRAME_COLOR: Color32 = Color32::WHITE;
-/// Point colours in the order the original's point editor uses them (sub_140067330):
+/// Point colours in the order the original's point editor uses them:
 /// BLUE, GREEN, CYAN, GOLD, NAVY, DARK TURQUOISE, SALMON, MAROON, KHAKI
 /// (RGB as defined by the wxWidgets colour database).
 pub(super) const POINT_COLORS: [Color32; 9] = [
@@ -25,7 +25,7 @@ pub(super) fn point_color(i: usize) -> Color32 {
 }
 
 /// Image-cache bound of the original: /ImageCache/UpperBound default 0x10000000 = 256 MiB
-/// (hugin.exe sub_1400550e0, sub_14019f160). Used here for the full-size photos of the point editor.
+/// Used here for the full-size photos of the point editor.
 pub(super) const IMAGE_CACHE_UPPER_BOUND: u64 = 268435456; // 0x10000000
 /// Share of the free memory the final render may use.
 /// Memory budget of the low-memory export when the free memory of the computer is unknown (2 GB).

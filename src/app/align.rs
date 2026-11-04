@@ -7,7 +7,6 @@ impl PanoApp {
         }
         let active = self.active_indices();
         // the original refuses to optimise without 2 active images or without control points
-        // (hugin.exe sub_140172d70, sub_14017ddb0)
         if active.len() < 2 {
             self.auto_chain = false;
             self.set_status("The project does not contain enough active photos. Tick “use” for at least 2 photos. Alignment canceled.", BAD);
@@ -161,7 +160,7 @@ impl PanoApp {
             if a.mean_err < 3.0 { GOOD } else { WARN },
         );
         if groups.len() >= 2 && active.len() > 1 {
-            // like the original after the assistant (hugin.exe sub_1400557d0): warn with the list
+            // like the original after the assistant: warn with the list
             // of groups and open the point editor with the first photo of the first two groups
             self.set_status(
                 format!(

@@ -18,7 +18,7 @@ pub(super) fn image_groups(n: usize, active: &[usize], cps: &[ControlPoint]) -> 
     groups
 }
 
-/// The original's way of listing groups (hugin.exe sub_140034190): every group in brackets,
+/// The original's way of listing groups: every group in brackets,
 /// runs of consecutive numbers written as a range: "[1-4, 6], [5, 7]" (photo numbers as shown).
 pub(super) fn groups_text(groups: &[Vec<usize>]) -> String {
     groups

@@ -206,7 +206,7 @@ impl Default for WinSettings {
             pos: None,
             size: [1280.0, 860.0],
             col_w: COLS.iter().map(|c| c.default_w()).collect(),
-            // like the original's control point list: number column, ascending (sub_140193110)
+            // like the original's control point list: number column, ascending
             sort: Some((Col::Id, true)),
             filter: Filter::default(),
             thumb: THUMB_DEFAULT,
@@ -230,8 +230,7 @@ impl Default for WinSettings {
 }
 
 /// Where a window goes when its saved position is not usable: the original's dialogs read
-/// positionX / positionY with default -1 and use (0, 0x2c = 44) when either is negative
-/// (hugin.exe sub_14026d5a0 PanoOutputDialog, sub_140275c50 ImageVariablesDialog).
+/// a saved position of -1 and use (0, 44) when either is negative.
 const FALLBACK_POS: [f32; 2] = [0.0, 44.0];
 
 /// Windows moves minimised windows to about (-32000, -32000); positions below this are ignored.
@@ -614,7 +613,7 @@ impl PatchWindow {
             // a saved position is only used when it lies on a connected screen (a second monitor
             // may be gone, or Windows reported the parking position of a minimised window)
             let ppp = ctx.input(|i| i.viewport().native_pixels_per_point).unwrap_or(1.0);
-            // like the original's dialogs (hugin.exe sub_14026d5a0, sub_140275c50): a negative
+            // like the original's dialogs: a negative
             // saved coordinate means "not usable" and the window goes to (0, 44)
             let wanted = self.s.pos.map(|p| if p[0] < 0.0 || p[1] < 0.0 { FALLBACK_POS } else { p });
             self.builder_pos = match wanted {
@@ -1493,7 +1492,7 @@ impl PatchWindow {
                     self.s.col_w[k] = (self.s.col_w[k] + er.drag_delta().x).max(MIN_COL_W);
                 }
                 if er.drag_stopped() {
-                    // the original writes a column width as soon as the drag ends (sub_1401944a0)
+                    // the original writes a column width as soon as the drag ends
                     self.save_now = true;
                 }
                 ui.painter().line_segment([Pos2::new(r.max.x, r.min.y + 4.0), Pos2::new(r.max.x, r.max.y - 4.0)], Stroke::new(1.0, weak_col));
@@ -1517,7 +1516,7 @@ impl PatchWindow {
                     let p = ui.painter_at(rect);
                     let mut fill = row_bg(base, dark, bg);
                     if ri % 2 == 1 {
-                        // alternate row colours, as in the original's list (sub_140193110)
+                        // alternate row colours, as in the original's list
                         fill = lerp_col(fill, if dark { Color32::BLACK } else { Color32::WHITE }, ALT_ROW_SHADE);
                     }
                     p.rect_filled(rect, 0.0, fill);

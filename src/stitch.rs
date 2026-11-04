@@ -277,8 +277,7 @@ pub fn seam_score(q: f32, wt: f32) -> f32 {
     q * ((wt / EDGE_RAMP).min(1.0) + TIE_BREAK * wt)
 }
 
-/// Clip limits of the original's exposure mask (hugin.exe sub_1402d1120, advanced options
-/// maskClipExposureLowerCutoff / UpperCutoff, f32 1/255 @0x1403a7b3c and 250/255 @0x1403a7b40).
+/// Clip limits of the original's exposure mask: 1/255 (lower) and 250/255 (upper).
 pub const CLIP_LOWER: u8 = 1;
 pub const CLIP_UPPER: u8 = 250;
 /// Weight factor for clipped (blown-out or black) pixels where another photo can fill in.

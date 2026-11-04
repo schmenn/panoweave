@@ -8,12 +8,12 @@ use image::RgbImage;
 use serde::{Deserialize, Serialize};
 
 /// Colour photos of a pair with their brightness gains (linear light, per channel): the
-/// original's difference view compares exposure-matched images (hugin.exe sub_1401e76d0
+/// original's difference view compares exposure-matched images (it
 /// scales each image by 1 / (2^EV * exposure) and divides by its white balance).
 pub type Raw<'a> = (&'a RgbImage, &'a RgbImage, [f32; 3], [f32; 3]);
 
 /// Fixed heatmap scale: the original's difference view draws |A - B| amplified 4 times
-/// (two additive passes that each double the result, hugin.exe sub_1401e76d0), so the fixed
+/// (two additive passes that each double the result), so the fixed
 /// scale shows a difference of 1/4 at full strength.
 pub const FIXED_DIFF_GAIN: f32 = 4.0;
 

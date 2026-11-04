@@ -144,7 +144,7 @@ pub struct MatchSettings {
 
 impl Default for MatchSettings {
     fn default() -> Self {
-        // points per pair: /Assistant/nControlPoints default 20 (hugin.exe sub_14019f160)
+        // points per pair: default 20
         MatchSettings { points_per_photo: 3500, points_per_pair: 20, ignore_sky: true }
     }
 }
@@ -289,7 +289,7 @@ pub fn find_points(
 }
 
 /// Statistical clean-up factor: remove points worse than mean + OUTLIER_SIGMA * standard deviation
-/// (hugin.exe sub_140223410 passes 2.0, f64 at 0x14038cb40, to getCPoutsideLimit_pair / getCPoutsideLimit).
+/// (the original uses 2.0 as well, per photo pair and over the whole project).
 pub const OUTLIER_SIGMA: f64 = 2.0;
 
 fn mean_sd(v: &[f64]) -> (f64, f64) {
@@ -413,7 +413,7 @@ pub fn align_all(
     let mut removed = 0;
     if s.remove_outliers {
         // the original's "Clean control points": points worse than mean + 2 sigma,
-        // first within each photo pair, then over the whole project (hugin.exe sub_140223410)
+        // first within each photo pair, then over the whole project
         align::cp_errors(&inp, &rots, &lenses, &mut cps);
         let rm = statistical_outliers(&cps);
         let before = cps.len();
