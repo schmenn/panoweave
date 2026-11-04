@@ -185,7 +185,7 @@ impl PanoApp {
                     p.h,
                     p.rot,
                     self.lenses[p.lens],
-                    if self.match_brightness { self.gains[i] } else { [1.0; 3] },
+                    if self.match_brightness && std::env::var("PW_GAINS").map(|v| v != "0").unwrap_or(true) { self.gains[i] } else { [1.0; 3] },
                     self.fields.get(i).cloned().flatten(),
                     trusted[i],
                     p.mask.buf.clone(),
@@ -222,7 +222,7 @@ impl PanoApp {
         let view = self.view.clone();
         let out_w = ew;
         let blend = self.blend;
-        let render_opts = stitch::RenderOptions { levels: self.blend_levels, cubic: self.cubic_interp, prefer_detail: self.prefer_detail, seams: crate::seams::SeamConfig::for_export(self.export_opts.smart_seams) };
+        let render_opts = stitch::RenderOptions { levels: std::env::var("PW_LEVELS").ok().and_then(|v| v.parse().ok()).unwrap_or(self.blend_levels), cubic: self.cubic_interp, prefer_detail: self.prefer_detail, seams: crate::seams::SeamConfig::for_export(self.export_opts.smart_seams) };
         let format = self.write_format();
         let cfg = crate::strip::StripConfig::default();
         let total = self.strip_budget().unwrap_or(FALLBACK_EXPORT_BUDGET);
