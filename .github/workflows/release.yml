@@ -22,7 +22,7 @@ jobs:
           $name = "panoweave-${{ github.ref_name }}-windows-x64"
           New-Item -ItemType Directory $name | Out-Null
           Copy-Item target/release/panoweave.exe $name/
-          Copy-Item README.md $name/
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE, THIRD_PARTY_LICENSES.md $name/
           Compress-Archive -Path $name -DestinationPath "$name.zip"
       - name: Publish release
         shell: pwsh
