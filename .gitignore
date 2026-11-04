@@ -2,5 +2,6 @@
 /shots/
 *.running-old*.exe
 /testdata/
-/local/
+/local/*
+!/local/README.md
 /.claude/
