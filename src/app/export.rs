@@ -30,7 +30,7 @@ pub(super) struct ExportOptions {
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false, smart_seams: true }
+        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false, smart_seams: false }
     }
 }
 
@@ -408,8 +408,8 @@ impl PanoApp {
                     {
                         self.preview_dirty = true;
                     }
-                    ui.checkbox(&mut self.export_opts.smart_seams, "Smart seams (around poles, lamps and people)")
-                        .on_hover_text("Finds the seams between the photos where the photos agree, so close objects that two photos see from different sides are not cut in two. Makes the export a little slower. Smooth blending only.");
+                    ui.add_enabled(self.blend == Blend::Smooth, egui::Checkbox::new(&mut self.export_opts.smart_seams, "Smart seams – steer the seams around poles, lamps and people (slower)"))
+                        .on_hover_text("Off (default): the photo with the most detail wins where photos overlap. On: the seams are searched so that they run where the photos agree, so a close object that two photos see from different sides is not cut in two. The export takes some seconds longer. Only for Smooth seams.");
                 });
                 ui.add_space(10.0);
                 if primary_button(ui, "💾  Create panorama file", !self.busy()).clicked() {
