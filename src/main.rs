@@ -14,10 +14,16 @@ mod patch_matcher;
 mod patch_store;
 mod patch_viz;
 mod patch_window;
+mod photo_cache;
 mod imgutil;
 mod project;
 mod sample;
+#[allow(dead_code)] // the painting tool in the UI uses the rest
+mod masks;
+mod seams;
 mod stitch;
+mod strip;
+mod strip_write;
 mod sysmem;
 #[cfg(test)]
 mod testutil;
@@ -61,7 +67,93 @@ fn parse_args() -> (Args, bool) {
     (a, selftest)
 }
 
+/// `--imgdiff <a> <b> [diff.png]`: compares two pictures pixel by pixel (max/mean difference, number
+/// of differing pixels, where the biggest difference is) and optionally writes an amplified difference picture.
+fn imgdiff(args: &[String]) {
+    let (a, b) = (image::open(&args[0]).unwrap().to_rgba8(), image::open(&args[1]).unwrap().to_rgba8());
+    if a.dimensions() != b.dimensions() {
+        println!("different sizes: {:?} and {:?}", a.dimensions(), b.dimensions());
+        return;
+    }
+    let (w, h) = a.dimensions();
+    let mut out = image::RgbImage::new(w, h);
+    let (mut max, mut sum, mut cnt, mut big, mut at) = (0i32, 0f64, 0u64, 0u64, (0u32, 0u32));
+    let mut hist = [0u64; 5];
+    for (x, y, pa) in a.enumerate_pixels() {
+        let pb = b.get_pixel(x, y);
+        let d = (0..4).map(|k| (pa[k] as i32 - pb[k] as i32).abs()).max().unwrap();
+        if d > max {
+            max = d;
+            at = (x, y);
+        }
+        sum += d as f64;
+        if d > 0 {
+            cnt += 1;
+        }
+        if d > 8 {
+            big += 1;
+        }
+        hist[match d {
+            0 => 0,
+            1 => 1,
+            2..=4 => 2,
+            5..=16 => 3,
+            _ => 4,
+        }] += 1;
+        let v = (d * 16).min(255) as u8;
+        out.put_pixel(x, y, image::Rgb([v, v, v]));
+    }
+    let n = (w as u64 * h as u64) as f64;
+    println!("{w}x{h}: max {max} at {at:?}, mean {:.4}, differing {cnt} ({:.2} %), over 8: {big} ({:.3} %)", sum / n, cnt as f64 * 100.0 / n, big as f64 * 100.0 / n);
+    println!("difference 0 / 1 / 2-4 / 5-16 / over 16: {hist:?}");
+    if let Some(p) = args.get(2) {
+        out.save(p).unwrap();
+    }
+    // 4th argument: a sheet of the 3 places with the most big differences (picture A | picture B | difference x16), 2x zoom
+    if let Some(p) = args.get(3) {
+        const CELL: u32 = 128;
+        let (cw, ch) = (w.div_ceil(CELL), h.div_ceil(CELL));
+        let mut counts = vec![0u32; (cw * ch) as usize];
+        for (x, y, v) in out.enumerate_pixels() {
+            if v[0] > 16 * 2 {
+                counts[((y / CELL) * cw + x / CELL) as usize] += 1;
+            }
+        }
+        let mut cells: Vec<usize> = (0..counts.len()).filter(|&i| counts[i] > 0).collect();
+        cells.sort_by_key(|&i| std::cmp::Reverse(counts[i]));
+        cells.truncate(3);
+        let zoom = 2u32;
+        let side = CELL * zoom;
+        let mut sheet = image::RgbaImage::new(side * 3 + 8, (side + 4) * cells.len().max(1) as u32);
+        for (row, &c) in cells.iter().enumerate() {
+            let (x0, y0) = ((c as u32 % cw) * CELL, (c as u32 / cw) * CELL);
+            for dy in 0..side {
+                for dx in 0..side {
+                    let (x, y) = (x0 + dx / zoom, y0 + dy / zoom);
+                    if x >= w || y >= h {
+                        continue;
+                    }
+                    let v = out.get_pixel(x, y)[0];
+                    let oy = row as u32 * (side + 4) + dy;
+                    sheet.put_pixel(dx, oy, *a.get_pixel(x, y));
+                    sheet.put_pixel(side + 4 + dx, oy, *b.get_pixel(x, y));
+                    sheet.put_pixel(2 * side + 8 + dx, oy, image::Rgba([v, v, v, 255]));
+                }
+            }
+            println!("sheet row {row}: cell at x {x0}, y {y0}, {} pixels over 2 steps", counts[c]);
+        }
+        sheet.save(p).unwrap();
+    }
+}
+
 fn main() -> eframe::Result {
+    {
+        let raw: Vec<String> = std::env::args().skip(1).collect();
+        if raw.first().map(|s| s.as_str()) == Some("--imgdiff") && raw.len() >= 3 {
+            imgdiff(&raw[1..]);
+            return Ok(());
+        }
+    }
     let (args, selftest) = parse_args();
     if selftest && args.demo.as_deref() == Some("loadtest") {
         loadtest(&args.files);
@@ -209,7 +301,7 @@ fn render_opts() -> stitch::RenderOptions {
     if std::env::var("PW_SHARP").map(|v| v == "0").unwrap_or(false) {
         stitch::RenderOptions::default()
     } else {
-        stitch::RenderOptions { levels: 4, cubic: true, prefer_detail: true }
+        stitch::RenderOptions { levels: 4, cubic: true, prefer_detail: true, seams: seams::SeamConfig::for_export(false) }
     }
 }
 
@@ -393,6 +485,7 @@ fn selftest_run(files: Vec<PathBuf>) {
             field: fields.get(i).cloned().flatten(),
             full_long: p.w.max(p.h) as f64,
             trusted: true,
+            mask: None,
         })
         .collect();
     // seam cost: mean absolute grey difference of the two photos around every control pair,

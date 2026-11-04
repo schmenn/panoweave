@@ -61,7 +61,8 @@ fn point_color(i: usize) -> Color32 {
 /// (hugin.exe sub_1400550e0, sub_14019f160). Used here for the full-size photos of the point editor.
 const IMAGE_CACHE_UPPER_BOUND: u64 = 268435456; // 0x10000000
 /// Share of the free memory the final render may use.
-const RENDER_MEMORY_SHARE: f64 = 0.8;
+/// Memory budget of the low-memory export when the free memory of the computer is unknown (2 GB).
+const FALLBACK_EXPORT_BUDGET: u64 = 2 << 30;
 const ACCENT: Color32 = Color32::from_rgb(70, 160, 255);
 const ACCENT_DARK: Color32 = Color32::from_rgb(34, 92, 160);
 const GOOD: Color32 = Color32::from_rgb(90, 200, 120);
@@ -367,6 +368,7 @@ pub struct PanoApp {
     /// sorted rows of the control point list and the number within each pair (cached)
     cp_rows_cache: Option<(String, Vec<usize>, Vec<usize>)>,
     render_started: bool,
+    second_render_started: bool,
     auto_grow: bool,
     full_tex: HashMap<usize, egui::TextureHandle>,
     full_pending: HashSet<usize>,
@@ -492,6 +494,7 @@ impl PanoApp {
             cp_min_err: 0.0,
             cp_rows_cache: None,
             render_started: false,
+            second_render_started: false,
             auto_grow: true,
             full_tex: HashMap::new(),
             full_pending: HashSet::new(),
@@ -576,6 +579,7 @@ impl PanoApp {
                 field: self.fields.get(i).cloned().flatten(),
                 full_long: p.long(),
                 trusted: trusted.get(i).copied().unwrap_or(true),
+                mask: None,
             })
             .collect()
     }
@@ -763,10 +767,43 @@ impl PanoApp {
             }
             if d == "render" && !self.busy() && self.aligned && self.last_output.is_none() && !self.render_started {
                 self.render_started = true;
+                // experiments: PW_SAVE_PROJECT=<file.pwproj> keeps the alignment, a .pwproj on the command line loads it again (no new alignment)
+                if let Ok(p) = std::env::var("PW_SAVE_PROJECT") {
+                    self.save_project(PathBuf::from(p));
+                }
                 self.step = Step::Export;
-                self.out_scale = 50.0;
+                self.out_scale = std::env::var("PW_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(50.0);
                 self.out_path = std::env::current_dir().unwrap_or_default().join("shots").join("demo_render.jpg").to_string_lossy().to_string();
+                // experiments: PW_OUT=<file.png|tif|jpg> chooses file and format, PW_LOWMEM=1 the low-memory export
+                if let Ok(o) = std::env::var("PW_OUT") {
+                    self.out_format = match std::path::Path::new(&o).extension().and_then(|e| e.to_str()) {
+                        Some("png") => OutFormat::Png,
+                        Some("tif") | Some("tiff") => OutFormat::Tiff,
+                        _ => OutFormat::Jpeg,
+                    };
+                    self.out_path = o;
+                }
                 self.run_render();
+            }
+            // PW_OUT2=<file>: after the first export, the same alignment is exported again (with another
+            // PW_EXPORT_MB it shows that the memory does not change the picture)
+            if d == "render" && self.render_started && !self.busy() && self.last_output.is_some() && !self.second_render_started {
+                if let Ok(o2) = std::env::var("PW_OUT2") {
+                    self.second_render_started = true;
+                    // SAFETY: as below, UI thread only
+                    unsafe { std::env::remove_var("PW_OLD_EXPORT") };
+                    if let Ok(v) = std::env::var("PW_SEAMS2") {
+                        // SAFETY: as below
+                        unsafe { std::env::set_var("PW_SEAMS", v) };
+                    }
+                    if let Some(mb) = std::env::var("PW_EXPORT_MB2").ok().and_then(|v| v.parse::<u64>().ok()) {
+                        // SAFETY: the demo runs on the UI thread, the worker threads do not read this variable
+                        unsafe { std::env::set_var("PW_EXPORT_MB", mb.to_string()) };
+                    }
+                    self.out_path = o2;
+                    self.last_output = None;
+                    self.run_render();
+                }
             }
             if !self.busy() && self.aligned && (d == "pointsel" || d == "pointdrag") && self.pe.selected.is_none() {
                 // show a selected point zoomed in (for checking the frames)
@@ -834,7 +871,7 @@ impl PanoApp {
         if let Some(path) = self.screenshot.clone() {
             ctx.request_repaint();
             let settled = !self.busy() && self.preview_rx.is_none() && self.fusion_rx.is_none() && (self.step != Step::Frame || !self.preview_dirty);
-            let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || self.last_output.is_some()) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
+            let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || (self.last_output.is_some() && (std::env::var("PW_OUT2").is_err() || self.second_render_started))) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
             if ready && !self.shot_requested {
                 self.shot_requested = true;
                 let slot = self.shot_data.clone();
