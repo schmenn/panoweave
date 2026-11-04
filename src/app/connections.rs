@@ -1,3 +1,4 @@
+use super::viewport_window::WinSpec;
 use super::*;
 
 /// Groups of photos joined by control points (each sorted, groups sorted by their first photo);
@@ -85,12 +86,10 @@ impl PanoApp {
         let mut open = self.show_cp_list;
         let mut jump: Option<usize> = None;
         let mut delete: Vec<usize> = Vec::new();
-        egui::Window::new("All control points")
-            .open(&mut open)
-            .default_pos([300.0, 140.0])
-            .default_size([760.0, 520.0])
-            .resizable(true)
-            .show(ctx, |ui| {
+        let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None };
+        let mut vp = std::mem::take(&mut self.vp);
+        let force = self.demo.is_some();
+        vp.show(ctx, &spec, &mut open, force, |ui| {
                 // filter
                 let (pa, pb) = (self.pe.a, self.pe.b);
                 ui.horizontal_wrapped(|ui| {
@@ -256,6 +255,7 @@ impl PanoApp {
                     }
                 });
             });
+        self.vp = vp;
         self.show_cp_list = open;
         if let Some(k) = jump {
             self.jump_to_point(k);
@@ -280,12 +280,10 @@ impl PanoApp {
         let mut open = self.show_overlap;
         let (a, b) = (self.pe.a, self.pe.b);
         let mut redraw = false;
-        egui::Window::new(format!("Overlap check – photo {} and {}", a + 1, b + 1))
-            .open(&mut open)
-            .default_size([820.0, 640.0])
-            .default_pos([280.0, 110.0])
-            .resizable(true)
-            .show(ctx, |ui| {
+        let spec = WinSpec { key: "overlap", title: "Overlap check".into(), size: [820.0, 640.0], min_size: [420.0, 320.0], fill: None };
+        let mut vp = std::mem::take(&mut self.vp);
+        let force = self.demo.is_some();
+        vp.show(ctx, &spec, &mut open, force, |ui| {
                 if !self.aligned || a >= self.photos.len() || b >= self.photos.len() || a == b {
                     ui.label(RichText::new("Align the photos first (step 3).").color(MUTED));
                     return;
@@ -455,6 +453,7 @@ impl PanoApp {
                     ui.label(RichText::new(fine_summary(st)).small());
                 }
             });
+        self.vp = vp;
         self.show_overlap = open;
     }
 
@@ -484,11 +483,10 @@ impl PanoApp {
         // every photo counts, a photo without points is a group of its own (as in the original)
         let groups = image_groups(n, &active, &act_cps);
         let mut action: Option<(u8, usize, usize)> = None;
-        egui::Window::new("Connections between the photos")
-            .open(&mut open)
-            .default_size([760.0, 640.0])
-            .frame(egui::Frame::window(&ctx.global_style()).fill(PANEL))
-            .show(ctx, |ui| {
+        let spec = WinSpec { key: "graph", title: "Connections between the photos".into(), size: [760.0, 640.0], min_size: [420.0, 320.0], fill: Some(PANEL) };
+        let mut vp = std::mem::take(&mut self.vp);
+        let force = self.demo.is_some();
+        vp.show(ctx, &spec, &mut open, force, |ui| {
             if !self.aligned {
                 ui.label(RichText::new("Not aligned yet: edges show pairs with points only. After aligning, overlapping pairs without enough points are shown red and dashed.").small().color(WARN));
             }
@@ -650,6 +648,7 @@ impl PanoApp {
                 }
             });
         });
+        self.vp = vp;
         if !open {
             self.show_graph = false;
         }
@@ -676,7 +675,10 @@ impl PanoApp {
 
     pub(super) fn help_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_help;
-        egui::Window::new("How PanoWeave works").open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
+        let spec = WinSpec { key: "help", title: "How PanoWeave works".into(), size: [520.0, 420.0], min_size: [360.0, 240.0], fill: None };
+        let mut vp = std::mem::take(&mut self.vp);
+        let force = self.demo.is_some();
+        vp.show(ctx, &spec, &mut open, force, |ui| {
             ui.label(RichText::new("Panorama").strong());
             ui.label("1. Photos – add overlapping photos taken from one spot (JPEG, PNG, TIFF, camera RAW).");
             ui.label("2. Matching points – spots that appear in two photos. Found automatically; you can add, move or delete them. Clicking a spot in the left photo finds the partner spot for you.");
@@ -689,6 +691,7 @@ impl PanoApp {
             ui.add_space(6.0);
             ui.label(RichText::new("Projects (.pwproj) keep your photos, points, alignment and framing.").small().color(MUTED));
         });
+        self.vp = vp;
         self.show_help = open;
     }
 }

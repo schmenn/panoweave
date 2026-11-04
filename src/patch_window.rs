@@ -256,7 +256,7 @@ mod screen {
 }
 
 /// Is the middle of the title bar of a window at `pos` (points) on a connected monitor?
-fn on_screen(pos: [f32; 2], size: [f32; 2], ppp: f32) -> bool {
+pub(crate) fn on_screen(pos: [f32; 2], size: [f32; 2], ppp: f32) -> bool {
     if pos[0] <= PARKED_POS || pos[1] <= PARKED_POS {
         return false;
     }

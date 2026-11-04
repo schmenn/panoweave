@@ -2,6 +2,7 @@
 //! The strokes live in `Photo::mask`; the painting itself is in `masks_canvas.rs`.
 
 use super::masks_tool::{MaskTool, Tool, MAX_BRUSH, MIN_BRUSH};
+use super::viewport_window::WinSpec;
 use super::*;
 
 /// Colours of the mask overlay and the tools.
@@ -79,7 +80,10 @@ impl PanoApp {
     pub(super) fn mask_window(&mut self, ctx: &egui::Context) {
         self.poll_seam_preview(ctx);
         let mut open = self.mk.open;
-        egui::Window::new("Masks").open(&mut open).default_size([1000.0, 660.0]).resizable(true).show(ctx, |ui| self.mask_contents(ui));
+        let spec = WinSpec { key: "masks", title: "Masks".into(), size: [1000.0, 660.0], min_size: [640.0, 420.0], fill: None };
+        let mut vp = std::mem::take(&mut self.vp);
+        vp.show(ctx, &spec, &mut open, self.demo.is_some(), |ui| self.mask_contents(ui));
+        self.vp = vp;
         self.mk.open = open;
         if !open {
             self.mk.tool.cancel();
