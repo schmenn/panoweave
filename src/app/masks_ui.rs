@@ -187,7 +187,10 @@ impl PanoApp {
                 self.mk.view.key = 0;
             }
             ui.checkbox(&mut self.mk.hide_mask, "Hide mask");
-            ui.checkbox(&mut self.mk.show_seams, "Show seams").on_hover_text("Shows where the seam finder puts the seams, with your masks. Takes a few seconds after each change.");
+            let aligned = self.aligned;
+            ui.add_enabled(aligned, egui::Checkbox::new(&mut self.mk.show_seams, "Show seams"))
+                .on_hover_text("Shows where the seam finder puts the seams, with your masks. Takes a few seconds after each change.")
+                .on_disabled_hover_text("Needs an alignment: align the photos first (steps Matching points and Align).");
         });
         let hint = if self.mk.tool.tool.is_lasso() {
             "Lasso: click to set corners. Double click or Enter closes the shape, Esc cancels. Scroll to zoom, drag with the right mouse button to move."

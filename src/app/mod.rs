@@ -16,6 +16,9 @@ mod masks_state;
 mod masks_tests;
 mod masks_tool;
 mod masks_ui;
+mod photo_menu;
+#[cfg(test)]
+mod photo_menu_tests;
 mod photos;
 mod pipeline;
 mod points;

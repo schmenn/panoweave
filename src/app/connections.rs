@@ -483,6 +483,7 @@ impl PanoApp {
         // every photo counts, a photo without points is a group of its own (as in the original)
         let groups = image_groups(n, &active, &act_cps);
         let mut action: Option<(u8, usize, usize)> = None;
+        let mut photo_choice = None;
         let spec = WinSpec { key: "graph", title: "Connections between the photos".into(), size: [760.0, 640.0], min_size: [420.0, 320.0], fill: Some(PANEL) };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
@@ -602,7 +603,8 @@ impl PanoApp {
                     let t = &self.photos[i].thumb;
                     let s = t.size_vec2();
                     let k = (120.0 / s.y.max(1.0)).min(220.0 / s.x.max(1.0));
-                    ui.image((t.id(), s * k));
+                    let thumb = ui.add(egui::Image::new((t.id(), s * k)).sense(Sense::click()));
+                    photo_choice = self.photo_menu(&thumb, i);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(format!("{}. {}", i + 1, self.photos[i].name)).strong());
                         let partners: Vec<String> = counts.iter().filter(|(k, _)| k.0 == i || k.1 == i).map(|(k, c)| format!("{} ({c})", if k.0 == i { k.1 + 1 } else { k.0 + 1 })).collect();
@@ -651,6 +653,9 @@ impl PanoApp {
         self.vp = vp;
         if !open {
             self.show_graph = false;
+        }
+        if let Some((i, a)) = photo_choice {
+            self.apply_photo_action(i, a);
         }
         match action {
             Some((0, a, b)) | Some((2, a, b)) => {
