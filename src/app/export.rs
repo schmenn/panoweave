@@ -23,11 +23,14 @@ pub(super) struct ExportOptions {
     pub target_width: u32,
     /// TIFF only: 16 bits per channel instead of 8
     pub tiff_16bit: bool,
+    /// find the seams between the photos with the seam finder (around poles, lamps and people that
+    /// the photos see from different sides); off = the photo with the best score wins at every pixel
+    pub smart_seams: bool,
 }
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false }
+        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false, smart_seams: true }
     }
 }
 
@@ -205,7 +208,7 @@ impl PanoApp {
         let view = self.view.clone();
         let out_w = ew;
         let blend = self.blend;
-        let render_opts = stitch::RenderOptions { levels: self.blend_levels, cubic: self.cubic_interp, prefer_detail: self.prefer_detail, seams: crate::seams::SeamConfig::experiment() };
+        let render_opts = stitch::RenderOptions { levels: self.blend_levels, cubic: self.cubic_interp, prefer_detail: self.prefer_detail, seams: crate::seams::SeamConfig::for_export(self.export_opts.smart_seams) };
         let format = self.write_format();
         let cfg = crate::strip::StripConfig::default();
         let total = self.strip_budget().unwrap_or(FALLBACK_EXPORT_BUDGET);
@@ -405,6 +408,8 @@ impl PanoApp {
                     {
                         self.preview_dirty = true;
                     }
+                    ui.checkbox(&mut self.export_opts.smart_seams, "Smart seams (around poles, lamps and people)")
+                        .on_hover_text("Finds the seams between the photos where the photos agree, so close objects that two photos see from different sides are not cut in two. Makes the export a little slower. Smooth blending only.");
                 });
                 ui.add_space(10.0);
                 if primary_button(ui, "💾  Create panorama file", !self.busy()).clicked() {
@@ -465,14 +470,14 @@ mod tests {
         assert!(!o.enabled && !o.width_mode() && !o.sixteen_bit(OutFormat::Tiff));
         assert_eq!(output_width(4000.0, 70.0, &o), 2800);
         // switched off: width settings are ignored
-        let o = ExportOptions { enabled: false, size_mode: SizeMode::Width, target_width: 999, tiff_16bit: true };
+        let o = ExportOptions { enabled: false, size_mode: SizeMode::Width, target_width: 999, tiff_16bit: true, smart_seams: true };
         assert_eq!(output_width(4000.0, 50.0, &o), 2000);
         assert!(!o.sixteen_bit(OutFormat::Tiff));
     }
 
     #[test]
     fn target_width_is_used_and_clamped() {
-        let mut o = ExportOptions { enabled: true, size_mode: SizeMode::Width, target_width: 3000, tiff_16bit: true };
+        let mut o = ExportOptions { enabled: true, size_mode: SizeMode::Width, target_width: 3000, tiff_16bit: true, smart_seams: true };
         assert_eq!(output_width(4000.0, 10.0, &o), 3000);
         o.target_width = 1;
         assert_eq!(output_width(4000.0, 10.0, &o), MIN_TARGET_WIDTH as usize);

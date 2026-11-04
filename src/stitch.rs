@@ -1037,7 +1037,12 @@ fn compute_labels(
         photos.push(pb);
     }
     let labels = crate::seams::find(&photos, bw, bh, &cfg, cancelled)?;
-    Ok(Some(crate::seams::LabelMap { bw, bh, bsz, labels }))
+    let map = crate::seams::LabelMap { bw, bh, bsz, labels };
+    if let Ok(f) = std::env::var("PW_SEAM_DEBUG") {
+        // experiments: a picture of the seams (one block = one pixel)
+        let _ = map.debug_image().save(f);
+    }
+    Ok(Some(map))
 }
 
 /// Feather blend of the output rows `[ya, yb)` only. Every pixel depends on its own position only,

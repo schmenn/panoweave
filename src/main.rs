@@ -299,7 +299,7 @@ fn render_opts() -> stitch::RenderOptions {
     if std::env::var("PW_SHARP").map(|v| v == "0").unwrap_or(false) {
         stitch::RenderOptions::default()
     } else {
-        stitch::RenderOptions { levels: 4, cubic: true, prefer_detail: true, seams: seams::SeamConfig::experiment() }
+        stitch::RenderOptions { levels: 4, cubic: true, prefer_detail: true, seams: seams::SeamConfig::for_export(false) }
     }
 }
 

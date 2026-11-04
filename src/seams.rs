@@ -56,23 +56,31 @@ pub struct SeamConfig {
     pub cut_cost: f32,
     /// colour difference assumed where one of the two photos does not cover a seam block
     pub missing_diff: f32,
+    /// exponent of the colour difference in the seam cost (1 = linear; larger values make big differences,
+    /// such as a close object seen from two sides, much more expensive than small ones)
+    pub diff_power: f32,
     /// passes over all photos (stops early when nothing changes)
     pub cycles: usize,
 }
 
 impl Default for SeamConfig {
     fn default() -> Self {
-        SeamConfig { enabled: false, max_side: 1536, data_weight: 0.05, smooth_weight: 1.0, cut_cost: 0.01, missing_diff: 0.5, cycles: 2 }
+        SeamConfig { enabled: false, max_side: 1536, data_weight: 0.05, smooth_weight: 1.0, cut_cost: 0.01, missing_diff: 0.5, diff_power: 1.0, cycles: 2 }
     }
 }
 
 impl SeamConfig {
-    /// For experiments: `PW_SEAMS=1` switches the seam finder on, `PW_SEAM_DATA`, `PW_SEAM_SMOOTH`,
-    /// `PW_SEAM_CUT` and `PW_SEAM_SIDE` change its settings.
-    pub fn experiment() -> Self {
+    /// The settings the export uses: on or off as chosen (`on`). For experiments `PW_SEAMS=1` / `=0`
+    /// force it on / off, and `PW_SEAM_DATA`, `PW_SEAM_SMOOTH`, `PW_SEAM_CUT`, `PW_SEAM_POWER`,
+    /// `PW_SEAM_MISSING` and `PW_SEAM_SIDE` change its settings.
+    pub fn for_export(on: bool) -> Self {
         let mut c = SeamConfig::default();
         let get = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok());
-        c.enabled = std::env::var("PW_SEAMS").is_ok_and(|v| v == "1");
+        c.enabled = match std::env::var("PW_SEAMS").as_deref() {
+            Ok("1") => true,
+            Ok("0") => false,
+            _ => on,
+        };
         if let Some(v) = get("PW_SEAM_DATA") {
             c.data_weight = v;
         }
@@ -81,6 +89,12 @@ impl SeamConfig {
         }
         if let Some(v) = get("PW_SEAM_CUT") {
             c.cut_cost = v;
+        }
+        if let Some(v) = get("PW_SEAM_POWER") {
+            c.diff_power = v;
+        }
+        if let Some(v) = get("PW_SEAM_MISSING") {
+            c.missing_diff = v;
         }
         if let Some(v) = get("PW_SEAM_SIDE") {
             c.max_side = v as usize;
@@ -268,7 +282,8 @@ impl<'a> Problem<'a> {
         if a == b {
             return 0;
         }
-        let c = self.cfg.smooth_weight * 0.5 * (self.diff(a, b, p) + self.diff(a, b, q)) + self.cfg.cut_cost;
+        let f = |d: f32| if self.cfg.diff_power == 1.0 { d } else { d.powf(self.cfg.diff_power) };
+        let c = self.cfg.smooth_weight * 0.5 * (f(self.diff(a, b, p)) + f(self.diff(a, b, q))) + self.cfg.cut_cost;
         (c * SCALE) as i64
     }
 }
@@ -586,6 +601,36 @@ pub fn find(photos: &[PhotoBlocks], bw: usize, bh: usize, cfg: &SeamConfig, canc
         }
     }
     Ok(labels)
+}
+
+impl LabelMap {
+    /// A picture of the seams for checking them: every photo in its own colour, seams in black.
+    /// (`PW_SEAM_DEBUG=<file.png>` writes it after the seam search.)
+    pub fn debug_image(&self) -> image::RgbImage {
+        let mut img = image::RgbImage::new(self.bw as u32, self.bh as u32);
+        let hue = |l: u16| -> [u8; 3] {
+            let h = (l as f32 * 0.618_034).fract() * 6.0;
+            let (x, c) = (1.0 - (h % 2.0 - 1.0).abs(), 1.0);
+            let (r, g, b) = match h as u32 {
+                0 => (c, x, 0.0),
+                1 => (x, c, 0.0),
+                2 => (0.0, c, x),
+                3 => (0.0, x, c),
+                4 => (x, 0.0, c),
+                _ => (c, 0.0, x),
+            };
+            [(80.0 + 150.0 * r) as u8, (80.0 + 150.0 * g) as u8, (80.0 + 150.0 * b) as u8]
+        };
+        for by in 0..self.bh {
+            for bx in 0..self.bw {
+                let l = self.labels[by * self.bw + bx];
+                let seam = (bx + 1 < self.bw && self.labels[by * self.bw + bx + 1] != l) || (by + 1 < self.bh && self.labels[(by + 1) * self.bw + bx] != l);
+                let c = if l == NONE { [255, 255, 255] } else if seam { [0, 0, 0] } else { hue(l) };
+                img.put_pixel(bx as u32, by as u32, image::Rgb(c));
+            }
+        }
+        img
+    }
 }
 
 /// Total energy of `labels` for the given blocks (for tests and tuning).

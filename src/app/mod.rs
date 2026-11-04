@@ -766,6 +766,10 @@ impl PanoApp {
             }
             if d == "render" && !self.busy() && self.aligned && self.last_output.is_none() && !self.render_started {
                 self.render_started = true;
+                // experiments: PW_SAVE_PROJECT=<file.pwproj> keeps the alignment, a .pwproj on the command line loads it again (no new alignment)
+                if let Ok(p) = std::env::var("PW_SAVE_PROJECT") {
+                    self.save_project(PathBuf::from(p));
+                }
                 self.step = Step::Export;
                 self.out_scale = std::env::var("PW_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(50.0);
                 self.out_path = std::env::current_dir().unwrap_or_default().join("shots").join("demo_render.jpg").to_string_lossy().to_string();
