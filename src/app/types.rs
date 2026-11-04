@@ -214,6 +214,9 @@ pub struct PanoApp {
     pub(super) lenses: Vec<Lens>,
     pub(super) cps: Vec<ControlPoint>,
     pub(super) gains: Vec<[f32; 3]>,
+    /// smooth brightness correction per photo (not saved: worked out again from the photos)
+    pub(super) gain_maps: Vec<Option<Arc<GainMap>>>,
+    pub(super) gainmap_cfg: crate::gainmap::GainMapConfig,
     pub(super) view: PanoView,
     pub(super) aligned: bool,
     pub(super) matched: bool,

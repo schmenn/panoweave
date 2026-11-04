@@ -117,6 +117,7 @@ impl PanoApp {
             }
         }
         self.gains = vec![[1.0; 3]; self.photos.len()];
+        self.gain_maps = vec![None; self.photos.len()];
         if let Some(pf) = self.pending_project.take() {
             self.apply_project(pf);
             self.set_status(format!("Project opened with {} photos.", self.photos.len()), GOOD);
@@ -142,6 +143,9 @@ impl PanoApp {
         self.mk.overlay = None;
         self.mk.seam_key = None;
         self.gains.remove(i);
+        if i < self.gain_maps.len() {
+            self.gain_maps.remove(i);
+        }
         self.cps.retain(|c| c.a != i && c.b != i);
         for c in self.cps.iter_mut() {
             if c.a > i {
@@ -164,6 +168,7 @@ impl PanoApp {
         self.lenses.clear();
         self.cps.clear();
         self.gains.clear();
+        self.gain_maps.clear();
         self.view = PanoView::default();
         self.aligned = false;
         self.matched = false;
