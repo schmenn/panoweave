@@ -62,6 +62,8 @@ fn point_color(i: usize) -> Color32 {
 const IMAGE_CACHE_UPPER_BOUND: u64 = 268435456; // 0x10000000
 /// Share of the free memory the final render may use.
 const RENDER_MEMORY_SHARE: f64 = 0.8;
+/// Memory budget of the low-memory export when the free memory of the computer is unknown (2 GB).
+const FALLBACK_EXPORT_BUDGET: u64 = 2 << 30;
 const ACCENT: Color32 = Color32::from_rgb(70, 160, 255);
 const ACCENT_DARK: Color32 = Color32::from_rgb(34, 92, 160);
 const GOOD: Color32 = Color32::from_rgb(90, 200, 120);
@@ -764,9 +766,29 @@ impl PanoApp {
             if d == "render" && !self.busy() && self.aligned && self.last_output.is_none() && !self.render_started {
                 self.render_started = true;
                 self.step = Step::Export;
-                self.out_scale = 50.0;
+                self.out_scale = std::env::var("PW_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(50.0);
                 self.out_path = std::env::current_dir().unwrap_or_default().join("shots").join("demo_render.jpg").to_string_lossy().to_string();
+                // experiments: PW_OUT=<file.png|tif|jpg> chooses file and format, PW_LOWMEM=1 the low-memory export
+                if let Ok(o) = std::env::var("PW_OUT") {
+                    self.out_format = match std::path::Path::new(&o).extension().and_then(|e| e.to_str()) {
+                        Some("png") => OutFormat::Png,
+                        Some("tif") | Some("tiff") => OutFormat::Tiff,
+                        _ => OutFormat::Jpeg,
+                    };
+                    self.out_path = o;
+                }
+                self.export_opts.low_memory = std::env::var("PW_LOWMEM").map(|v| v == "1").unwrap_or(false);
                 self.run_render();
+            }
+            // PW_BOTH=1 PW_OUT2=<file>: after the normal export, the same alignment is exported again with the
+            // low-memory export (to compare both pictures)
+            if d == "render" && self.render_started && !self.busy() && self.last_output.is_some() && !self.export_opts.low_memory {
+                if let (Ok(_), Ok(o2)) = (std::env::var("PW_BOTH"), std::env::var("PW_OUT2")) {
+                    self.export_opts.low_memory = true;
+                    self.out_path = o2;
+                    self.last_output = None;
+                    self.run_render();
+                }
             }
             if !self.busy() && self.aligned && (d == "pointsel" || d == "pointdrag") && self.pe.selected.is_none() {
                 // show a selected point zoomed in (for checking the frames)
@@ -834,7 +856,7 @@ impl PanoApp {
         if let Some(path) = self.screenshot.clone() {
             ctx.request_repaint();
             let settled = !self.busy() && self.preview_rx.is_none() && self.fusion_rx.is_none() && (self.step != Step::Frame || !self.preview_dirty);
-            let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || self.last_output.is_some()) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
+            let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || (self.last_output.is_some() && (std::env::var("PW_BOTH").is_err() || self.export_opts.low_memory))) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
             if ready && !self.shot_requested {
                 self.shot_requested = true;
                 let slot = self.shot_data.clone();

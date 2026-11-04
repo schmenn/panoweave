@@ -36,6 +36,8 @@ pub struct StripConfig {
     /// extra push-pull levels (beyond the multi-band levels) for filling holes in a photo region;
     /// the fill reaches `2^(levels + fill_extra_levels)` rows
     pub fill_extra_levels: usize,
+    /// share of the memory budget for the cache of decoded photos (0..0.9)
+    pub cache_share: f64,
     /// a strip should be at least this many times higher than the margin (otherwise a lot of
     /// work is done twice)
     pub min_strip_to_margin: usize,
@@ -51,6 +53,7 @@ impl Default for StripConfig {
             roi_bytes_per_px: 20,
             margin_factor: 4,
             fill_extra_levels: 2,
+            cache_share: 0.3,
             min_strip_to_margin: 1,
         }
     }
@@ -106,9 +109,17 @@ pub fn plan(width: usize, height: usize, levels: usize, blend: Blend, budget: u6
         return Err("the panorama has no pixels".into());
     }
     let margin = margin_rows(levels, blend, cfg);
+    // strips start on the grid of the coarsest hole-fill level, so the fill (and with it the
+    // result) is the same in every strip; the margin is a multiple of that grid too
+    let align = match blend {
+        Blend::Smooth => 1usize << (levels + cfg.fill_extra_levels).min(14),
+        Blend::Feather => 1,
+    };
+    let margin = margin.div_ceil(align) * align;
     let per_row = strip_bytes(width, 1, margin, blend, cfg) - strip_bytes(width, 0, margin, blend, cfg);
     let fixed = strip_bytes(width, 0, margin, blend, cfg);
-    let min_rows = cfg.min_rows.max(margin * cfg.min_strip_to_margin / 4).max(1).min(height);
+    let min_rows = (cfg.min_rows.max(margin * cfg.min_strip_to_margin / 4).max(1)).div_ceil(align) * align;
+    let min_rows = min_rows.min(height);
     let need_min = fixed + per_row * min_rows as u64;
     if need_min > budget {
         return Err(format!(
@@ -119,8 +130,17 @@ pub fn plan(width: usize, height: usize, levels: usize, blend: Blend, budget: u6
         ));
     }
     let fit = ((budget - fixed) / per_row.max(1)) as usize;
-    let rows = fit.min(cfg.max_rows.max(min_rows)).min(height).max(min_rows);
+    let mut rows = fit.min(cfg.max_rows.max(min_rows)).min(height).max(min_rows);
+    if rows < height {
+        rows = ((rows / align) * align).max(min_rows);
+    }
     Ok(StripPlan { rows, margin, count: height.div_ceil(rows), peak_bytes: strip_bytes(width, rows, margin, blend, cfg) })
+}
+
+/// Splits the export memory budget into the part for the strips and the part for the photo cache.
+pub fn split_budget(total: u64, cfg: &StripConfig) -> (u64, u64) {
+    let cache = (total as f64 * cfg.cache_share.clamp(0.0, 0.9)) as u64;
+    (total - cache, cache)
 }
 
 /// The inner row ranges `[y0, y1)` of all strips.

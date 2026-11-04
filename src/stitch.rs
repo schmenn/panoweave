@@ -848,16 +848,33 @@ pub fn render_final(
 
 /// Receives one finished strip of the panorama: first row, colour and coverage of the inner rows
 /// (`col.len() / width` rows) and the panorama width.
-#[allow(dead_code)] // wired into the export in a later step
 pub type StripSink<'a> = &'a mut dyn FnMut(usize, &[[f32; 3]], &[f32], usize) -> Result<(), String>;
 
-/// Memory-saving final render (Smooth blend): the panorama is made strip by strip and every strip
-/// goes to `sink`, so only one strip (plus a margin for the multi-band blend) is in memory.
-/// Returns the panorama size. The strip height follows from `budget` (see `strip::plan`) and is
-/// a multiple of the coarsest pyramid level so that every strip sees the same pyramid grid as
-/// the whole image would. `render_final` stays the reference.
-#[allow(dead_code)] // wired into the export in a later step
-pub fn render_strips(
+/// Everything the strip render needs, worked out once: panorama size, strip height and the rows
+/// every photo touches. `prepare_strips` makes it, `run` renders.
+pub struct StripJob {
+    pub w: usize,
+    pub h: usize,
+    /// inner rows per strip (the last one may be lower)
+    pub rows: usize,
+    /// number of strips
+    pub count: usize,
+    /// planned peak memory of one strip in bytes
+    pub peak_bytes: u64,
+    margin: usize,
+    levels: usize,
+    fill_extra: usize,
+    ro: RenderOptions,
+    m: Mapper,
+    vr: M3,
+    qual: Vec<f32>,
+    photo_rows: Vec<(usize, usize)>,
+}
+
+/// Plans the memory-saving final render (Smooth blend). The strip height follows from `budget`
+/// (see `strip::plan`); it never changes the result, only how many strips are made. An error
+/// message comes back if even the smallest strip does not fit into `budget`.
+pub fn prepare_strips(
     count: usize,
     load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
     view: &PanoView,
@@ -865,10 +882,7 @@ pub fn render_strips(
     ro: &RenderOptions,
     cfg: &crate::strip::StripConfig,
     budget: u64,
-    sink: StripSink,
-    prog: &Progress,
-) -> Result<(usize, usize), String> {
-    let cancelled = || prog.cancel.load(Ordering::Relaxed) || crate::engine::cancelled();
+) -> Result<StripJob, String> {
     let cb = view.crop_bounds();
     let aspect = (cb[1] - cb[0]) / (cb[3] - cb[2]);
     let w = out_w.max(16);
@@ -886,29 +900,55 @@ pub fn render_strips(
     let qual = if ro.prefer_detail { quality_factors(&details) } else { vec![1.0; count] };
     let levels = if ro.levels > 0 { ro.levels.min(auto_levels(w, h)) } else { auto_levels(w, h) };
     let plan = crate::strip::plan(w, h, levels, Blend::Smooth, budget, cfg)?;
-    // strips start on the grid of the coarsest hole-fill level, so the fill is the same in every strip
-    let align = 1usize << (levels + cfg.fill_extra_levels);
-    let rows = if plan.rows >= h { h } else { (plan.rows / align).max(1) * align };
-    let margin = plan.margin.div_ceil(align) * align;
-    let strips = crate::strip::strips(h, rows);
-    let n = strips.len();
-    for (si, &(s0, s1)) in strips.iter().enumerate() {
-        if cancelled() {
-            return Err(CANCELLED.into());
+    Ok(StripJob { w, h, rows: plan.rows, count: plan.count, peak_bytes: plan.peak_bytes, margin: plan.margin, levels, fill_extra: cfg.fill_extra_levels, ro: *ro, m, vr, qual, photo_rows })
+}
+
+impl StripJob {
+    /// Renders the panorama strip by strip and hands every strip to `sink` (in order from the top).
+    pub fn run(
+        &self,
+        load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
+        sink: StripSink,
+        prog: &Progress,
+    ) -> Result<(), String> {
+        let cancelled = || prog.cancel.load(Ordering::Relaxed) || crate::engine::cancelled();
+        let strips = crate::strip::strips(self.h, self.rows);
+        let n = strips.len();
+        for (si, &(s0, s1)) in strips.iter().enumerate() {
+            if cancelled() {
+                return Err(CANCELLED.into());
+            }
+            (prog.report)(si as f32 / n as f32, &format!("Strip {} of {}", si + 1, n));
+            let (ya, yb) = crate::strip::padded((s0, s1), self.margin, self.h);
+            let (col, cov) = smooth_window(load, &self.m, &self.vr, &self.qual, &self.photo_rows, self.w, (ya, yb), self.levels, self.fill_extra, &self.ro, &cancelled)?;
+            let a = (s0 - ya) * self.w;
+            let b = (s1 - ya) * self.w;
+            sink(s0, &col[a..b], &cov[a..b], self.w)?;
         }
-        (prog.report)(si as f32 / n as f32, &format!("Strip {} of {}", si + 1, n));
-        let (ya, yb) = crate::strip::padded((s0, s1), margin, h);
-        let (col, cov) = smooth_window(load, &m, &vr, &qual, &photo_rows, w, (ya, yb), levels, cfg.fill_extra_levels, ro, &cancelled)?;
-        let a = (s0 - ya) * w;
-        let b = (s1 - ya) * w;
-        sink(s0, &col[a..b], &cov[a..b], w)?;
+        Ok(())
     }
-    Ok((w, h))
+}
+
+/// `prepare_strips` and `run` in one go; returns the panorama size.
+#[allow(dead_code)] // used by the tests
+pub fn render_strips(
+    count: usize,
+    load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
+    view: &PanoView,
+    out_w: usize,
+    ro: &RenderOptions,
+    cfg: &crate::strip::StripConfig,
+    budget: u64,
+    sink: StripSink,
+    prog: &Progress,
+) -> Result<(usize, usize), String> {
+    let job = prepare_strips(count, load, view, out_w, ro, cfg, budget)?;
+    job.run(load, sink, prog)?;
+    Ok((job.w, job.h))
 }
 
 /// Smooth blend of the output rows `[ya, yb)` only (`ya` must be a multiple of 2^(levels + fill_extra)). Same
 /// two passes as in `render_final`, with all buffers just as high as the window.
-#[allow(dead_code)] // wired into the export in a later step
 #[allow(clippy::too_many_arguments)]
 fn smooth_window(
     load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),

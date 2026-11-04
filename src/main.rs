@@ -14,13 +14,12 @@ mod patch_matcher;
 mod patch_store;
 mod patch_viz;
 mod patch_window;
+mod photo_cache;
 mod imgutil;
 mod project;
 mod sample;
 mod stitch;
-#[allow(dead_code)] // wired into the export in a later step
 mod strip;
-#[allow(dead_code)] // wired into the export in a later step
 mod strip_write;
 mod sysmem;
 #[cfg(test)]
@@ -65,7 +64,58 @@ fn parse_args() -> (Args, bool) {
     (a, selftest)
 }
 
+/// `--imgdiff <a> <b> [diff.png]`: compares two pictures pixel by pixel (max/mean difference, number
+/// of differing pixels, where the biggest difference is) and optionally writes an amplified difference picture.
+fn imgdiff(args: &[String]) {
+    let (a, b) = (image::open(&args[0]).unwrap().to_rgba8(), image::open(&args[1]).unwrap().to_rgba8());
+    if a.dimensions() != b.dimensions() {
+        println!("different sizes: {:?} and {:?}", a.dimensions(), b.dimensions());
+        return;
+    }
+    let (w, h) = a.dimensions();
+    let mut out = image::RgbImage::new(w, h);
+    let (mut max, mut sum, mut cnt, mut big, mut at) = (0i32, 0f64, 0u64, 0u64, (0u32, 0u32));
+    let mut hist = [0u64; 5];
+    for (x, y, pa) in a.enumerate_pixels() {
+        let pb = b.get_pixel(x, y);
+        let d = (0..4).map(|k| (pa[k] as i32 - pb[k] as i32).abs()).max().unwrap();
+        if d > max {
+            max = d;
+            at = (x, y);
+        }
+        sum += d as f64;
+        if d > 0 {
+            cnt += 1;
+        }
+        if d > 8 {
+            big += 1;
+        }
+        hist[match d {
+            0 => 0,
+            1 => 1,
+            2..=4 => 2,
+            5..=16 => 3,
+            _ => 4,
+        }] += 1;
+        let v = (d * 16).min(255) as u8;
+        out.put_pixel(x, y, image::Rgb([v, v, v]));
+    }
+    let n = (w as u64 * h as u64) as f64;
+    println!("{w}x{h}: max {max} at {at:?}, mean {:.4}, differing {cnt} ({:.2} %), over 8: {big} ({:.3} %)", sum / n, cnt as f64 * 100.0 / n, big as f64 * 100.0 / n);
+    println!("difference 0 / 1 / 2-4 / 5-16 / over 16: {hist:?}");
+    if let Some(p) = args.get(2) {
+        out.save(p).unwrap();
+    }
+}
+
 fn main() -> eframe::Result {
+    {
+        let raw: Vec<String> = std::env::args().skip(1).collect();
+        if raw.first().map(|s| s.as_str()) == Some("--imgdiff") && raw.len() >= 3 {
+            imgdiff(&raw[1..]);
+            return Ok(());
+        }
+    }
     let (args, selftest) = parse_args();
     if selftest && args.demo.as_deref() == Some("loadtest") {
         loadtest(&args.files);
