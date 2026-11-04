@@ -787,6 +787,10 @@ impl PanoApp {
                     self.second_render_started = true;
                     // SAFETY: as below, UI thread only
                     unsafe { std::env::remove_var("PW_OLD_EXPORT") };
+                    if let Ok(v) = std::env::var("PW_SEAMS2") {
+                        // SAFETY: as below
+                        unsafe { std::env::set_var("PW_SEAMS", v) };
+                    }
                     if let Some(mb) = std::env::var("PW_EXPORT_MB2").ok().and_then(|v| v.parse::<u64>().ok()) {
                         // SAFETY: the demo runs on the UI thread, the worker threads do not read this variable
                         unsafe { std::env::set_var("PW_EXPORT_MB", mb.to_string()) };

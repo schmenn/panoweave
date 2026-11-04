@@ -205,7 +205,7 @@ impl PanoApp {
         let view = self.view.clone();
         let out_w = ew;
         let blend = self.blend;
-        let render_opts = stitch::RenderOptions { levels: self.blend_levels, cubic: self.cubic_interp, prefer_detail: self.prefer_detail };
+        let render_opts = stitch::RenderOptions { levels: self.blend_levels, cubic: self.cubic_interp, prefer_detail: self.prefer_detail, seams: crate::seams::SeamConfig::experiment() };
         let format = self.write_format();
         let cfg = crate::strip::StripConfig::default();
         let total = self.strip_budget().unwrap_or(FALLBACK_EXPORT_BUDGET);
@@ -241,7 +241,7 @@ impl PanoApp {
                     save_output_stoppable(&path, &rgba, w, h, out_fmt, q, &stop)?;
                     return Ok((path.clone(), t0.elapsed().as_millis(), w, h));
                 }
-                let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, strip_budget)?;
+                let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, strip_budget, &prog)?;
                 let wo = crate::strip_write::WriteOptions::new(format, job.rows);
                 // the unfinished file is written next to the final one (hidden, ".<name>.partial.<ext>")
                 write_atomically(&path, &stop, |tmp| {
