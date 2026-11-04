@@ -222,7 +222,7 @@ impl PanoApp {
                 let (src, work, w, h, rot, lens, gain, field, trusted) = &sources[i];
                 // seams only need the geometry plus where the photo is blown out: the small copy is enough
                 let img = if pixels { cache.lock().unwrap().get_or_load(i, || src.load_full())? } else { work.clone() };
-                Ok(RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted })
+                Ok(RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted, mask: None })
             };
             let prog = stitch::Progress { report, cancel };
             // the job's own flag and the global one are both set by "Cancel"

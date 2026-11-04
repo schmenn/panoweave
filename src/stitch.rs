@@ -229,6 +229,8 @@ pub struct RenderPhoto {
     /// joined to the main group of photos by control points; a photo without any connection
     /// may sit at a wrong place, so it is only used where no connected photo covers the spot
     pub trusted: bool,
+    /// what the person painted on this photo to steer the seams (None: nothing)
+    pub mask: Option<Arc<crate::masks::MaskBuf>>,
 }
 
 /// Quality of a photo = how many real pixels it has per angle (focal length × long side).
@@ -292,6 +294,16 @@ impl RenderPhoto {
         let p = self.img.get_pixel(xi, yi);
         let mx = p[0].max(p[1]).max(p[2]);
         mx > CLIP_UPPER || mx < CLIP_LOWER
+    }
+
+    /// What the person painted at this spot (`masks::NEUTRAL`, `POSITIVE`, `NEGATIVE`). Works with the full photo
+    /// or a smaller copy of it, like `clipped_at`.
+    #[inline]
+    pub fn mask_at(&self, x: f32, y: f32) -> u8 {
+        match &self.mask {
+            Some(m) => m.at(x, y, self.w, self.h),
+            None => crate::masks::NEUTRAL,
+        }
     }
 
     /// Pixels per radian of the original photo.
@@ -690,6 +702,21 @@ pub fn alloc<T: Clone>(n: usize, v: T) -> Result<Vec<T>, String> {
 
 /// Added to the score of the photo the seam finder prefers at a pixel, so it wins wherever it covers the pixel.
 const PREFERRED_BONUS: f32 = 1e9;
+/// A photo painted "use here" beats everything else (also the seam finder's choice).
+const POSITIVE_BONUS: f32 = 1e11;
+/// A photo painted "do not use here" only fills the spot when nothing else covers it.
+const NEGATIVE_FACTOR: f32 = 1e-6;
+
+/// The score of photo `p` at its position (`x`, `y`) after the person's mask and the seam finder's choice.
+#[inline]
+fn adjust_score(p: &RenderPhoto, x: f32, y: f32, score: f32, preferred: bool) -> f32 {
+    match p.mask_at(x, y) {
+        crate::masks::POSITIVE => score + POSITIVE_BONUS,
+        crate::masks::NEGATIVE => score * NEGATIVE_FACTOR,
+        _ if preferred => score + PREFERRED_BONUS,
+        _ => score,
+    }
+}
 
 /// Final render options. `RenderOptions::default()` keeps the earlier behaviour
 /// (automatic band count, bilinear sampling).
@@ -800,10 +827,8 @@ pub fn render_final(
                         if let Some((x, y, wt)) = p.lookup(d) {
                             // the photo with the most detail wins (see `seam_score`)
                             let sc = if prefer { seam_score(qual[i], wt) } else { wt };
-                            let mut wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
-                            if prow.is_some_and(|r| r[px] == i as u16) {
-                                wt += PREFERRED_BONUS;
-                            }
+                            let wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
+                            let wt = adjust_score(&p, x, y, wt, prow.is_some_and(|r| r[px] == i as u16));
                             if wt > bw[px] {
                                 bw[px] = wt;
                                 br[px] = i as u16;
@@ -1031,7 +1056,13 @@ fn compute_labels(
                 let score = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
                 let c = sample_rgb_linear(&p.img, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5);
                 let to8 = |v: f32, g: f32| (crate::imgutil::linear_to_srgb(v * g) * 255.0 + 0.5) as u8;
-                *out = Sample { rgb: [to8(c[0], p.gain[0]), to8(c[1], p.gain[1]), to8(c[2], p.gain[2])], flags: VALID, score };
+                let flags = VALID
+                    | match p.mask_at(x, y) {
+                        crate::masks::POSITIVE => crate::seams::POSITIVE,
+                        crate::masks::NEGATIVE => crate::seams::NEGATIVE,
+                        _ => 0,
+                    };
+                *out = Sample { rgb: [to8(c[0], p.gain[0]), to8(c[1], p.gain[1]), to8(c[2], p.gain[2])], flags, score };
             }
         });
         photos.push(pb);
@@ -1139,10 +1170,8 @@ fn smooth_window(
                 let Some(d) = m.dir(px, py) else { continue };
                 if let Some((x, y, wt)) = p.lookup(d) {
                     let sc = if prefer { seam_score(qual[i], wt) } else { wt };
-                    let mut wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
-                    if prow.is_some_and(|r| r[px] == i as u16) {
-                        wt += PREFERRED_BONUS;
-                    }
+                    let wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
+                    let wt = adjust_score(&p, x, y, wt, prow.is_some_and(|r| r[px] == i as u16));
                     if wt > bw[px] {
                         bw[px] = wt;
                         br[px] = i as u16;
@@ -1582,6 +1611,7 @@ mod strip_tests {
                     gain: [1.0 + 0.05 * i as f32, 1.0, 1.0 - 0.03 * i as f32],
                     full_long: if detail_boost && i == 1 { 600.0 } else { 300.0 },
                     trusted: true,
+                    mask: None,
                     img: Arc::new(img),
                 }
             })
@@ -1745,6 +1775,64 @@ mod strip_tests {
         let dr = compare(&reference, &whole);
         eprintln!("seam finder on: strips vs render_final: mean {:.3} max {}; seams on vs off: mean {:.3}", dr.mean, dr.max, compare(&plain, &whole).mean);
         assert!(dr.mean < 1.5, "the whole-image render and the strips must agree about the seams: mean {:.3}", dr.mean);
+    }
+
+    /// Two plain photos (red and blue) that overlap. A mask painted over the whole blue photo must decide the
+    /// overlap, with the seam finder on and off, and in strips as well as in the whole-image render.
+    #[test]
+    fn masks_decide_which_photo_shows_in_the_overlap() {
+        let mut photos: Vec<RenderPhoto> = [[200u8, 30, 30], [30, 30, 200]]
+            .iter()
+            .enumerate()
+            .map(|(i, c)| RenderPhoto {
+                w: 300.0,
+                h: 200.0,
+                rot: camera_from_ypr((i as f64 * 22.0 - 11.0).to_radians(), 0.0, 0.0),
+                lens: Lens::from_hfov_deg(50.0),
+                field: None,
+                gain: [1.0; 3],
+                full_long: 300.0,
+                trusted: true,
+                mask: None,
+                img: Arc::new(crate::testutil::solid(300, 200, *c)),
+            })
+            .collect();
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let cb = view.crop_bounds();
+        let (w, h) = (700usize, ((700.0 / ((cb[1] - cb[0]) / (cb[3] - cb[2]))).round() as usize).max(16));
+        let m = Mapper::new(&view, cb, w, h);
+        let cancel = AtomicBool::new(false);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        let all = |v: u8| Some(Arc::new(crate::masks::MaskBuf { w: 4, h: 4, data: vec![v; 16] }));
+        for seams_on in [false, true] {
+            let ro = RenderOptions { prefer_detail: true, levels: 3, seams: crate::seams::SeamConfig { enabled: seams_on, max_side: 140, ..Default::default() }, ..Default::default() };
+            for (mask_kind, winner_inside_overlap) in [(crate::masks::POSITIVE, 1usize), (crate::masks::NEGATIVE, 0usize)] {
+                photos[1].mask = all(mask_kind);
+                let load = |i: usize, _px: bool| Ok(photos[i].clone());
+                let (col, cov, _, _) = render_final(2, &load, &view, w, Blend::Smooth, &ro, &prog).unwrap();
+                let (mut checked, mut wrong) = (0, 0);
+                for py in 0..h {
+                    for px in 0..w {
+                        let Some(d) = m.dir(px, py) else { continue };
+                        let (a, b) = (photos[0].lookup(d), photos[1].lookup(d));
+                        // only pixels well inside both photos
+                        let (Some(a), Some(b)) = (a, b) else { continue };
+                        if a.2 < 0.15 || b.2 < 0.15 || cov[py * w + px] == 0.0 {
+                            continue;
+                        }
+                        checked += 1;
+                        let c = col[py * w + px];
+                        let is_blue = c[2] > c[0];
+                        if is_blue != (winner_inside_overlap == 1) {
+                            wrong += 1;
+                        }
+                    }
+                }
+                assert!(checked > 500, "the photos should overlap well: {checked} pixels checked");
+                assert!(wrong * 50 < checked, "seams {seams_on}, mask {mask_kind}: {wrong} of {checked} overlap pixels show the wrong photo");
+            }
+        }
     }
 
     #[test]

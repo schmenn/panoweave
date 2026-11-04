@@ -189,7 +189,7 @@ impl PanoApp {
                 }
             };
             let field = self.fields.get(photos.len()).and_then(|f| f.as_ref()).map(|f| (**f).clone());
-            photos.push(ProjectPhoto { path: pp, lens: p.lens, rot: p.rot, enabled: p.enabled, field });
+            photos.push(ProjectPhoto { path: pp, lens: p.lens, rot: p.rot, enabled: p.enabled, field, masks: Vec::new() });
         }
         let pf = ProjectFile {
             version: 1,

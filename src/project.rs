@@ -3,6 +3,7 @@
 use crate::align::{ControlPoint, Lens};
 use crate::fine_align::{DisplacementField, ParallaxConfig};
 use crate::geometry::M3;
+use crate::masks::MaskStroke;
 use crate::stitch::PanoView;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -16,6 +17,9 @@ pub struct ProjectPhoto {
     /// local parallax correction of this photo (computed by the alignment), if there is one
     #[serde(default)]
     pub field: Option<DisplacementField>,
+    /// what the person painted on the photo to steer the seams (strokes and polygons)
+    #[serde(default)]
+    pub masks: Vec<MaskStroke>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -50,8 +54,8 @@ mod tests {
         ProjectFile {
             version: 1,
             photos: vec![
-                ProjectPhoto { path: PathBuf::from("a.jpg"), lens: 0, rot: IDENTITY, enabled: true, field: None },
-                ProjectPhoto { path: PathBuf::from("b.jpg"), lens: 0, rot: crate::geometry::rodrigues([0.0, 0.2, 0.0]), enabled: false, field: Some(DisplacementField { gw: 2, gh: 2, d: vec![[0.001, -0.002], [0.0, 0.0], [0.003, 0.004], [-0.005, 0.0]] }) },
+                ProjectPhoto { path: PathBuf::from("a.jpg"), lens: 0, rot: IDENTITY, enabled: true, field: None, masks: Vec::new() },
+                ProjectPhoto { path: PathBuf::from("b.jpg"), lens: 0, rot: crate::geometry::rodrigues([0.0, 0.2, 0.0]), enabled: false, field: Some(DisplacementField { gw: 2, gh: 2, d: vec![[0.001, -0.002], [0.0, 0.0], [0.003, 0.004], [-0.005, 0.0]] }), masks: vec![MaskStroke { kind: crate::masks::MaskKind::Negative, points: vec![[0.2, 0.3], [0.4, 0.5]], radius: 0.02, polygon: false }] },
             ],
             lenses: vec![Lens::from_hfov_deg(60.0)],
             cps: vec![ControlPoint::new(0, 1, [0.1, 0.2], [-0.3, 0.05], true)],
@@ -92,6 +96,9 @@ mod tests {
         let f = q.photos[1].field.as_ref().unwrap();
         assert_eq!((f.gw, f.gh, f.d.len()), (2, 2, 4));
         assert!((f.d[2][1] - 0.004).abs() < 1e-7);
+        // the masks too
+        assert!(q.photos[0].masks.is_empty());
+        assert_eq!(q.photos[1].masks, p.photos[1].masks);
         let pc = q.parallax.unwrap();
         assert!(pc.enabled && pc.max_shift == 9.0);
     }
@@ -102,8 +109,9 @@ mod tests {
         let mut v: serde_json::Value = serde_json::to_value(sample()).unwrap();
         v.as_object_mut().unwrap().remove("parallax");
         v["photos"][1].as_object_mut().unwrap().remove("field");
+        v["photos"][1].as_object_mut().unwrap().remove("masks");
         let pf: ProjectFile = serde_json::from_value(v).unwrap();
-        assert!(pf.parallax.is_none() && pf.photos[1].field.is_none());
+        assert!(pf.parallax.is_none() && pf.photos[1].field.is_none() && pf.photos[1].masks.is_empty());
     }
 
     #[test]

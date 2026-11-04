@@ -579,6 +579,7 @@ impl PanoApp {
                 field: self.fields.get(i).cloned().flatten(),
                 full_long: p.long(),
                 trusted: trusted.get(i).copied().unwrap_or(true),
+                mask: None,
             })
             .collect()
     }

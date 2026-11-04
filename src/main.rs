@@ -18,6 +18,7 @@ mod photo_cache;
 mod imgutil;
 mod project;
 mod sample;
+mod masks;
 mod seams;
 mod stitch;
 mod strip;
@@ -483,6 +484,7 @@ fn selftest_run(files: Vec<PathBuf>) {
             field: fields.get(i).cloned().flatten(),
             full_long: p.w.max(p.h) as f64,
             trusted: true,
+            mask: None,
         })
         .collect();
     // seam cost: mean absolute grey difference of the two photos around every control pair,
