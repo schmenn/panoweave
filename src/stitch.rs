@@ -786,13 +786,7 @@ pub fn render_final(
                 });
             }
             drop(best_w);
-            let levels = {
-                let mut l = 1;
-                while l < 7 && (w.min(h) >> (l + 1)) > 8 {
-                    l += 1;
-                }
-                if ro.levels > 0 { ro.levels.min(l) } else { l }
-            };
+            let levels = if ro.levels > 0 { ro.levels.min(auto_levels(w, h)) } else { auto_levels(w, h) };
             let mut pyr = BlendPyramid::new(w, h, levels)?;
             for i in 0..count {
                 if cancelled() {
@@ -850,6 +844,15 @@ pub fn render_final(
             Ok((col, cov, w, h))
         }
     }
+}
+
+/// Automatic number of multi-band levels for a panorama of `w` x `h` pixels (1..=7).
+pub fn auto_levels(w: usize, h: usize) -> usize {
+    let mut l = 1;
+    while l < 7 && (w.min(h) >> (l + 1)) > 8 {
+        l += 1;
+    }
+    l
 }
 
 /// Rows of the output touched by photo `p`.

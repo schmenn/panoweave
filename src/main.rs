@@ -18,6 +18,8 @@ mod imgutil;
 mod project;
 mod sample;
 mod stitch;
+#[allow(dead_code)] // wired into the export in a later step
+mod strip;
 mod sysmem;
 #[cfg(test)]
 mod testutil;
