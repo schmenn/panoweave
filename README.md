@@ -2,7 +2,7 @@
 
 A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitive, faster alternative to Hugin with better automatic control-point detection. It covers the whole workflow in one window: **load photos → control points → align → crop → export**, plus an **exposure fusion** mode for bracketed shots.
 
-> Status: early development (v0.1.0). Windows is the primary target; nothing is published as a release yet.
+> Status: early development (v0.1.0, alpha). Windows is the primary target; a ready-to-run Windows zip is attached to each [release](https://github.com/schmenn/panoweave/releases).
 
 ## Screenshots
 
