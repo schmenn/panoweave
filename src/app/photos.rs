@@ -109,6 +109,7 @@ impl PanoApp {
                         lens,
                         rot: IDENTITY,
                         enabled: true,
+                        mask: Default::default(),
                     });
                     added += 1;
                 }
@@ -136,6 +137,10 @@ impl PanoApp {
         self.full_tex.clear();
         self.fields.clear();
         self.photos.remove(i);
+        self.mk.sel = 0;
+        self.mk.tool.cancel();
+        self.mk.overlay = None;
+        self.mk.seam_key = None;
         self.gains.remove(i);
         self.cps.retain(|c| c.a != i && c.b != i);
         for c in self.cps.iter_mut() {
@@ -168,6 +173,7 @@ impl PanoApp {
         self.last_match = None;
         self.last_align = None;
         self.pe = PointEditor { b: 1, ..Default::default() };
+        self.mk = Default::default();
     }
 
     // ---------------- project files ----------------
@@ -189,7 +195,7 @@ impl PanoApp {
                 }
             };
             let field = self.fields.get(photos.len()).and_then(|f| f.as_ref()).map(|f| (**f).clone());
-            photos.push(ProjectPhoto { path: pp, lens: p.lens, rot: p.rot, enabled: p.enabled, field, masks: Vec::new() });
+            photos.push(ProjectPhoto { path: pp, lens: p.lens, rot: p.rot, enabled: p.enabled, field, masks: p.mask.strokes.clone() });
         }
         let pf = ProjectFile {
             version: 1,
@@ -240,6 +246,7 @@ impl PanoApp {
             p.lens = pp.lens;
             p.rot = pp.rot;
             p.enabled = pp.enabled;
+            p.mask.load(pp.masks.clone(), p.w as usize, p.h as usize);
         }
         if let Some(pc) = pf.parallax {
             self.parallax_cfg = pc;

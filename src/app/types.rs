@@ -65,6 +65,8 @@ pub(super) struct Photo {
     pub(super) lens: usize,
     pub(super) rot: M3,
     pub(super) enabled: bool,
+    /// what the person painted on the photo to steer the seams
+    pub(super) mask: super::masks_state::PhotoMask,
 }
 
 impl Photo {
@@ -319,6 +321,8 @@ pub struct PanoApp {
     pub(super) click: ClickState,
     pub(super) click_cfg: crate::click_match::ClickConfig,
     pub(super) undo: Vec<UndoEntry>,
+    /// mask painting window
+    pub(super) mk: super::masks_ui::MaskUi,
 }
 
 /// Patch click mode: the two rough clicks and the last result (suggestions).

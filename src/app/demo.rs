@@ -163,8 +163,35 @@ impl PanoApp {
                     }
                 }
                 "export" => self.step = Step::Export,
+                "masks" => self.demo_masks(),
                 _ => {}
             }
+        }
+    }
+
+    /// `masks` demo: the mask window with a few strokes and the seam map.
+    fn demo_masks(&mut self) {
+        use crate::masks::{MaskKind, MaskStroke};
+        self.step = Step::Export;
+        if self.mk.open || self.photos.len() < 2 {
+            return;
+        }
+        self.mk.open = true;
+        self.mk.show_seams = true;
+        let sel = 1.min(self.photos.len() - 1);
+        self.mk.sel = sel;
+        let (w, h) = (self.photos[sel].w as usize, self.photos[sel].h as usize);
+        let strokes = [
+            MaskStroke { kind: MaskKind::Positive, points: vec![[0.30, 0.25], [0.34, 0.45], [0.38, 0.70], [0.40, 0.85]], radius: 0.03, polygon: false },
+            MaskStroke { kind: MaskKind::Negative, points: vec![[0.75, 0.30], [0.88, 0.35], [0.90, 0.60], [0.74, 0.65]], radius: 0.0, polygon: true },
+            MaskStroke { kind: MaskKind::Negative, points: vec![[0.55, 0.20], [0.60, 0.40], [0.58, 0.55]], radius: 0.02, polygon: false },
+        ];
+        for s in strokes {
+            self.photos[sel].mask.commit(s, w, h);
+        }
+        if let Some(o) = self.photos.get_mut(sel.saturating_sub(1)).filter(|_| sel > 0) {
+            let (w, h) = (o.w as usize, o.h as usize);
+            o.mask.commit(MaskStroke { kind: MaskKind::Negative, points: vec![[0.10, 0.50]], radius: 0.05, polygon: false }, w, h);
         }
     }
 
@@ -172,7 +199,8 @@ impl PanoApp {
     fn screenshot_drive(&mut self, ctx: &egui::Context) {
         if let Some(path) = self.screenshot.clone() {
             ctx.request_repaint();
-            let settled = !self.busy() && self.preview_rx.is_none() && self.fusion_rx.is_none() && (self.step != Step::Frame || !self.preview_dirty);
+            let masks_ready = self.demo.as_deref() != Some("masks") || (self.mk.seam_rx.is_none() && (self.mk.seam_tex.is_some() || self.mk.seam_err.is_some()));
+            let settled = masks_ready && !self.busy() && self.preview_rx.is_none() && self.fusion_rx.is_none() && (self.step != Step::Frame || !self.preview_dirty);
             let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || (self.last_output.is_some() && (std::env::var("PW_OUT2").is_err() || self.second_render_started))) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
             if ready && !self.shot_requested {
                 self.shot_requested = true;

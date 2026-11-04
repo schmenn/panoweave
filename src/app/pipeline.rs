@@ -29,7 +29,7 @@ impl PanoApp {
                 field: self.fields.get(i).cloned().flatten(),
                 full_long: p.long(),
                 trusted: trusted.get(i).copied().unwrap_or(true),
-                mask: None,
+                mask: p.mask.buf.clone(),
             })
             .collect()
     }

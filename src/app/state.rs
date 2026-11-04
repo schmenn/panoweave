@@ -2,7 +2,12 @@ use super::*;
 
 impl PanoApp {
     pub fn new(cc: &eframe::CreationContext<'_>, args: crate::Args) -> Self {
-        setup_style(&cc.egui_ctx);
+        Self::with_context(&cc.egui_ctx, args)
+    }
+
+    /// The same without a window (the tests build the app from a bare `egui::Context`).
+    pub(super) fn with_context(ctx: &egui::Context, args: crate::Args) -> Self {
+        setup_style(ctx);
         let (full_tx, full_rx) = channel();
         let mut app = PanoApp {
             mode: Mode::Panorama,
@@ -99,6 +104,7 @@ impl PanoApp {
             click: ClickState::default(),
             click_cfg: crate::click_match::ClickConfig::default(),
             undo: Vec::new(),
+            mk: Default::default(),
         };
         app.patch_win.no_save = app.screenshot.is_some();
         app.patch_win.demo_scroll = std::env::var("PW_SCROLL").ok().and_then(|v| v.parse().ok());

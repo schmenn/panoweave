@@ -90,6 +90,15 @@ pub(super) fn save_output_stoppable(path: &Path, rgba: &[u8], w: usize, h: usize
     })
 }
 
+/// What `run_render` keeps per photo: source, small copy, size, rotation, lens, gain, parallax field, trusted, mask.
+pub(super) type ExportSrc = (Source, Arc<RgbImage>, u32, u32, M3, Lens, [f32; 3], Option<Arc<fine_align::DisplacementField>>, bool, Option<Arc<crate::masks::MaskBuf>>);
+
+/// The photo as the renderer gets it (with its mask), `img` being the picture to sample from.
+pub(super) fn render_photo_of(s: &ExportSrc, img: Arc<RgbImage>) -> RenderPhoto {
+    let (_, _, w, h, rot, lens, gain, field, trusted, mask) = s;
+    RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted, mask: mask.clone() }
+}
+
 impl PanoApp {
     // ---------------- export ----------------
 
@@ -161,6 +170,30 @@ impl PanoApp {
         (crate::strip_write::estimated_file_bytes(w, h, self.write_format()), crate::sysmem::disk_free(&self.target_path()))
     }
 
+    /// The active photos as the export needs them (a copy that the worker thread owns).
+    pub(super) fn export_sources(&self) -> Vec<ExportSrc> {
+        let active = self.active_indices();
+        let trusted = self.connected_photos();
+        active
+            .iter()
+            .map(|&i| {
+                let p = &self.photos[i];
+                (
+                    p.source.clone(),
+                    p.work.clone(),
+                    p.w,
+                    p.h,
+                    p.rot,
+                    self.lenses[p.lens],
+                    if self.match_brightness { self.gains[i] } else { [1.0; 3] },
+                    self.fields.get(i).cloned().flatten(),
+                    trusted[i],
+                    p.mask.buf.clone(),
+                )
+            })
+            .collect()
+    }
+
     pub(super) fn run_render(&mut self) {
         if self.busy() || !self.aligned {
             return;
@@ -185,26 +218,7 @@ impl PanoApp {
                 return;
             }
         }
-        let active = self.active_indices();
-        type Src = (Source, Arc<RgbImage>, u32, u32, M3, Lens, [f32; 3], Option<Arc<fine_align::DisplacementField>>, bool);
-        let trusted = self.connected_photos();
-        let sources: Vec<Src> = active
-            .iter()
-            .map(|&i| {
-                let p = &self.photos[i];
-                (
-                    p.source.clone(),
-                    p.work.clone(),
-                    p.w,
-                    p.h,
-                    p.rot,
-                    self.lenses[p.lens],
-                    if self.match_brightness { self.gains[i] } else { [1.0; 3] },
-                    self.fields.get(i).cloned().flatten(),
-                    trusted[i],
-                )
-            })
-            .collect();
+        let sources = self.export_sources();
         let view = self.view.clone();
         let out_w = ew;
         let blend = self.blend;
@@ -219,10 +233,9 @@ impl PanoApp {
             let t0 = Instant::now();
             let cache = Mutex::new(crate::photo_cache::PhotoCache::new(cache_bytes));
             let loader = |i: usize, pixels: bool| -> Result<RenderPhoto, String> {
-                let (src, work, w, h, rot, lens, gain, field, trusted) = &sources[i];
                 // seams only need the geometry plus where the photo is blown out: the small copy is enough
-                let img = if pixels { cache.lock().unwrap().get_or_load(i, || src.load_full())? } else { work.clone() };
-                Ok(RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted, mask: None })
+                let img = if pixels { cache.lock().unwrap().get_or_load(i, || sources[i].0.load_full())? } else { sources[i].1.clone() };
+                Ok(render_photo_of(&sources[i], img))
             };
             let prog = stitch::Progress { report, cancel };
             // the job's own flag and the global one are both set by "Cancel"
@@ -410,6 +423,7 @@ impl PanoApp {
                     }
                     ui.add_enabled(self.blend == Blend::Smooth, egui::Checkbox::new(&mut self.export_opts.smart_seams, "Smart seams – steer the seams around poles, lamps and people (slower)"))
                         .on_hover_text("Off (default): the photo with the most detail wins where photos overlap. On: the seams are searched so that they run where the photos agree, so a close object that two photos see from different sides is not cut in two. The export takes some seconds longer. Only for Smooth seams.");
+                    self.mask_button(ui);
                 });
                 ui.add_space(10.0);
                 if primary_button(ui, "💾  Create panorama file", !self.busy()).clicked() {
