@@ -24,7 +24,7 @@ pub(super) struct ExportOptions {
     /// TIFF only: 16 bits per channel instead of 8
     pub tiff_16bit: bool,
     /// Low-memory export: the panorama is made strip by strip, so the memory need does not grow
-    /// with the picture size and no quality has to be given up. Smooth blending only. Even when
+    /// with the picture size and no quality has to be given up. Even when
     /// this is off it is used automatically when the normal export would not fit into memory.
     pub low_memory: bool,
 }
@@ -155,14 +155,11 @@ impl PanoApp {
 
     /// Plan of the low-memory export at the chosen size (only Smooth blending has one).
     pub(super) fn strip_estimate(&self) -> Option<Result<crate::strip::StripPlan, String>> {
-        if self.blend != stitch::Blend::Smooth {
-            return None;
-        }
         let cfg = crate::strip::StripConfig::default();
         let (w, h) = self.export_size();
         let levels = if self.blend_levels > 0 { self.blend_levels.min(stitch::auto_levels(w, h)) } else { stitch::auto_levels(w, h) };
         let (strip_budget, _) = crate::strip::split_budget(self.strip_budget()?, &cfg);
-        Some(crate::strip::plan(w, h, levels, stitch::Blend::Smooth, strip_budget, &cfg))
+        Some(crate::strip::plan(w, h, levels, self.blend, strip_budget, &cfg))
     }
 
     /// True when the normal export would not fit into the free memory.
@@ -173,7 +170,7 @@ impl PanoApp {
 
     /// Whether the export runs strip by strip: asked for, or the only way to keep the chosen size.
     fn use_strips(&self) -> bool {
-        self.blend == stitch::Blend::Smooth && (self.export_opts.low_memory || self.normal_export_too_big())
+        self.export_opts.low_memory || self.normal_export_too_big()
     }
 
     pub(super) fn run_render(&mut self) {
@@ -251,7 +248,7 @@ impl PanoApp {
                 let prog = stitch::Progress { report, cancel };
                 let stop = || cancel.load(Ordering::Relaxed) || engine::cancelled();
                 let res = (|| {
-                    let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, &render_opts, &cfg, strip_budget)?;
+                    let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, strip_budget)?;
                     let format = match fmt {
                         OutFormat::Jpeg => crate::strip_write::Format::Jpeg { quality: q },
                         OutFormat::Png => crate::strip_write::Format::Png,
@@ -351,8 +348,8 @@ impl PanoApp {
                     ui.checkbox(&mut self.export_opts.enabled, "More size and file options")
                         .on_hover_text("Off: size from the slider below, files as before. On: choose a width in pixels and 16-bit TIFF.");
                     if self.export_opts.enabled {
-                        ui.add_enabled(self.blend == stitch::Blend::Smooth, egui::Checkbox::new(&mut self.export_opts.low_memory, "Low-memory export"))
-                            .on_hover_text("Makes the picture strip by strip, so big panoramas fit into memory at full quality. Used automatically when the normal export would not fit. Smooth blending only.");
+                        ui.checkbox(&mut self.export_opts.low_memory, "Low-memory export")
+                            .on_hover_text("Makes the picture strip by strip, so big panoramas fit into memory at full quality. Used automatically when the normal export would not fit.");
                         ui.horizontal(|ui| {
                             ui.radio_value(&mut self.export_opts.size_mode, SizeMode::Percent, "Percent of full detail");
                             ui.radio_value(&mut self.export_opts.size_mode, SizeMode::Width, "Width in pixels");

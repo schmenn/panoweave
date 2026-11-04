@@ -861,6 +861,7 @@ pub struct StripJob {
     pub count: usize,
     /// planned peak memory of one strip in bytes
     pub peak_bytes: u64,
+    blend: Blend,
     margin: usize,
     levels: usize,
     fill_extra: usize,
@@ -871,7 +872,7 @@ pub struct StripJob {
     photo_rows: Vec<(usize, usize)>,
 }
 
-/// Plans the memory-saving final render (Smooth blend). The strip height follows from `budget`
+/// Plans the memory-saving final render. The strip height follows from `budget`
 /// (see `strip::plan`); it never changes the result, only how many strips are made. An error
 /// message comes back if even the smallest strip does not fit into `budget`.
 pub fn prepare_strips(
@@ -879,6 +880,7 @@ pub fn prepare_strips(
     load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
     view: &PanoView,
     out_w: usize,
+    blend: Blend,
     ro: &RenderOptions,
     cfg: &crate::strip::StripConfig,
     budget: u64,
@@ -899,8 +901,8 @@ pub fn prepare_strips(
     }
     let qual = if ro.prefer_detail { quality_factors(&details) } else { vec![1.0; count] };
     let levels = if ro.levels > 0 { ro.levels.min(auto_levels(w, h)) } else { auto_levels(w, h) };
-    let plan = crate::strip::plan(w, h, levels, Blend::Smooth, budget, cfg)?;
-    Ok(StripJob { w, h, rows: plan.rows, count: plan.count, peak_bytes: plan.peak_bytes, margin: plan.margin, levels, fill_extra: cfg.fill_extra_levels, ro: *ro, m, vr, qual, photo_rows })
+    let plan = crate::strip::plan(w, h, levels, blend, budget, cfg)?;
+    Ok(StripJob { blend, w, h, rows: plan.rows, count: plan.count, peak_bytes: plan.peak_bytes, margin: plan.margin, levels, fill_extra: cfg.fill_extra_levels, ro: *ro, m, vr, qual, photo_rows })
 }
 
 impl StripJob {
@@ -920,7 +922,10 @@ impl StripJob {
             }
             (prog.report)(si as f32 / n as f32, &format!("Strip {} of {}", si + 1, n));
             let (ya, yb) = crate::strip::padded((s0, s1), self.margin, self.h);
-            let (col, cov) = smooth_window(load, &self.m, &self.vr, &self.qual, &self.photo_rows, self.w, (ya, yb), self.levels, self.fill_extra, &self.ro, &cancelled)?;
+            let (col, cov) = match self.blend {
+                Blend::Smooth => smooth_window(load, &self.m, &self.vr, &self.qual, &self.photo_rows, self.w, (ya, yb), self.levels, self.fill_extra, &self.ro, &cancelled)?,
+                Blend::Feather => feather_window(load, &self.m, &self.qual, &self.photo_rows, self.w, (ya, yb), &self.ro, &cancelled)?,
+            };
             let a = (s0 - ya) * self.w;
             let b = (s1 - ya) * self.w;
             sink(s0, &col[a..b], &cov[a..b], self.w)?;
@@ -936,15 +941,68 @@ pub fn render_strips(
     load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
     view: &PanoView,
     out_w: usize,
+    blend: Blend,
     ro: &RenderOptions,
     cfg: &crate::strip::StripConfig,
     budget: u64,
     sink: StripSink,
     prog: &Progress,
 ) -> Result<(usize, usize), String> {
-    let job = prepare_strips(count, load, view, out_w, ro, cfg, budget)?;
+    let job = prepare_strips(count, load, view, out_w, blend, ro, cfg, budget)?;
     job.run(load, sink, prog)?;
     Ok((job.w, job.h))
+}
+
+/// Feather blend of the output rows `[ya, yb)` only. Every pixel depends on its own position only,
+/// so this gives exactly the same pixels as the whole-image render (no margin needed).
+#[allow(clippy::too_many_arguments)]
+fn feather_window(
+    load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
+    m: &Mapper,
+    qual: &[f32],
+    photo_rows: &[(usize, usize)],
+    w: usize,
+    (ya, yb): (usize, usize),
+    ro: &RenderOptions,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<[f32; 3]>, Vec<f32>), String> {
+    let sample = |img: &RgbImage, x: f32, y: f32| if ro.cubic { crate::imgutil::sample_rgb_linear_cubic(img, x, y) } else { sample_rgb_linear(img, x, y) };
+    let wh = yb - ya;
+    let mut acc = alloc(w * wh, [0.0f32; 3])?;
+    let mut ws = alloc(w * wh, 0.0f32)?;
+    for i in crate::strip::photos_for(photo_rows, (ya, yb)) {
+        if cancelled() {
+            return Err(CANCELLED.into());
+        }
+        let p = load(i, true)?;
+        let (y0, y1) = (photo_rows[i].0.max(ya) - ya, photo_rows[i].1.min(yb) - ya);
+        acc.par_chunks_mut(w).zip(ws.par_chunks_mut(w)).enumerate().for_each(|(ry, (ar, wr))| {
+            if ry < y0 || ry >= y1 {
+                return;
+            }
+            let py = ya + ry;
+            for px in 0..w {
+                let Some(d) = m.dir(px, py) else { continue };
+                if let Some((x, y, wt)) = p.lookup(d) {
+                    let c = sample(&p.img, x, y);
+                    let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[i];
+                    for k in 0..3 {
+                        ar[px][k] += c[k] * p.gain[k] * wt;
+                    }
+                    wr[px] += wt;
+                }
+            }
+        });
+    }
+    acc.par_iter_mut().zip(ws.par_iter_mut()).for_each(|(a, wv)| {
+        if *wv > 0.0 {
+            for k in 0..3 {
+                a[k] /= *wv;
+            }
+            *wv = 1.0;
+        }
+    });
+    Ok((acc, ws))
 }
 
 /// Smooth blend of the output rows `[ya, yb)` only (`ya` must be a multiple of 2^(levels + fill_extra)). Same
@@ -1459,7 +1517,7 @@ mod strip_tests {
             strips += 1;
             Ok(())
         };
-        let (w, h) = render_strips(photos.len(), &load, view, width, ro, cfg, 8 << 30, &mut sink, &prog).unwrap();
+        let (w, h) = render_strips(photos.len(), &load, view, width, Blend::Smooth, ro, cfg, 8 << 30, &mut sink, &prog).unwrap();
         assert_eq!(out.len(), w * h * 4);
         (out, strips, w, h)
     }
@@ -1496,6 +1554,32 @@ mod strip_tests {
     }
 
     #[test]
+    fn feather_strips_are_exactly_the_whole_image_render() {
+        let photos = scene(3, true);
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let load = |i: usize, _px: bool| Ok(photos[i].clone());
+        let cancel = AtomicBool::new(false);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        let ro = RenderOptions { prefer_detail: true, ..Default::default() };
+        let (col, cov, w, h) = render_final(photos.len(), &load, &view, 900, Blend::Feather, &ro, &prog).unwrap();
+        let reference = to_rgba8(&col, &cov);
+        for rows in [1, 17, 64, 100_000] {
+            let cfg = StripConfig { max_rows: rows, min_rows: 1, ..Default::default() };
+            let mut out: Vec<u8> = Vec::new();
+            let mut sink = |y0: usize, c: &[[f32; 3]], v: &[f32], sw: usize| {
+                assert_eq!(out.len(), y0 * sw * 4);
+                out.extend_from_slice(&to_rgba8(c, v));
+                Ok(())
+            };
+            let (w2, h2) = render_strips(photos.len(), &load, &view, 900, Blend::Feather, &ro, &cfg, 8 << 30, &mut sink, &prog).unwrap();
+            assert_eq!((w, h), (w2, h2));
+            let d = compare(&reference, &out);
+            assert_eq!(d.max, 0, "rows {rows}: {} pixels differ", d.differing);
+        }
+    }
+
+    #[test]
     fn cancelling_stops_the_strip_render() {
         let photos = scene(2, false);
         let mut view = PanoView::default();
@@ -1504,7 +1588,7 @@ mod strip_tests {
         let cancel = AtomicBool::new(true);
         let prog = Progress { report: &|_, _| {}, cancel: &cancel };
         let mut sink = |_: usize, _: &[[f32; 3]], _: &[f32], _: usize| Ok(());
-        let e = render_strips(2, &load, &view, 400, &RenderOptions::default(), &StripConfig::default(), 8 << 30, &mut sink, &prog).unwrap_err();
+        let e = render_strips(2, &load, &view, 400, Blend::Smooth, &RenderOptions::default(), &StripConfig::default(), 8 << 30, &mut sink, &prog).unwrap_err();
         assert_eq!(e, CANCELLED);
     }
 }
