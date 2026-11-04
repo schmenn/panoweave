@@ -291,6 +291,7 @@ impl PanoApp {
                 }
                 let mut remove = None;
                 let mut toggled = false;
+                let mut menu_resp: Vec<(usize, egui::Response)> = Vec::new();
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     if self.photos.is_empty() {
                         ui.add_space(30.0);
@@ -300,6 +301,7 @@ impl PanoApp {
                         });
                     }
                     for i in 0..self.photos.len() {
+                        let menu_state = self.menu_state(i);
                         let p = &mut self.photos[i];
                         let connected = !self.matched || comps.get(i) == Some(&main_group);
                         let pts = per_photo[i];
@@ -316,11 +318,15 @@ impl PanoApp {
                                     let th = tw * ts.y / ts.x;
                                     let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(tw, th.min(72.0))))
                                         .corner_radius(4.0)
-                                        .tint(if p.enabled { Color32::WHITE } else { Color32::from_gray(90) });
-                                    ui.add(img);
+                                        .tint(if p.enabled { Color32::WHITE } else { Color32::from_gray(90) })
+                                        .sense(Sense::click());
+                                    menu_resp.push((i, ui.add(img)));
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new(format!("{}. {}", i + 1, p.name)).strong().color(Color32::WHITE));
+                                        menu_resp.push((i, ui.add(egui::Label::new(RichText::new(format!("{}. {}", i + 1, p.name)).strong().color(Color32::WHITE)).sense(Sense::click()))));
                                         ui.label(RichText::new(format!("{} × {}", p.w, p.h)).small().color(MUTED));
+                                        if menu_state.has_mask {
+                                            ui.label(RichText::new("🖌 has masks").small().color(super::masks_ui::MASK_GREEN));
+                                        }
                                         if self.matched {
                                             let (t, c) = if !p.enabled {
                                                 ("left out".to_string(), MUTED)
@@ -345,9 +351,15 @@ impl PanoApp {
                         ui.add_space(2.0);
                     }
                 });
+                let chosen: Vec<(usize, super::photo_menu::PhotoAction)> = menu_resp.iter().filter_map(|(i, r)| self.photo_menu(r, *i)).collect();
                 if toggled {
                     self.needs_align = true;
                     self.preview_dirty = true;
+                }
+                if remove.is_none() {
+                    for (i, a) in chosen {
+                        self.apply_photo_action(i, a);
+                    }
                 }
                 if let Some(i) = remove {
                     if !self.busy() {
@@ -480,6 +492,7 @@ impl PanoApp {
             }
         });
         ui.add_space(8.0);
+        let mut menu_resp: Vec<(usize, egui::Response)> = Vec::new();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for (i, p) in self.photos.iter().enumerate() {
@@ -487,8 +500,11 @@ impl PanoApp {
                         ui.vertical(|ui| {
                             let s = p.thumb.size_vec2();
                             let w = 200.0;
-                            ui.add(egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(4.0));
-                            ui.label(RichText::new(format!("{}. {}", i + 1, p.name)).small());
+                            let tint = if p.enabled { Color32::WHITE } else { Color32::from_gray(90) };
+                            let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(4.0).tint(tint).sense(Sense::click());
+                            menu_resp.push((i, ui.add(img)));
+                            let name = if p.mask.any() { format!("{}. {}  🖌", i + 1, p.name) } else { format!("{}. {}", i + 1, p.name) };
+                            ui.label(RichText::new(name).small());
                             let mut info = format!("{} × {}", p.w, p.h);
                             if let Some(f) = p.info.focal_mm {
                                 info += &format!(" · {f:.0} mm");
@@ -502,6 +518,10 @@ impl PanoApp {
                 }
             });
         });
+        let chosen: Vec<_> = menu_resp.iter().filter_map(|(i, r)| self.photo_menu(r, *i)).collect();
+        for (i, a) in chosen {
+            self.apply_photo_action(i, a);
+        }
     }
 
     // ----- step 2 -----

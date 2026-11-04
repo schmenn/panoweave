@@ -3,7 +3,7 @@
 use super::*;
 use crate::masks::{MaskKind, MaskStroke, POSITIVE};
 
-fn app_with_photos(n: usize) -> PanoApp {
+pub(super) fn app_with_photos(n: usize) -> PanoApp {
     let ctx = egui::Context::default();
     let mut app = PanoApp::with_context(&ctx, crate::Args { screenshot: None, demo: None, files: vec![] });
     let loaded = (0..n)
@@ -17,7 +17,7 @@ fn app_with_photos(n: usize) -> PanoApp {
     app
 }
 
-fn stroke(kind: MaskKind) -> MaskStroke {
+pub(super) fn stroke(kind: MaskKind) -> MaskStroke {
     MaskStroke { kind, points: vec![[0.3, 0.4], [0.6, 0.5]], radius: 0.05, polygon: false }
 }
 
