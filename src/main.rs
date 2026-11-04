@@ -18,6 +18,9 @@ mod photo_cache;
 mod imgutil;
 mod project;
 mod sample;
+#[allow(dead_code)] // the painting tool in the UI uses the rest
+mod masks;
+mod seams;
 mod stitch;
 mod strip;
 mod strip_write;
@@ -298,7 +301,7 @@ fn render_opts() -> stitch::RenderOptions {
     if std::env::var("PW_SHARP").map(|v| v == "0").unwrap_or(false) {
         stitch::RenderOptions::default()
     } else {
-        stitch::RenderOptions { levels: 4, cubic: true, prefer_detail: true }
+        stitch::RenderOptions { levels: 4, cubic: true, prefer_detail: true, seams: seams::SeamConfig::for_export(false) }
     }
 }
 
@@ -482,6 +485,7 @@ fn selftest_run(files: Vec<PathBuf>) {
             field: fields.get(i).cloned().flatten(),
             full_long: p.w.max(p.h) as f64,
             trusted: true,
+            mask: None,
         })
         .collect();
     // seam cost: mean absolute grey difference of the two photos around every control pair,

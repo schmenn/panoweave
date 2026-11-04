@@ -188,7 +188,8 @@ impl PanoApp {
                     f
                 }
             };
-            photos.push(ProjectPhoto { path: pp, lens: p.lens, rot: p.rot, enabled: p.enabled });
+            let field = self.fields.get(photos.len()).and_then(|f| f.as_ref()).map(|f| (**f).clone());
+            photos.push(ProjectPhoto { path: pp, lens: p.lens, rot: p.rot, enabled: p.enabled, field, masks: Vec::new() });
         }
         let pf = ProjectFile {
             version: 1,
@@ -197,6 +198,7 @@ impl PanoApp {
             cps: self.cps.clone(),
             view: self.view.clone(),
             aligned: self.aligned,
+            parallax: Some(self.parallax_cfg.clone()),
         };
         match project::save(&path, &pf) {
             Ok(()) => {
@@ -239,6 +241,10 @@ impl PanoApp {
             p.rot = pp.rot;
             p.enabled = pp.enabled;
         }
+        if let Some(pc) = pf.parallax {
+            self.parallax_cfg = pc;
+        }
+        self.fields = pf.photos.iter().map(|pp| pp.field.clone().map(Arc::new)).collect();
         self.cps = pf.cps;
         self.view = pf.view;
         self.aligned = pf.aligned;

@@ -229,6 +229,8 @@ pub struct RenderPhoto {
     /// joined to the main group of photos by control points; a photo without any connection
     /// may sit at a wrong place, so it is only used where no connected photo covers the spot
     pub trusted: bool,
+    /// what the person painted on this photo to steer the seams (None: nothing)
+    pub mask: Option<Arc<crate::masks::MaskBuf>>,
 }
 
 /// Quality of a photo = how many real pixels it has per angle (focal length × long side).
@@ -294,6 +296,16 @@ impl RenderPhoto {
         mx > CLIP_UPPER || mx < CLIP_LOWER
     }
 
+    /// What the person painted at this spot (`masks::NEUTRAL`, `POSITIVE`, `NEGATIVE`). Works with the full photo
+    /// or a smaller copy of it, like `clipped_at`.
+    #[inline]
+    pub fn mask_at(&self, x: f32, y: f32) -> u8 {
+        match &self.mask {
+            Some(m) => m.at(x, y, self.w, self.h),
+            None => crate::masks::NEUTRAL,
+        }
+    }
+
     /// Pixels per radian of the original photo.
     pub fn detail(&self) -> f64 {
         self.lens.f * self.full_long
@@ -356,11 +368,23 @@ impl Mapper {
 
 /// Sample points along the border (and centre) of a photo, as world directions.
 pub fn photo_outline(p: &RenderPhoto, steps: usize) -> Vec<V3> {
+    outline(p, steps, false)
+}
+
+/// Outline of the photo; with `follow_field` the edge is moved the way the parallax correction
+/// moves it (the photo's border is where the corrected position leaves the image).
+fn outline(p: &RenderPhoto, steps: usize, follow_field: bool) -> Vec<V3> {
     let w = p.w;
     let h = p.h;
     let l = w.max(h);
     let mut pts = Vec::new();
     let to_dir = |x: f64, y: f64| -> V3 {
+        let (mut x, mut y) = (x, y);
+        if let (true, Some(f)) = (follow_field, &p.field) {
+            let d = f.at(x / w, y / h);
+            x -= d[0] * l;
+            y -= d[1] * l;
+        }
         let r = crate::align::ray(&p.lens, [(x - w * 0.5) / l, (y - h * 0.5) / l]);
         mtv(&p.rot, r)
     };
@@ -661,8 +685,8 @@ pub struct Progress<'a> {
 pub fn estimate_bytes(w: usize, h: usize, blend: Blend) -> u64 {
     let px = (w as u64) * (h as u64);
     match blend {
-        // seam map (6 B) + band pyramid (16 B x 1.34) + result (16 B) + 8-bit output (4 B) + row buffers
-        Blend::Smooth => px * 50,
+        // seam map (6 B) + preferred photos of the seam finder (2 B) + band pyramid (16 B x 1.34) + result (16 B) + 8-bit output (4 B) + row buffers
+        Blend::Smooth => px * 52,
         // sums (16 B) + result/coverage (4 B) + 8-bit output (4 B)
         Blend::Feather => px * 26,
     }
@@ -676,6 +700,24 @@ pub fn alloc<T: Clone>(n: usize, v: T) -> Result<Vec<T>, String> {
     Ok(x)
 }
 
+/// Added to the score of the photo the seam finder prefers at a pixel, so it wins wherever it covers the pixel.
+const PREFERRED_BONUS: f32 = 1e9;
+/// A photo painted "use here" beats everything else (also the seam finder's choice).
+const POSITIVE_BONUS: f32 = 1e11;
+/// A photo painted "do not use here" only fills the spot when nothing else covers it.
+const NEGATIVE_FACTOR: f32 = 1e-6;
+
+/// The score of photo `p` at its position (`x`, `y`) after the person's mask and the seam finder's choice.
+#[inline]
+fn adjust_score(p: &RenderPhoto, x: f32, y: f32, score: f32, preferred: bool) -> f32 {
+    match p.mask_at(x, y) {
+        crate::masks::POSITIVE => score + POSITIVE_BONUS,
+        crate::masks::NEGATIVE => score * NEGATIVE_FACTOR,
+        _ if preferred => score + PREFERRED_BONUS,
+        _ => score,
+    }
+}
+
 /// Final render options. `RenderOptions::default()` keeps the earlier behaviour
 /// (automatic band count, bilinear sampling).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -687,6 +729,8 @@ pub struct RenderOptions {
     /// use the most detailed photo where photos overlap (off = seams only by distance from
     /// the photo borders, as before)
     pub prefer_detail: bool,
+    /// seam finder (Smooth blending); off = the photo with the best score wins at every pixel
+    pub seams: crate::seams::SeamConfig,
 }
 
 pub fn render_final(
@@ -709,9 +753,11 @@ pub fn render_final(
 
     // quality of every photo (real pixels per angle); needs only the geometry of each photo
     let mut details = Vec::with_capacity(count);
+    let mut all_rows = Vec::with_capacity(count);
     for i in 0..count {
         let p = load(i, false)?;
         details.push((p.detail(), p.trusted));
+        all_rows.push(roi_rows(&p, &m, &vr, h));
     }
     let prefer = ro.prefer_detail;
     let qual = if prefer { quality_factors(&details) } else { vec![1.0; count] };
@@ -755,7 +801,11 @@ pub fn render_final(
             Ok((acc, ws, w, h))
         }
         Blend::Smooth => {
-            // pass 1: which photo is best at each pixel (seams follow the middle of overlaps)
+            // pass 1: which photo is best at each pixel (seams follow the middle of overlaps,
+            // or the seam finder's choice)
+            (prog.report)(0.0, "Finding seams");
+            let labels = compute_labels(load, &m, &qual, &all_rows, w, h, ro, &cancelled)?;
+            let pref = labels.as_ref().map(|l| l.preferred_rows(w, (0, h)));
             let mut best = alloc(w * h, u16::MAX)?;
             let mut best_w = alloc(w * h, 0.0f32)?;
             let mut photos_dims = Vec::new();
@@ -771,12 +821,14 @@ pub fn render_final(
                     if py < y0 || py >= y1 {
                         return;
                     }
+                    let prow = pref.as_ref().map(|v| &v[py * w..(py + 1) * w]);
                     for px in 0..w {
                         let Some(d) = m.dir(px, py) else { continue };
                         if let Some((x, y, wt)) = p.lookup(d) {
                             // the photo with the most detail wins (see `seam_score`)
                             let sc = if prefer { seam_score(qual[i], wt) } else { wt };
                             let wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
+                            let wt = adjust_score(&p, x, y, wt, prow.is_some_and(|r| r[px] == i as u16));
                             if wt > bw[px] {
                                 bw[px] = wt;
                                 br[px] = i as u16;
@@ -870,6 +922,8 @@ pub struct StripJob {
     vr: M3,
     qual: Vec<f32>,
     photo_rows: Vec<(usize, usize)>,
+    /// where the seam finder wants which photo (Smooth with the seam finder on)
+    labels: Option<Arc<crate::seams::LabelMap>>,
 }
 
 /// Plans the memory-saving final render. The strip height follows from `budget`
@@ -884,6 +938,7 @@ pub fn prepare_strips(
     ro: &RenderOptions,
     cfg: &crate::strip::StripConfig,
     budget: u64,
+    prog: &Progress,
 ) -> Result<StripJob, String> {
     let cb = view.crop_bounds();
     let aspect = (cb[1] - cb[0]) / (cb[3] - cb[2]);
@@ -902,7 +957,15 @@ pub fn prepare_strips(
     let qual = if ro.prefer_detail { quality_factors(&details) } else { vec![1.0; count] };
     let levels = if ro.levels > 0 { ro.levels.min(auto_levels(w, h)) } else { auto_levels(w, h) };
     let plan = crate::strip::plan(w, h, levels, blend, budget, cfg)?;
-    Ok(StripJob { blend, w, h, rows: plan.rows, count: plan.count, peak_bytes: plan.peak_bytes, margin: plan.margin, levels, fill_extra: cfg.fill_extra_levels, ro: *ro, m, vr, qual, photo_rows })
+    // the seam finder decides once for the whole panorama, so the picture does not depend on the strips
+    let labels = if blend == Blend::Smooth {
+        let cancelled = || prog.cancel.load(Ordering::Relaxed) || crate::engine::cancelled();
+        (prog.report)(0.0, "Finding seams");
+        compute_labels(load, &m, &qual, &photo_rows, w, h, ro, &cancelled)?.map(Arc::new)
+    } else {
+        None
+    };
+    Ok(StripJob { blend, labels, w, h, rows: plan.rows, count: plan.count, peak_bytes: plan.peak_bytes, margin: plan.margin, levels, fill_extra: cfg.fill_extra_levels, ro: *ro, m, vr, qual, photo_rows })
 }
 
 impl StripJob {
@@ -923,7 +986,7 @@ impl StripJob {
             (prog.report)(si as f32 / n as f32, &format!("Strip {} of {}", si + 1, n));
             let (ya, yb) = crate::strip::padded((s0, s1), self.margin, self.h);
             let (col, cov) = match self.blend {
-                Blend::Smooth => smooth_window(load, &self.m, &self.vr, &self.qual, &self.photo_rows, self.w, (ya, yb), self.levels, self.fill_extra, &self.ro, &cancelled)?,
+                Blend::Smooth => smooth_window(load, &self.m, &self.vr, &self.qual, &self.photo_rows, self.w, (ya, yb), self.levels, self.fill_extra, &self.ro, self.labels.as_deref(), &cancelled)?,
                 Blend::Feather => feather_window(load, &self.m, &self.qual, &self.photo_rows, self.w, (ya, yb), &self.ro, &cancelled)?,
             };
             let a = (s0 - ya) * self.w;
@@ -948,9 +1011,74 @@ pub fn render_strips(
     sink: StripSink,
     prog: &Progress,
 ) -> Result<(usize, usize), String> {
-    let job = prepare_strips(count, load, view, out_w, blend, ro, cfg, budget)?;
+    let job = prepare_strips(count, load, view, out_w, blend, ro, cfg, budget, prog)?;
     job.run(load, sink, prog)?;
     Ok((job.w, job.h))
+}
+
+/// The seam finder's label map for the whole panorama (None when the seam finder is off). Every photo
+/// is looked at once in the middle of every block of a coarse grid; only the small working copy of the
+/// photo is needed for that.
+#[allow(clippy::too_many_arguments)]
+fn compute_labels(
+    load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
+    m: &Mapper,
+    qual: &[f32],
+    photo_rows: &[(usize, usize)],
+    w: usize,
+    h: usize,
+    ro: &RenderOptions,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<crate::seams::LabelMap>, String> {
+    use crate::seams::{PhotoBlocks, Sample, VALID};
+    let cfg = ro.seams;
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    let (bsz, bw, bh) = crate::seams::grid(w, h, cfg.max_side);
+    let t0 = std::time::Instant::now();
+    let mut photos = Vec::with_capacity(photo_rows.len());
+    for (i, &(y0, y1)) in photo_rows.iter().enumerate() {
+        if cancelled() {
+            return Err(CANCELLED.into());
+        }
+        let p = load(i, false)?;
+        let by0 = (y0 / bsz).min(bh);
+        let by1 = y1.div_ceil(bsz).min(bh).max(by0);
+        let mut pb = PhotoBlocks::new(by0, by1 - by0, bw);
+        let (sx, sy) = (p.img.width() as f32 / p.w as f32, p.img.height() as f32 / p.h as f32);
+        pb.samples.par_chunks_mut(bw).enumerate().for_each(|(r, row)| {
+            let py = ((by0 + r) * bsz + bsz / 2).min(h - 1);
+            for (bx, out) in row.iter_mut().enumerate() {
+                let px = (bx * bsz + bsz / 2).min(w - 1);
+                let Some(d) = m.dir(px, py) else { continue };
+                let Some((x, y, wt)) = p.lookup(d) else { continue };
+                let sc = if ro.prefer_detail { seam_score(qual[i], wt) } else { wt };
+                let score = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
+                let c = sample_rgb_linear(&p.img, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5);
+                let to8 = |v: f32, g: f32| (crate::imgutil::linear_to_srgb(v * g) * 255.0 + 0.5) as u8;
+                let flags = VALID
+                    | match p.mask_at(x, y) {
+                        crate::masks::POSITIVE => crate::seams::POSITIVE,
+                        crate::masks::NEGATIVE => crate::seams::NEGATIVE,
+                        _ => 0,
+                    };
+                *out = Sample { rgb: [to8(c[0], p.gain[0]), to8(c[1], p.gain[1]), to8(c[2], p.gain[2])], flags, score };
+            }
+        });
+        photos.push(pb);
+    }
+    let t1 = t0.elapsed();
+    let labels = crate::seams::find(&photos, bw, bh, &cfg, cancelled)?;
+    if std::env::var("PW_SEAM_DEBUG").is_ok() {
+        eprintln!("seam finder: grid {bw}x{bh} blocks of {bsz} px, {} photos, blocks {:.1} s, graph cuts {:.1} s", photos.len(), t1.as_secs_f32(), (t0.elapsed() - t1).as_secs_f32());
+    }
+    let map = crate::seams::LabelMap { bw, bh, bsz, labels };
+    if let Ok(f) = std::env::var("PW_SEAM_DEBUG") {
+        // experiments: a picture of the seams (one block = one pixel)
+        let _ = map.debug_image().save(f);
+    }
+    Ok(Some(map))
 }
 
 /// Feather blend of the output rows `[ya, yb)` only. Every pixel depends on its own position only,
@@ -1019,11 +1147,13 @@ fn smooth_window(
     levels: usize,
     fill_extra: usize,
     ro: &RenderOptions,
+    labels: Option<&crate::seams::LabelMap>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(Vec<[f32; 3]>, Vec<f32>), String> {
     let sample = |img: &RgbImage, x: f32, y: f32| if ro.cubic { crate::imgutil::sample_rgb_linear_cubic(img, x, y) } else { sample_rgb_linear(img, x, y) };
     let wh = yb - ya;
     let prefer = ro.prefer_detail;
+    let pref = labels.map(|l| l.preferred_rows(w, (ya, yb)));
     // photos touching the window, with their rows relative to the window
     let touching = crate::strip::photos_for(photo_rows, (ya, yb));
     let rel = |i: usize| (photo_rows[i].0.max(ya) - ya, photo_rows[i].1.min(yb) - ya);
@@ -1040,11 +1170,13 @@ fn smooth_window(
                 return;
             }
             let py = ya + ry;
+            let prow = pref.as_ref().map(|v| &v[ry * w..(ry + 1) * w]);
             for px in 0..w {
                 let Some(d) = m.dir(px, py) else { continue };
                 if let Some((x, y, wt)) = p.lookup(d) {
                     let sc = if prefer { seam_score(qual[i], wt) } else { wt };
                     let wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
+                    let wt = adjust_score(&p, x, y, wt, prow.is_some_and(|r| r[px] == i as u16));
                     if wt > bw[px] {
                         bw[px] = wt;
                         br[px] = i as u16;
@@ -1115,11 +1247,19 @@ pub fn auto_levels(w: usize, h: usize) -> usize {
     l
 }
 
+/// Extra rows (output pixels) around the rows a photo touches; larger with a parallax field.
+const ROI_RESERVE: f64 = 4.0;
+const ROI_RESERVE_FIELD: f64 = 16.0;
+
 /// Rows of the output touched by photo `p`.
 fn roi_rows(p: &RenderPhoto, m: &Mapper, vr: &M3, h: usize) -> (usize, usize) {
     let mut y0 = f64::MAX;
     let mut y1 = f64::MIN;
-    let pts = photo_outline(p, 32);
+    let mut pts = photo_outline(p, 32);
+    if p.field.is_some() {
+        // the parallax field moves the edge of the photo: take both outlines
+        pts.extend(outline(p, 32, true));
+    }
     let mut bad = false;
     for d in pts {
         match m.to_px(d, vr) {
@@ -1133,8 +1273,10 @@ fn roi_rows(p: &RenderPhoto, m: &Mapper, vr: &M3, h: usize) -> (usize, usize) {
     if bad || y0 > y1 {
         return (0, h);
     }
-    let mut y0 = (y0 - 4.0).floor().max(0.0) as usize;
-    let mut y1 = ((y1 + 4.0).ceil().max(0.0) as usize).min(h);
+    // a little extra for the change of the field between the edge and the inside of the photo
+    let reserve = if p.field.is_some() { ROI_RESERVE_FIELD } else { ROI_RESERVE };
+    let mut y0 = (y0 - reserve).floor().max(0.0) as usize;
+    let mut y1 = ((y1 + reserve).ceil().max(0.0) as usize).min(h);
     // a photo containing a pole of the view extends to the top/bottom
     if p.lookup(mtv(vr, [0.0, -1.0, 0.0])).is_some() {
         y0 = 0;
@@ -1474,6 +1616,7 @@ mod strip_tests {
                     gain: [1.0 + 0.05 * i as f32, 1.0, 1.0 - 0.03 * i as f32],
                     full_long: if detail_boost && i == 1 { 600.0 } else { 300.0 },
                     trusted: true,
+                    mask: None,
                     img: Arc::new(img),
                 }
             })
@@ -1504,7 +1647,7 @@ mod strip_tests {
     }
 
     /// Renders with strips of at most `strip_rows` rows. Returns (8-bit result, number of strips).
-    fn strips_of(photos: &[RenderPhoto], view: &PanoView, width: usize, ro: &RenderOptions, cfg: &StripConfig) -> (Vec<u8>, usize, usize, usize) {
+    fn strips_of(photos: &[RenderPhoto], view: &PanoView, width: usize, blend: Blend, ro: &RenderOptions, cfg: &StripConfig) -> (Vec<u8>, usize, usize, usize) {
         let load = |i: usize, _px: bool| Ok(photos[i].clone());
         let cancel = AtomicBool::new(false);
         let prog = Progress { report: &|_, _| {}, cancel: &cancel };
@@ -1517,7 +1660,7 @@ mod strip_tests {
             strips += 1;
             Ok(())
         };
-        let (w, h) = render_strips(photos.len(), &load, view, width, Blend::Smooth, ro, cfg, 8 << 30, &mut sink, &prog).unwrap();
+        let (w, h) = render_strips(photos.len(), &load, view, width, blend, ro, cfg, 8 << 30, &mut sink, &prog).unwrap();
         assert_eq!(out.len(), w * h * 4);
         (out, strips, w, h)
     }
@@ -1536,11 +1679,11 @@ mod strip_tests {
             let reference = to_rgba8(&col, &cov);
             // one window = the whole image in a single strip
             let one = StripConfig { max_rows: 1 << 20, ..Default::default() };
-            let (whole, n, _, _) = strips_of(&photos, &view, 2000, &ro, &one);
+            let (whole, n, _, _) = strips_of(&photos, &view, 2000, Blend::Smooth, &ro, &one);
             assert_eq!(n, 1);
             // several strips must give the very same pixels as the single window
             let cfg = StripConfig { max_rows: rows, min_rows: 16, ..Default::default() };
-            let (strips, n, w2, h2) = strips_of(&photos, &view, 2000, &ro, &cfg);
+            let (strips, n, w2, h2) = strips_of(&photos, &view, 2000, Blend::Smooth, &ro, &cfg);
             assert_eq!((w, h), (w2, h2));
             assert!(n >= 4, "expected several strips, got {n}");
             let d = compare(&whole, &strips);
@@ -1576,6 +1719,124 @@ mod strip_tests {
             assert_eq!((w, h), (w2, h2));
             let d = compare(&reference, &out);
             assert_eq!(d.max, 0, "rows {rows}: {} pixels differ", d.differing);
+        }
+    }
+
+    /// The rows a photo touches must contain every row where the photo is really visible. With a
+    /// parallax field the photo's edge moves, so the rows have to follow it (checked pixel by pixel).
+    #[test]
+    fn rows_of_a_photo_cover_everything_it_shows_even_with_a_parallax_field() {
+        let mut photos = scene(3, false);
+        for (i, p) in photos.iter_mut().enumerate() {
+            let (gw, gh) = (8, 6);
+            // a smooth field of up to +-0.03 / 0.04 of the long side, different for every photo
+            let d = (0..gw * gh).map(|k| {
+                let (x, y) = ((k % gw) as f32 / gw as f32, (k / gw) as f32 / gh as f32);
+                [0.03 * ((i as f32 + 1.0) * 2.0 * x).sin(), 0.04 * ((i as f32 + 1.0) * 1.5 + 3.0 * y).sin() + 0.02]
+            });
+            p.field = Some(Arc::new(crate::fine_align::DisplacementField { gw, gh, d: d.collect() }));
+        }
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let cb = view.crop_bounds();
+        let (w, h) = (900usize, ((900.0 / ((cb[1] - cb[0]) / (cb[3] - cb[2]))).round() as usize).max(16));
+        let m = Mapper::new(&view, cb, w, h);
+        let vr = view.rotation();
+        for (i, p) in photos.iter().enumerate() {
+            let (y0, y1) = roi_rows(p, &m, &vr, h);
+            let rows: Vec<usize> = (0..h).filter(|&py| (0..w).any(|px| m.dir(px, py).is_some_and(|d| p.lookup(d).is_some()))).collect();
+            let (lo, hi) = (*rows.first().unwrap(), *rows.last().unwrap() + 1);
+            assert!(y0 <= lo && y1 >= hi, "photo {i}: visible rows {lo}..{hi}, but only {y0}..{y1} are used");
+        }
+    }
+
+    #[test]
+    fn with_the_seam_finder_the_strip_height_still_changes_nothing() {
+        let photos = scene(3, true);
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let seams = crate::seams::SeamConfig { enabled: true, max_side: 120, ..Default::default() };
+        let ro = RenderOptions { prefer_detail: true, levels: 4, seams, ..Default::default() };
+        let off = RenderOptions { seams: Default::default(), ..ro };
+        let one = StripConfig { max_rows: 1 << 20, ..Default::default() };
+        let (whole, n, _, _) = strips_of(&photos, &view, 1400, Blend::Smooth, &ro, &one);
+        assert_eq!(n, 1);
+        for rows in [32, 64, 160] {
+            let cfg = StripConfig { max_rows: rows, min_rows: 16, ..Default::default() };
+            let (strips, n, _, _) = strips_of(&photos, &view, 1400, Blend::Smooth, &ro, &cfg);
+            assert!(n >= 2, "rows {rows}: {n} strips");
+            let d = compare(&whole, &strips);
+            assert!(d.max <= 1, "rows {rows}: strips differ from one window: max {} in {}/{} px", d.max, d.differing, d.total);
+        }
+        // the seam finder changes the picture (the seams move), the switch off gives the earlier picture
+        let (plain, _, _, _) = strips_of(&photos, &view, 1400, Blend::Smooth, &off, &one);
+        let (plain2, _, _, _) = strips_of(&photos, &view, 1400, Blend::Smooth, &RenderOptions { seams: crate::seams::SeamConfig { enabled: false, max_side: 77, ..Default::default() }, ..ro }, &one);
+        assert_eq!(compare(&plain, &plain2).max, 0, "off is off, whatever the other seam settings are");
+        let load = |i: usize, _px: bool| Ok(photos[i].clone());
+        let cancel = AtomicBool::new(false);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        let (col, cov, _, _) = render_final(photos.len(), &load, &view, 1400, Blend::Smooth, &ro, &prog).unwrap();
+        let reference = to_rgba8(&col, &cov);
+        let dr = compare(&reference, &whole);
+        eprintln!("seam finder on: strips vs render_final: mean {:.3} max {}; seams on vs off: mean {:.3}", dr.mean, dr.max, compare(&plain, &whole).mean);
+        assert!(dr.mean < 1.5, "the whole-image render and the strips must agree about the seams: mean {:.3}", dr.mean);
+    }
+
+    /// Two plain photos (red and blue) that overlap. A mask painted over the whole blue photo must decide the
+    /// overlap, with the seam finder on and off, and in strips as well as in the whole-image render.
+    #[test]
+    fn masks_decide_which_photo_shows_in_the_overlap() {
+        let mut photos: Vec<RenderPhoto> = [[200u8, 30, 30], [30, 30, 200]]
+            .iter()
+            .enumerate()
+            .map(|(i, c)| RenderPhoto {
+                w: 300.0,
+                h: 200.0,
+                rot: camera_from_ypr((i as f64 * 22.0 - 11.0).to_radians(), 0.0, 0.0),
+                lens: Lens::from_hfov_deg(50.0),
+                field: None,
+                gain: [1.0; 3],
+                full_long: 300.0,
+                trusted: true,
+                mask: None,
+                img: Arc::new(crate::testutil::solid(300, 200, *c)),
+            })
+            .collect();
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let cb = view.crop_bounds();
+        let (w, h) = (700usize, ((700.0 / ((cb[1] - cb[0]) / (cb[3] - cb[2]))).round() as usize).max(16));
+        let m = Mapper::new(&view, cb, w, h);
+        let cancel = AtomicBool::new(false);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        let all = |v: u8| Some(Arc::new(crate::masks::MaskBuf { w: 4, h: 4, data: vec![v; 16] }));
+        for seams_on in [false, true] {
+            let ro = RenderOptions { prefer_detail: true, levels: 3, seams: crate::seams::SeamConfig { enabled: seams_on, max_side: 140, ..Default::default() }, ..Default::default() };
+            for (mask_kind, winner_inside_overlap) in [(crate::masks::POSITIVE, 1usize), (crate::masks::NEGATIVE, 0usize)] {
+                photos[1].mask = all(mask_kind);
+                let load = |i: usize, _px: bool| Ok(photos[i].clone());
+                let (col, cov, _, _) = render_final(2, &load, &view, w, Blend::Smooth, &ro, &prog).unwrap();
+                let (mut checked, mut wrong) = (0, 0);
+                for py in 0..h {
+                    for px in 0..w {
+                        let Some(d) = m.dir(px, py) else { continue };
+                        let (a, b) = (photos[0].lookup(d), photos[1].lookup(d));
+                        // only pixels well inside both photos
+                        let (Some(a), Some(b)) = (a, b) else { continue };
+                        if a.2 < 0.15 || b.2 < 0.15 || cov[py * w + px] == 0.0 {
+                            continue;
+                        }
+                        checked += 1;
+                        let c = col[py * w + px];
+                        let is_blue = c[2] > c[0];
+                        if is_blue != (winner_inside_overlap == 1) {
+                            wrong += 1;
+                        }
+                    }
+                }
+                assert!(checked > 500, "the photos should overlap well: {checked} pixels checked");
+                assert!(wrong * 50 < checked, "seams {seams_on}, mask {mask_kind}: {wrong} of {checked} overlap pixels show the wrong photo");
+            }
         }
     }
 

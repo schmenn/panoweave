@@ -1062,7 +1062,7 @@ pub fn reoptimize(
 
 /// Smooth displacement field over one photo (normalised units = fraction of the long side).
 /// It is added to the photo's sampling position, so the correction costs no extra resampling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DisplacementField {
     pub gw: usize,
     pub gh: usize,
@@ -1241,4 +1241,46 @@ pub fn parallax_fields(
             Some(Arc::new(build_field(&keep, gw, gh, sigma_f, aspect)))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod parallax_tests {
+    use super::*;
+
+    fn sample(fx: f64, fy: f64, d: [f64; 2]) -> FieldSample {
+        FieldSample { fx, fy, d, w: 1.0 }
+    }
+
+    #[test]
+    fn the_field_follows_the_samples_and_fades_out_far_from_them() {
+        // a dense block of samples that all want to move by (+0.004, -0.002) in the middle of the photo
+        let mut samples = Vec::new();
+        for gx in 0..6 {
+            for gy in 0..6 {
+                samples.push(sample(0.4 + gx as f64 * 0.04, 0.4 + gy as f64 * 0.04, [0.004, -0.002]));
+            }
+        }
+        let f = build_field(&samples, 32, 32, 0.03, 1.0);
+        let mid = f.at(0.5, 0.5);
+        assert!((mid[0] - 0.004).abs() < 0.0008 && (mid[1] + 0.002).abs() < 0.0006, "middle: {mid:?}");
+        let corner = f.at(0.02, 0.02);
+        assert!(corner[0].abs() < 1e-6 && corner[1].abs() < 1e-6, "corner: {corner:?}");
+    }
+
+    #[test]
+    fn without_samples_there_is_no_correction() {
+        let f = build_field(&[], 8, 6, 0.05, 1.5);
+        assert!(f.d.iter().all(|d| *d == [0.0, 0.0]));
+        assert_eq!((f.gw, f.gh), (8, 6));
+    }
+
+    #[test]
+    fn the_field_is_interpolated_smoothly_and_clamped_at_the_edge() {
+        let f = DisplacementField { gw: 2, gh: 1, d: vec![[0.0, 0.0], [0.01, 0.02]] };
+        let mid = f.at(0.5, 0.5);
+        assert!((mid[0] - 0.005).abs() < 1e-9 && (mid[1] - 0.01).abs() < 1e-9, "{mid:?}");
+        // outside the grid the nearest value is used
+        assert_eq!(f.at(-1.0, 0.5), [0.0, 0.0]);
+        assert!((f.at(2.0, 0.5)[0] - 0.01).abs() < 1e-9);
+    }
 }
