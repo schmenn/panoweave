@@ -323,6 +323,8 @@ pub struct PanoApp {
     pub(super) undo: Vec<UndoEntry>,
     /// mask painting window
     pub(super) mk: super::masks_ui::MaskUi,
+    /// secondary windows as real OS windows (position and size remembered)
+    pub(super) vp: super::viewport_window::ViewportWindows,
 }
 
 /// Patch click mode: the two rough clicks and the last result (suggestions).

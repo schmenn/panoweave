@@ -133,8 +133,11 @@ impl PanoApp {
                 events.extend([Ptr::Down(p), Ptr::Up]);
             }
         }
-        // keys only while the pointer is over the window, so other steps keep their own shortcuts
-        if ui.rect_contains_pointer(ui.clip_rect()) {
+        // In its own OS window the keys belong to the window while it has the focus (egui input is
+        // per window, so the main window's shortcuts cannot clash). Embedded in the main window
+        // they only count while the pointer is over it, so other steps keep their own shortcuts.
+        let own_window = ui.ctx().viewport_id() != egui::ViewportId::ROOT;
+        if (own_window && ui.input(|i| i.focused)) || (!own_window && ui.rect_contains_pointer(ui.clip_rect())) {
             if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 events.push(Ptr::Enter);
             }

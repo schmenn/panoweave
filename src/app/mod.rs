@@ -30,6 +30,7 @@ mod points_predict;
 mod state;
 mod types;
 mod ui_helpers;
+mod viewport_window;
 
 pub use self::types::PanoApp;
 use self::{connections::*, consts::*, export::*, points_panes::*, types::*, ui_helpers::*};

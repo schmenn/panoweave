@@ -105,8 +105,10 @@ impl PanoApp {
             click_cfg: crate::click_match::ClickConfig::default(),
             undo: Vec::new(),
             mk: Default::default(),
+            vp: Default::default(),
         };
         app.patch_win.no_save = app.screenshot.is_some();
+        app.vp.no_save = app.screenshot.is_some();
         app.patch_win.demo_scroll = std::env::var("PW_SCROLL").ok().and_then(|v| v.parse().ok());
         if !args.files.is_empty() {
             app.add_paths(args.files);
