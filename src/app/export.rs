@@ -555,14 +555,14 @@ mod tests {
         assert!(!o.enabled && !o.width_mode() && !o.sixteen_bit(OutFormat::Tiff));
         assert_eq!(output_width(4000.0, 70.0, &o), 2800);
         // switched off: width settings are ignored
-        let o = ExportOptions { enabled: false, size_mode: SizeMode::Width, target_width: 999, tiff_16bit: true };
+        let o = ExportOptions { enabled: false, size_mode: SizeMode::Width, target_width: 999, tiff_16bit: true, low_memory: false };
         assert_eq!(output_width(4000.0, 50.0, &o), 2000);
         assert!(!o.sixteen_bit(OutFormat::Tiff));
     }
 
     #[test]
     fn target_width_is_used_and_clamped() {
-        let mut o = ExportOptions { enabled: true, size_mode: SizeMode::Width, target_width: 3000, tiff_16bit: true };
+        let mut o = ExportOptions { enabled: true, size_mode: SizeMode::Width, target_width: 3000, tiff_16bit: true, low_memory: false };
         assert_eq!(output_width(4000.0, 10.0, &o), 3000);
         o.target_width = 1;
         assert_eq!(output_width(4000.0, 10.0, &o), MIN_TARGET_WIDTH as usize);
