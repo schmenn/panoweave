@@ -38,6 +38,7 @@ use self::{connections::*, consts::*, export::*, points_panes::*, types::*, ui_h
 use crate::align::{ControlPoint, Lens};
 use crate::engine::{self, AlignResult, AlignSettings, LoadedPhoto, MatchResult, MatchSettings, Source};
 use crate::fusion::{self, FusionWeights};
+use crate::gainmap::GainMap;
 use crate::geometry::{self, h_apply, mtv, mv, M3, IDENTITY};
 use crate::guided::{self, P2};
 use crate::align::CpKind;

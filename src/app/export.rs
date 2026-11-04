@@ -91,12 +91,12 @@ pub(super) fn save_output_stoppable(path: &Path, rgba: &[u8], w: usize, h: usize
 }
 
 /// What `run_render` keeps per photo: source, small copy, size, rotation, lens, gain, parallax field, trusted, mask.
-pub(super) type ExportSrc = (Source, Arc<RgbImage>, u32, u32, M3, Lens, [f32; 3], Option<Arc<fine_align::DisplacementField>>, bool, Option<Arc<crate::masks::MaskBuf>>);
+pub(super) type ExportSrc = (Source, Arc<RgbImage>, u32, u32, M3, Lens, [f32; 3], Option<Arc<fine_align::DisplacementField>>, bool, Option<Arc<crate::masks::MaskBuf>>, Option<Arc<GainMap>>);
 
 /// The photo as the renderer gets it (with its mask), `img` being the picture to sample from.
 pub(super) fn render_photo_of(s: &ExportSrc, img: Arc<RgbImage>) -> RenderPhoto {
-    let (_, _, w, h, rot, lens, gain, field, trusted, mask) = s;
-    RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted, mask: mask.clone() }
+    let (_, _, w, h, rot, lens, gain, field, trusted, mask, gain_map) = s;
+    RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, gain_map: gain_map.clone(), field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted, mask: mask.clone() }
 }
 
 impl PanoApp {
@@ -174,6 +174,8 @@ impl PanoApp {
     pub(super) fn export_sources(&self) -> Vec<ExportSrc> {
         let active = self.active_indices();
         let trusted = self.connected_photos();
+        // experiments: PW_GAINS=0 switches the brightness matching off
+        let gains_on = self.match_brightness && std::env::var("PW_GAINS").map(|v| v != "0").unwrap_or(true);
         active
             .iter()
             .map(|&i| {
@@ -185,10 +187,11 @@ impl PanoApp {
                     p.h,
                     p.rot,
                     self.lenses[p.lens],
-                    if self.match_brightness && std::env::var("PW_GAINS").map(|v| v != "0").unwrap_or(true) { self.gains[i] } else { [1.0; 3] },
+                    if gains_on { self.gains[i] } else { [1.0; 3] },
                     self.fields.get(i).cloned().flatten(),
                     trusted[i],
                     p.mask.buf.clone(),
+                    if gains_on { self.gain_map_of(i) } else { None },
                 )
             })
             .collect()
@@ -402,6 +405,13 @@ impl PanoApp {
                     ui.radio_value(&mut self.blend, Blend::Smooth, "Smooth seams (recommended) – hides seams at every detail level");
                     ui.radio_value(&mut self.blend, Blend::Feather, "Soft fade – faster, can show ghosting with moving subjects");
                     ui.checkbox(&mut self.match_brightness, "Match brightness and colour between photos");
+                    ui.add_enabled_ui(self.match_brightness, |ui| {
+                        let r = ui.checkbox(&mut self.gainmap_cfg.enabled, "Smooth brightness correction across each photo").on_hover_text("Corrects brightness gradients, vignetting and automatic exposure inside the photos, so that no photo shows up as a lighter or darker rectangle (for example in the sky).");
+                        if r.changed() {
+                            self.update_gains();
+                            self.preview_dirty = true;
+                        }
+                    });
                     ui.horizontal(|ui| {
                         ui.label("Seam transition (detail levels)");
                         egui::ComboBox::from_id_salt("blend_levels")

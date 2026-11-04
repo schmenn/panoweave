@@ -358,6 +358,7 @@ impl PanoApp {
                             rot: self.photos[i].rot,
                             lens: self.lenses[self.photos[i].lens],
                             gain: if self.match_brightness { self.gains.get(i).copied().unwrap_or([1.0; 3]) } else { [1.0; 3] },
+                            gain_map: self.gain_map_of(i),
                             field: self.fields.get(i).cloned().flatten(),
                             full_long: self.photos[i].long(),
                             trusted: true,
@@ -373,7 +374,8 @@ impl PanoApp {
                             let s = |p: &RenderPhoto| -> Option<[f32; 3]> {
                                 let (px, py, _) = p.lookup(d)?;
                                 let c = imgutil::sample_rgb_linear(&p.img, px, py);
-                                Some([c[0] * p.gain[0], c[1] * p.gain[1], c[2] * p.gain[2]])
+                                let g = p.gain_at(px, py);
+                                Some([c[0] * g[0], c[1] * g[1], c[2] * g[2]])
                             };
                             let (ca, cb) = (s(&rp[0]), s(&rp[1]));
                             let lin = match (ca, cb) {

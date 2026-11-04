@@ -6,6 +6,8 @@ mod engine;
 mod features;
 mod fine_align;
 mod fusion;
+mod gainmap;
+mod gainmap_solve;
 mod geometry;
 mod guided;
 mod click_match;
@@ -482,6 +484,7 @@ fn selftest_run(files: Vec<PathBuf>) {
             rot: r.rots[i],
             lens: r.lenses[lens_of[i]],
             gain: [1.0; 3],
+            gain_map: None,
             field: fields.get(i).cloned().flatten(),
             full_long: p.w.max(p.h) as f64,
             trusted: true,

@@ -223,6 +223,8 @@ pub struct RenderPhoto {
     /// local parallax correction (added to the sampling position), if any
     pub field: Option<Arc<crate::fine_align::DisplacementField>>,
     pub gain: [f32; 3],
+    /// smooth brightness correction across the photo on top of `gain` (None: `gain` only)
+    pub gain_map: Option<Arc<crate::gainmap::GainMap>>,
     /// long side of the ORIGINAL photo in pixels (its real resolution; `w`/`h` may describe a
     /// smaller working copy)
     pub full_long: f64,
@@ -303,6 +305,19 @@ impl RenderPhoto {
         match &self.mask {
             Some(m) => m.at(x, y, self.w, self.h),
             None => crate::masks::NEUTRAL,
+        }
+    }
+
+    /// Brightness factor at the photo position (`x`, `y`) (pixels like `lookup`): `gain`, times
+    /// the correction map when there is one. Works with the full photo or a smaller copy.
+    #[inline]
+    pub fn gain_at(&self, x: f32, y: f32) -> [f32; 3] {
+        match &self.gain_map {
+            None => self.gain,
+            Some(m) => {
+                let c = m.at((x + 0.5) / self.w as f32, (y + 0.5) / self.h as f32);
+                [self.gain[0] * c[0], self.gain[1] * c[1], self.gain[2] * c[2]]
+            }
         }
     }
 
@@ -474,8 +489,9 @@ pub fn render_preview(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usiz
                 if let Some((x, y, wt)) = p.lookup(d) {
                     let c = sample_rgb_linear(&p.img, x, y);
                     let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[pi];
+                    let g = p.gain_at(x, y);
                     for k in 0..3 {
-                        acc[k] += c[k] * p.gain[k] * wt;
+                        acc[k] += c[k] * g[k] * wt;
                     }
                     ws += wt;
                 }
@@ -782,8 +798,9 @@ pub fn render_final(
                         if let Some((x, y, wt)) = p.lookup(d) {
                             let c = sample(&p.img, x, y);
                             let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[i];
+                            let g = p.gain_at(x, y);
                             for k in 0..3 {
-                                ar[px][k] += c[k] * p.gain[k] * wt;
+                                ar[px][k] += c[k] * g[k] * wt;
                             }
                             wr[px] += wt;
                         }
@@ -873,7 +890,8 @@ pub fn render_final(
                             let Some(d) = m.dir(px, py) else { continue };
                             if let Some((x, y, _)) = p.lookup(d) {
                                 let c = sample(&p.img, x, y);
-                                ir[px] = [c[0] * p.gain[0], c[1] * p.gain[1], c[2] * p.gain[2]];
+                                let g = p.gain_at(x, y);
+                                ir[px] = [c[0] * g[0], c[1] * g[1], c[2] * g[2]];
                                 vr_[px] = 1.0;
                                 if best[py * w + px] == i as u16 {
                                     mr[px] = 1.0;
@@ -1062,13 +1080,14 @@ fn compute_labels(
                 let score = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
                 let c = sample_rgb_linear(&p.img, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5);
                 let to8 = |v: f32, g: f32| (crate::imgutil::linear_to_srgb(v * g) * 255.0 + 0.5) as u8;
+                let g = p.gain_at(x, y);
                 let flags = VALID
                     | match p.mask_at(x, y) {
                         crate::masks::POSITIVE => crate::seams::POSITIVE,
                         crate::masks::NEGATIVE => crate::seams::NEGATIVE,
                         _ => 0,
                     };
-                *out = Sample { rgb: [to8(c[0], p.gain[0]), to8(c[1], p.gain[1]), to8(c[2], p.gain[2])], flags, score };
+                *out = Sample { rgb: [to8(c[0], g[0]), to8(c[1], g[1]), to8(c[2], g[2])], flags, score };
             }
         });
         photos.push(pb);
@@ -1119,8 +1138,9 @@ fn feather_window(
                 if let Some((x, y, wt)) = p.lookup(d) {
                     let c = sample(&p.img, x, y);
                     let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[i];
+                    let g = p.gain_at(x, y);
                     for k in 0..3 {
-                        ar[px][k] += c[k] * p.gain[k] * wt;
+                        ar[px][k] += c[k] * g[k] * wt;
                     }
                     wr[px] += wt;
                 }
@@ -1221,7 +1241,8 @@ fn smooth_window(
                 let Some(d) = m.dir(px, py) else { continue };
                 if let Some((x, y, _)) = p.lookup(d) {
                     let c = sample(&p.img, x, y);
-                    ir[px] = [c[0] * p.gain[0], c[1] * p.gain[1], c[2] * p.gain[2]];
+                    let g = p.gain_at(x, y);
+                    ir[px] = [c[0] * g[0], c[1] * g[1], c[2] * g[2]];
                     vr_[px] = 1.0;
                     if best[wy * w + px] == i as u16 {
                         mr[px] = 1.0;
@@ -1619,6 +1640,7 @@ mod strip_tests {
                     lens: Lens::from_hfov_deg(50.0),
                     field: None,
                     gain: [1.0 + 0.05 * i as f32, 1.0, 1.0 - 0.03 * i as f32],
+                    gain_map: None,
                     full_long: if detail_boost && i == 1 { 600.0 } else { 300.0 },
                     trusted: true,
                     mask: None,
@@ -1801,6 +1823,7 @@ mod strip_tests {
                 lens: Lens::from_hfov_deg(50.0),
                 field: None,
                 gain: [1.0; 3],
+                gain_map: None,
                 full_long: 300.0,
                 trusted: true,
                 mask: None,
