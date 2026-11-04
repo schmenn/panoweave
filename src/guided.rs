@@ -10,16 +10,15 @@ use rayon::prelude::*;
 
 pub type P2 = (f64, f64);
 
-/// Correlation template size, from the original: /Finetune/TemplateSize default 21
-/// (hugin.exe sub_14019f160, read in sub_140099f10 / sub_140099cf0).
+/// Correlation template size, from the original: default 21 px.
 pub const TEMPLATE_SIZE: i32 = 21;
 pub const TPL_R: i32 = TEMPLATE_SIZE / 2;
-/// Search area for placing a point: /Finetune/SearchAreaPercent default 10 % of the photo
-/// width, at most 500 px (hugin.exe sub_14019f160; formula in sub_140099f10 @0x14009a6b8).
+/// Search area for placing a point: 10 % of the photo
+/// width by default, at most 500 px.
 pub const SEARCH_AREA_PERCENT: f64 = 10.0;
 pub const SEARCH_AREA_MAX_PX: f64 = 500.0;
-/// Local search when snapping a moved point: /Finetune/LocalSearchWidth default 14, window
-/// = LocalSearchWidth + TemplateSize (hugin.exe sub_140099cf0).
+/// Local search when snapping a moved point: default width 14, window
+/// = local search width + template size.
 pub const LOCAL_SEARCH_WIDTH: f64 = 14.0;
 /// Minimum contrast (standard deviation of grey 0..1) inside the match window.
 pub const MIN_PATCH_STD: f32 = 0.02;
@@ -27,8 +26,7 @@ pub const MIN_PATCH_STD: f32 = 0.02;
 pub const MIN_PEAK_MARGIN: f32 = 0.05;
 /// Correlation needed to accept a grown point.
 pub const GROW_MIN_NCC: f32 = 0.8;
-/// Correlation needed to accept a fine-tuned point: /Finetune/CorrThreshold default 0.8
-/// (f64 at 0x14038b6b0; checked in hugin.exe sub_14009f970).
+/// Correlation needed to accept a fine-tuned point: default 0.8.
 pub const FINETUNE_MIN_NCC: f32 = 0.8;
 
 /// Search radius (photo pixels) for a search window of `window` pixels, as the original

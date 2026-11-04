@@ -14,7 +14,7 @@ impl PanoApp {
                     JobMsg::Cancelled => {
                         self.auto_chain = false;
                         if title.starts_with("Loading") {
-                            // the original's wording (hugin.exe sub_14004d010)
+                            // the original's wording
                             self.set_status("Loading canceled – no photos were added.", WARN);
                         } else {
                             self.set_status(format!("{title}: canceled – nothing was changed."), WARN);

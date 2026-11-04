@@ -60,9 +60,9 @@ pub struct FineConfig {
     /// smallest search radius in later rounds
     pub min_search_radius: f32,
     /// Refining existing points follows the original's "fine-tune all points"
-    /// (hugin.exe sub_1400502b0): template /Finetune/TemplateSize = 21 px,
-    /// search window = TemplateSize + /Finetune/LocalSearchWidth (14) -> +-7 px,
-    /// accepted when the correlation is >= /Finetune/CorrThreshold = 0.8.
+    /// (template size 21 px,
+    /// search window = template size + local search width (14) -> +-7 px,
+    /// accepted when the correlation is >= 0.8).
     #[serde(default = "point_template_default")]
     pub point_template: usize,
     #[serde(default = "point_search_default")]

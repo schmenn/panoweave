@@ -204,7 +204,7 @@ impl PanoApp {
             if let Some((_, pa, pb)) = pts.iter().find(|t| t.0 == k) {
                 let p = if pane == Pane::A { *pa } else { *pb };
                 let (sf, sm) = guided::step_sizes(&fr.j);
-                // half size = TemplateSize / 2 (integer), as the original draws it (sub_14006cfe0)
+                // half size = TemplateSize / 2 (integer), as the original draws it
                 let r = (self.tpl_size / 2) as f64;
                 let yellow = TEMPLATE_FRAME_COLOR;
                 let blue = SEARCH_FRAME_COLOR;
@@ -227,7 +227,7 @@ impl PanoApp {
                     let sr = if self.pe.dragging.is_some() {
                         self.local_radius(idx) + r * sm
                     } else {
-                        // original: half = SearchAreaPercent * image width / 200 (sub_140072d30)
+                        // original: half = SearchAreaPercent * image width / 200
                         (self.search_pct * self.photos[idx].w as f64 / 200.0).min(guided::SEARCH_AREA_MAX_PX / 2.0) * self.work_per_full(idx)
                     };
                     let outer = quad(&|x, y| (p.0 + x * sr, p.1 + y * sr));

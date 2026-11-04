@@ -628,7 +628,7 @@ pub fn sky_mask(img: &image::RgbImage, gray: &Gray) -> SkyMask {
     SkyMask { cell, gw, gh, sky: grown }
 }
 
-/// Cloud check around a point, following the original's rule (sub_14009cb50):
+/// Cloud check around a point, following the original's rule:
 /// the photo is judged at 800 px (long side), in a circle of radius 20 px around the point,
 /// and the point is dropped when the cloud score is above 0.5.
 pub const CLOUD_CHECK_SIZE: f32 = 800.0;

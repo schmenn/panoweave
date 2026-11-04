@@ -23,8 +23,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// Allowed range of an overlap threshold: the original accepts a minimum overlap only when
-/// 0.001 < value <= 1.0 ("The minimum overlap has to be greater than 0 and smaller than 1.",
-/// hugin.exe sub_1400bcec0, constants 0x140392550 = 0.001 and 0x14038cb20 = 1.0).
+/// 0.001 < value <= 1.0 ("The minimum overlap has to be greater than 0 and smaller than 1.").
 pub const MIN_OVERLAP_RANGE: (f32, f32) = (0.001, 1.0);
 
 /// Overlap from which two photos "obviously" overlap (shown as a hint in the settings).
