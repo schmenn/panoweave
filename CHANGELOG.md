@@ -20,6 +20,9 @@
 ### Fixed
 - With a parallax field, up to 25 visible rows at a photo's top or bottom edge could be cut off in the export.
 
+### Fixed
+- Smart seams: a more detailed photo (zoomed-in or higher resolution) now only wins where there is detail to gain. In flat areas such as the sky it no longer cuts a visibly differently coloured rectangle out of a wide photo.
+
 ### Changed
 - `src/app.rs` split into `src/app/` modules, and `app/mod.rs` and `app/points.rs` split further (no behaviour change).
 - The export always runs strip by strip; `PW_OLD_EXPORT=1` renders the whole picture in memory for comparing.

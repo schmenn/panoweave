@@ -1059,6 +1059,7 @@ fn compute_labels(
         return Ok(None);
     }
     let (bsz, bw, bh) = crate::seams::grid(w, h, cfg.max_side);
+    let flat = flat_limits();
     let t0 = std::time::Instant::now();
     let mut photos = Vec::with_capacity(photo_rows.len());
     for (i, &(y0, y1)) in photo_rows.iter().enumerate() {
@@ -1076,7 +1077,16 @@ fn compute_labels(
                 let px = (bx * bsz + bsz / 2).min(w - 1);
                 let Some(d) = m.dir(px, py) else { continue };
                 let Some((x, y, wt)) = p.lookup(d) else { continue };
-                let sc = if ro.prefer_detail { seam_score(qual[i], wt) } else { wt };
+                // a more detailed photo only counts where there is detail to gain: in flat areas (sky) its
+                // advantage fades out, so a zoomed-in photo does not cut a visible patch out of the sky
+                let q = if ro.prefer_detail && flat.0 < flat.1 {
+                    let tex = block_texture(&p, &m, px, py, bsz, w, h, (sx, sy));
+                    let t = ((tex - flat.0) / (flat.1 - flat.0)).clamp(0.0, 1.0);
+                    qual[i].powf(t)
+                } else {
+                    qual[i]
+                };
+                let sc = if ro.prefer_detail { seam_score(q, wt) } else { wt };
                 let score = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
                 let c = sample_rgb_linear(&p.img, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5);
                 let to8 = |v: f32, g: f32| (crate::imgutil::linear_to_srgb(v * g) * 255.0 + 0.5) as u8;
@@ -1103,6 +1113,41 @@ fn compute_labels(
         let _ = map.debug_image().save(f);
     }
     Ok(Some(map))
+}
+
+/// Texture (local brightness change, sRGB 0..1) below which a block counts as flat, and above which as
+/// textured; between the two a detail advantage fades in. `PW_FLAT_LO` / `PW_FLAT_HI` (0 = switched off).
+const FLAT_LO: f32 = 0.02;
+const FLAT_HI: f32 = 0.08;
+
+fn flat_limits() -> (f32, f32) {
+    let get = |k: &str, d: f32| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    (get("PW_FLAT_LO", FLAT_LO), get("PW_FLAT_HI", FLAT_HI))
+}
+
+/// How much the picture changes across one block around the output pixel (`px`, `py`): the largest
+/// brightness step to the four neighbours one block away (looked up through the same view direction,
+/// so every photo is measured at the same angular scale).
+#[allow(clippy::too_many_arguments)]
+fn block_texture(p: &RenderPhoto, m: &Mapper, px: usize, py: usize, bsz: usize, w: usize, h: usize, (sx, sy): (f32, f32)) -> f32 {
+    let luma = |x: usize, y: usize| -> Option<f32> {
+        let d = m.dir(x.min(w - 1), y.min(h - 1))?;
+        let (u, v, _) = p.lookup(d)?;
+        let c = sample_rgb_linear(&p.img, (u + 0.5) * sx - 0.5, (v + 0.5) * sy - 0.5);
+        Some(crate::imgutil::linear_to_srgb(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]))
+    };
+    let Some(c) = luma(px, py) else { return 0.0 };
+    let mut best = 0.0f32;
+    for (dx, dy) in [(bsz as isize, 0isize), (-(bsz as isize), 0), (0, bsz as isize), (0, -(bsz as isize))] {
+        let (nx, ny) = (px as isize + dx, py as isize + dy);
+        if nx < 0 || ny < 0 {
+            continue;
+        }
+        if let Some(l) = luma(nx as usize, ny as usize) {
+            best = best.max((l - c).abs());
+        }
+    }
+    best
 }
 
 /// Feather blend of the output rows `[ya, yb)` only. Every pixel depends on its own position only,
