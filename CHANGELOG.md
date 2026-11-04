@@ -12,6 +12,7 @@
 - Memory-independent export: the picture is made strip by strip and streamed to JPEG, PNG, TIFF or BigTIFF; the result does not depend on the available memory. Free disk space is checked first.
 - Smart seams (optional): graph-cut seam finder that steers the seams around close objects such as poles and lamps.
 - Masks: positive/negative masks per photo (brush, lasso, eraser, undo/redo, "Show seams" view) that steer the seams, saved in the project file.
+- Smooth brightness correction across each photo (gain maps): a smooth correction field per photo evens out sky gradients, vignetting and automatic exposure between photos; option in the export dialog.
 - The parallax correction and its settings are saved in the project file.
 - Patch-click mode uses the rotation and zoom of the existing points near the click and of the alignment.
 - `--imgdiff` for comparing two pictures, and experiment variables for the export and the seams (see the README).
