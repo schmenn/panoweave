@@ -3,6 +3,11 @@ name = "panoweave"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Guided panorama stitching: automatic control points, alignment, seam finding and blending"
+readme = "README.md"
+repository = "https://github.com/schmenn/panoweave"
+keywords = ["panorama", "image-stitching", "photography"]
+categories = ["multimedia::images"]
 
 [dependencies]
 eframe = "0.37.0"
@@ -10,8 +15,7 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 rayon = "1.12.0"
 rfd = "0.17.2"
 kamadak-exif = "0.6"
-imagepipe = "0.5.1"
-rawloader = "0.37.2"
+imagepipe = { version = "0.5.1", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 open = "5.4.5"
@@ -19,6 +23,12 @@ half = "2.7"
 png = "0.18.1"
 tiff = "0.11.3"
 jpeg-encoder = "0.7.1"
+
+[features]
+# RAW photos (CR2, NEF, ARW, DNG, ...) through imagepipe/rawloader, which are LGPL licensed. On by default;
+# build with --no-default-features to leave them out (JPEG, PNG and TIFF keep working).
+default = ["raw"]
+raw = ["dep:imagepipe"]
 
 [profile.dev]
 opt-level = 2

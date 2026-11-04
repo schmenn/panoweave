@@ -2835,7 +2835,6 @@ dependencies = [
  "kamadak-exif",
  "open",
  "png",
- "rawloader",
  "rayon",
  "rfd",
  "serde",
