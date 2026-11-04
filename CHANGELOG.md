@@ -23,6 +23,7 @@
 ### Fixed
 - Smart seams: a more detailed photo (zoomed-in or higher resolution) now only wins where there is detail to gain. In flat areas such as the sky it no longer cuts a visibly differently coloured rectangle out of a wide photo.
 
+- RAW support is now the optional Cargo feature `raw` (on by default) because its crates are LGPL licensed; `THIRD_PARTY_LICENSES.md` lists all dependency licenses; the unused direct `rawloader` dependency was removed; package metadata (description, repository, keywords) added to `Cargo.toml`.
 ### Changed
 - `src/app.rs` split into `src/app/` modules, and `app/mod.rs` and `app/points.rs` split further (no behaviour change).
 - The export always runs strip by strip; `PW_OLD_EXPORT=1` renders the whole picture in memory for comparing.

@@ -218,7 +218,7 @@ pub fn is_supported(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| {
             let e = e.to_ascii_lowercase();
-            RAW_EXTS.contains(&e.as_str()) || STD_EXTS.contains(&e.as_str())
+            (cfg!(feature = "raw") && RAW_EXTS.contains(&e.as_str())) || STD_EXTS.contains(&e.as_str())
         })
         .unwrap_or(false)
 }
@@ -226,9 +226,16 @@ pub fn is_supported(path: &Path) -> bool {
 /// Load any supported photo as 8-bit sRGB.
 pub fn load_photo(path: &Path) -> Result<RgbImage, String> {
     if is_raw(path) {
-        let img = imagepipe::simple_decode_8bit(path, 0, 0)?;
-        RgbImage::from_raw(img.width as u32, img.height as u32, img.data)
-            .ok_or_else(|| "RAW decoder returned an unexpected image size".to_string())
+        #[cfg(feature = "raw")]
+        {
+            let img = imagepipe::simple_decode_8bit(path, 0, 0)?;
+            RgbImage::from_raw(img.width as u32, img.height as u32, img.data)
+                .ok_or_else(|| "RAW decoder returned an unexpected image size".to_string())
+        }
+        #[cfg(not(feature = "raw"))]
+        {
+            Err("this build has no RAW support (built without the `raw` feature)".to_string())
+        }
     } else {
         use image::ImageDecoder;
         let reader = image::ImageReader::open(path).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?;
@@ -406,7 +413,7 @@ mod tests {
         assert!(!is_raw(Path::new("noext")));
         assert!(is_supported(Path::new("a.JPG")));
         assert!(is_supported(Path::new("a.tiff")));
-        assert!(is_supported(Path::new("a.nef")));
+        assert_eq!(is_supported(Path::new("a.nef")), cfg!(feature = "raw"));
         assert!(!is_supported(Path::new("a.txt")));
         assert!(!is_supported(Path::new("a")));
     }

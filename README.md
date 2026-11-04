@@ -17,7 +17,7 @@ A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitiv
 ## Features
 
 - **Guided workflow** with five steps: Photos, Points, Align, Frame, Export
-- **Formats:** JPEG, PNG, TIFF and RAW (via `rawloader` / `imagepipe`), EXIF rotation is respected
+- **Formats:** JPEG, PNG, TIFF and RAW (via `imagepipe`, optional `raw` feature), EXIF rotation is respected
 - **Automatic control points:** multi-scale corner detection, rotation-aware descriptors, ratio-test matching, RANSAC and guided re-matching
 - **No points on sky or clouds** (can be switched off)
 - **Point editor:** place a few points by hand and let PanoWeave find more, with sub-pixel snapping, zoom levels and a sortable point list; the patch-click mode uses the rotation and zoom of nearby points (and of the alignment), so slightly turned photos are matched too
@@ -42,6 +42,8 @@ cargo run --release -- [photo1.jpg photo2.jpg ...]
 ```
 
 The binary is written to `target/release/panoweave.exe`. Debug builds (`cargo build`) are already optimised (`opt-level = 2`, dependencies at 3).
+
+RAW photos are read with `imagepipe` / `rawloader`, which are LGPL licensed. They are built in by default (feature `raw`); `cargo build --release --no-default-features` leaves them out (JPEG, PNG and TIFF keep working).
 
 ## Usage
 
@@ -109,6 +111,8 @@ Licensed under either of
 - [MIT license](LICENSE-MIT)
 
 at your option. Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project shall be dual licensed as above, without any additional terms or conditions.
+
+The licenses of all crates PanoWeave is built from, including the LGPL crates used for RAW support, are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ## Acknowledgements
 
