@@ -70,6 +70,18 @@ pub fn raw_bytes(w: usize, h: usize, format: Format) -> u64 {
     w as u64 * h as u64 * per_px
 }
 
+/// Size in bytes the file can reach at most, for the free-space check: exact for TIFF, a safe
+/// upper bound for PNG (photos compress to about 70 %), and for JPEG a generous bound by quality.
+pub fn estimated_file_bytes(w: usize, h: usize, format: Format) -> u64 {
+    let px = w as u64 * h as u64;
+    match format {
+        Format::Tiff { .. } => raw_bytes(w, h, format),
+        Format::Png => raw_bytes(w, h, format) * 8 / 10,
+        // bytes per pixel of a photo at quality 100 stay below 3; lower qualities are much smaller
+        Format::Jpeg { quality } => px * (quality as u64 * 3 / 100).max(1),
+    }
+}
+
 /// Writes a picture of `w` x `h` pixels to `path`. `produce` gets the sink and must send all rows;
 /// an error from `produce` is returned unchanged (the file is then incomplete – delete it).
 pub fn write_file(path: &Path, w: usize, h: usize, o: &WriteOptions, produce: impl FnOnce(&mut dyn RowSink) -> Result<(), String>) -> Result<(), String> {
@@ -451,6 +463,20 @@ mod tests {
         let e = write_file(&tmp("i.jpg"), 70_000, 100, &WriteOptions::new(Format::Jpeg { quality: 90 }, 8), |_| Ok(())).unwrap_err();
         assert!(e.contains("65535") && e.contains("TIFF"), "{e}");
         assert!(!tmp("i.jpg").exists());
+    }
+
+    #[test]
+    fn the_file_size_estimate_is_an_upper_bound_that_follows_the_format() {
+        let t8 = estimated_file_bytes(100, 100, Format::Tiff { sixteen_bit: false });
+        let t16 = estimated_file_bytes(100, 100, Format::Tiff { sixteen_bit: true });
+        assert_eq!((t8, t16), (40_000, 80_000));
+        assert!(estimated_file_bytes(100, 100, Format::Png) <= t8);
+        assert!(estimated_file_bytes(100, 100, Format::Jpeg { quality: 50 }) < estimated_file_bytes(100, 100, Format::Jpeg { quality: 100 }));
+        // the real files of the tests stay below the estimate
+        let p = tmp("est.png");
+        write_file(&p, W, H, &WriteOptions::new(Format::Png, 8), |s| send(8, s)).unwrap();
+        assert!(std::fs::metadata(&p).unwrap().len() <= estimated_file_bytes(W, H, Format::Png));
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]

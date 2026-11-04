@@ -49,7 +49,7 @@ impl Default for StripConfig {
             enabled: false,
             min_rows: 64,
             max_rows: 4096,
-            budget_share: 0.5,
+            budget_share: 0.75,
             roi_bytes_per_px: 20,
             margin_factor: 4,
             fill_extra_levels: 2,
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn budget_comes_from_the_override_or_the_free_memory() {
         let cfg = StripConfig::default();
-        assert_eq!(budget_bytes(Some(10 * GB), None, &cfg), Some(5 * GB));
+        assert_eq!(budget_bytes(Some(8 * GB), None, &cfg), Some(6 * GB));
         assert_eq!(budget_bytes(Some(10 * GB), Some(GB), &cfg), Some(GB));
         assert_eq!(budget_bytes(None, None, &cfg), None);
     }

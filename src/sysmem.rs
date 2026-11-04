@@ -31,8 +31,33 @@ mod win {
     unsafe extern "system" {
         pub fn GlobalMemoryStatusEx(buf: *mut MemoryStatusEx) -> i32;
         pub fn GetCurrentProcess() -> isize;
+        pub fn GetDiskFreeSpaceExW(dir: *const u16, free_to_caller: *mut u64, total: *mut u64, total_free: *mut u64) -> i32;
         pub fn K32GetProcessMemoryInfo(process: isize, counters: *mut ProcessMemoryCounters, cb: u32) -> i32;
     }
+}
+
+/// Free space in bytes on the drive that holds `path` (the nearest existing folder above it is
+/// asked, so a file that does not exist yet is fine). None if unknown.
+pub fn disk_free(path: &std::path::Path) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let mut dir = path.parent().map(|p| p.to_path_buf()).filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| std::path::PathBuf::from("."));
+        while !dir.exists() {
+            if !dir.pop() {
+                dir = std::path::PathBuf::from(".");
+                break;
+            }
+        }
+        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let (mut free, mut total, mut total_free) = (0u64, 0u64, 0u64);
+        // SAFETY: `wide` is a zero-terminated string and the three pointers point to live u64 values
+        if unsafe { win::GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, &mut total, &mut total_free) } != 0 {
+            return Some(free);
+        }
+    }
+    let _ = path;
+    None
 }
 
 /// Free physical memory in bytes (None if unknown).

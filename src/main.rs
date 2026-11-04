@@ -106,6 +106,41 @@ fn imgdiff(args: &[String]) {
     if let Some(p) = args.get(2) {
         out.save(p).unwrap();
     }
+    // 4th argument: a sheet of the 3 places with the most big differences (picture A | picture B | difference x16), 2x zoom
+    if let Some(p) = args.get(3) {
+        const CELL: u32 = 128;
+        let (cw, ch) = (w.div_ceil(CELL), h.div_ceil(CELL));
+        let mut counts = vec![0u32; (cw * ch) as usize];
+        for (x, y, v) in out.enumerate_pixels() {
+            if v[0] > 16 * 2 {
+                counts[((y / CELL) * cw + x / CELL) as usize] += 1;
+            }
+        }
+        let mut cells: Vec<usize> = (0..counts.len()).filter(|&i| counts[i] > 0).collect();
+        cells.sort_by_key(|&i| std::cmp::Reverse(counts[i]));
+        cells.truncate(3);
+        let zoom = 2u32;
+        let side = CELL * zoom;
+        let mut sheet = image::RgbaImage::new(side * 3 + 8, (side + 4) * cells.len().max(1) as u32);
+        for (row, &c) in cells.iter().enumerate() {
+            let (x0, y0) = ((c as u32 % cw) * CELL, (c as u32 / cw) * CELL);
+            for dy in 0..side {
+                for dx in 0..side {
+                    let (x, y) = (x0 + dx / zoom, y0 + dy / zoom);
+                    if x >= w || y >= h {
+                        continue;
+                    }
+                    let v = out.get_pixel(x, y)[0];
+                    let oy = row as u32 * (side + 4) + dy;
+                    sheet.put_pixel(dx, oy, *a.get_pixel(x, y));
+                    sheet.put_pixel(side + 4 + dx, oy, *b.get_pixel(x, y));
+                    sheet.put_pixel(2 * side + 8 + dx, oy, image::Rgba([v, v, v, 255]));
+                }
+            }
+            println!("sheet row {row}: cell at x {x0}, y {y0}, {} pixels over 2 steps", counts[c]);
+        }
+        sheet.save(p).unwrap();
+    }
 }
 
 fn main() -> eframe::Result {

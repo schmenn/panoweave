@@ -61,7 +61,6 @@ fn point_color(i: usize) -> Color32 {
 /// (hugin.exe sub_1400550e0, sub_14019f160). Used here for the full-size photos of the point editor.
 const IMAGE_CACHE_UPPER_BOUND: u64 = 268435456; // 0x10000000
 /// Share of the free memory the final render may use.
-const RENDER_MEMORY_SHARE: f64 = 0.8;
 /// Memory budget of the low-memory export when the free memory of the computer is unknown (2 GB).
 const FALLBACK_EXPORT_BUDGET: u64 = 2 << 30;
 const ACCENT: Color32 = Color32::from_rgb(70, 160, 255);
@@ -369,6 +368,7 @@ pub struct PanoApp {
     /// sorted rows of the control point list and the number within each pair (cached)
     cp_rows_cache: Option<(String, Vec<usize>, Vec<usize>)>,
     render_started: bool,
+    second_render_started: bool,
     auto_grow: bool,
     full_tex: HashMap<usize, egui::TextureHandle>,
     full_pending: HashSet<usize>,
@@ -494,6 +494,7 @@ impl PanoApp {
             cp_min_err: 0.0,
             cp_rows_cache: None,
             render_started: false,
+            second_render_started: false,
             auto_grow: true,
             full_tex: HashMap::new(),
             full_pending: HashSet::new(),
@@ -777,14 +778,19 @@ impl PanoApp {
                     };
                     self.out_path = o;
                 }
-                self.export_opts.low_memory = std::env::var("PW_LOWMEM").map(|v| v == "1").unwrap_or(false);
                 self.run_render();
             }
-            // PW_BOTH=1 PW_OUT2=<file>: after the normal export, the same alignment is exported again with the
-            // low-memory export (to compare both pictures)
-            if d == "render" && self.render_started && !self.busy() && self.last_output.is_some() && !self.export_opts.low_memory {
-                if let (Ok(_), Ok(o2)) = (std::env::var("PW_BOTH"), std::env::var("PW_OUT2")) {
-                    self.export_opts.low_memory = true;
+            // PW_OUT2=<file>: after the first export, the same alignment is exported again (with another
+            // PW_EXPORT_MB it shows that the memory does not change the picture)
+            if d == "render" && self.render_started && !self.busy() && self.last_output.is_some() && !self.second_render_started {
+                if let Ok(o2) = std::env::var("PW_OUT2") {
+                    self.second_render_started = true;
+                    // SAFETY: as below, UI thread only
+                    unsafe { std::env::remove_var("PW_OLD_EXPORT") };
+                    if let Some(mb) = std::env::var("PW_EXPORT_MB2").ok().and_then(|v| v.parse::<u64>().ok()) {
+                        // SAFETY: the demo runs on the UI thread, the worker threads do not read this variable
+                        unsafe { std::env::set_var("PW_EXPORT_MB", mb.to_string()) };
+                    }
                     self.out_path = o2;
                     self.last_output = None;
                     self.run_render();
@@ -856,7 +862,7 @@ impl PanoApp {
         if let Some(path) = self.screenshot.clone() {
             ctx.request_repaint();
             let settled = !self.busy() && self.preview_rx.is_none() && self.fusion_rx.is_none() && (self.step != Step::Frame || !self.preview_dirty);
-            let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || (self.last_output.is_some() && (std::env::var("PW_BOTH").is_err() || self.export_opts.low_memory))) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
+            let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || (self.last_output.is_some() && (std::env::var("PW_OUT2").is_err() || self.second_render_started))) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
             if ready && !self.shot_requested {
                 self.shot_requested = true;
                 let slot = self.shot_data.clone();

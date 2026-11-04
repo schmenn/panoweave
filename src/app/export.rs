@@ -23,15 +23,11 @@ pub(super) struct ExportOptions {
     pub target_width: u32,
     /// TIFF only: 16 bits per channel instead of 8
     pub tiff_16bit: bool,
-    /// Low-memory export: the panorama is made strip by strip, so the memory need does not grow
-    /// with the picture size and no quality has to be given up. Even when
-    /// this is off it is used automatically when the normal export would not fit into memory.
-    pub low_memory: bool,
 }
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false, low_memory: false }
+        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false }
     }
 }
 
@@ -91,14 +87,6 @@ pub(super) fn save_output_stoppable(path: &Path, rgba: &[u8], w: usize, h: usize
     })
 }
 
-/// 16 bit per channel TIFF (RGBA); takes the buffer to avoid a second copy.
-pub(super) fn save_tiff16(path: &Path, rgba: Vec<u16>, w: usize, h: usize, stop: &dyn Fn() -> bool) -> Result<(), String> {
-    write_atomically(path, stop, |tmp| {
-        let buf = image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_raw(w as u32, h as u32, rgba).ok_or("wrong buffer size for the 16-bit picture")?;
-        image::DynamicImage::ImageRgba16(buf).save_with_format(tmp, image::ImageFormat::Tiff).map_err(|e| e.to_string())
-    })
-}
-
 impl PanoApp {
     // ---------------- export ----------------
 
@@ -124,14 +112,6 @@ impl PanoApp {
         dir.join(format!("{stem}.{ext}")).to_string_lossy().to_string()
     }
 
-    /// (width, height, bytes needed, bytes free) of the panorama file at the chosen size.
-    pub(super) fn render_memory(&self) -> (usize, usize, u64, Option<u64>) {
-        let (w, h) = self.export_size();
-        // the 16 bit copy for TIFF (8 B per pixel) comes on top of the 8 bit one (4 B)
-        let extra = if self.export_opts.sixteen_bit(self.out_format) { 4 * (w as u64) * (h as u64) } else { 0 };
-        (w, h, stitch::estimate_bytes(w, h, self.blend) + extra, crate::sysmem::available())
-    }
-
     /// Width and height in pixels of the panorama file at the chosen size.
     pub(super) fn export_size(&self) -> (usize, usize) {
         let cb = self.view.crop_bounds();
@@ -140,20 +120,15 @@ impl PanoApp {
         (w, ((w as f64 / asp).round() as usize).max(16))
     }
 
-    /// Largest value of the size control (percent, or pixels of width) that fits into `usable` bytes.
-    fn fit_size(&self, need: u64, usable: f64) -> f64 {
-        let cur = if self.export_opts.width_mode() { self.export_size().0 as f64 } else { self.out_scale as f64 };
-        (cur * (usable / need as f64).sqrt()).floor().max(1.0)
-    }
-
-    /// Memory the low-memory export may use in total (strips plus photo cache), if known.
+    /// Memory the export may use in total (strips plus photo cache), if known.
     fn strip_budget(&self) -> Option<u64> {
         // experiments: PW_EXPORT_MB=<megabytes> sets the budget by hand
         let manual = std::env::var("PW_EXPORT_MB").ok().and_then(|v| v.parse::<u64>().ok()).map(|mb| mb << 20);
         crate::strip::budget_bytes(crate::sysmem::available(), manual, &crate::strip::StripConfig::default())
     }
 
-    /// Plan of the low-memory export at the chosen size (only Smooth blending has one).
+    /// Plan of the export at the chosen size: strip height, number of strips, memory per strip.
+    /// The picture is the same whatever the plan is; less memory only means more strips.
     pub(super) fn strip_estimate(&self) -> Option<Result<crate::strip::StripPlan, String>> {
         let cfg = crate::strip::StripConfig::default();
         let (w, h) = self.export_size();
@@ -162,45 +137,51 @@ impl PanoApp {
         Some(crate::strip::plan(w, h, levels, self.blend, strip_budget, &cfg))
     }
 
-    /// True when the normal export would not fit into the free memory.
-    fn normal_export_too_big(&self) -> bool {
-        let (_, _, need, free) = self.render_memory();
-        free.is_some_and(|f| need > (f as f64 * RENDER_MEMORY_SHARE) as u64)
+    /// The file format of the strip writers for the chosen output.
+    fn write_format(&self) -> crate::strip_write::Format {
+        match self.out_format {
+            OutFormat::Jpeg => crate::strip_write::Format::Jpeg { quality: self.jpeg_quality },
+            OutFormat::Png => crate::strip_write::Format::Png,
+            OutFormat::Tiff => crate::strip_write::Format::Tiff { sixteen_bit: self.export_opts.sixteen_bit(self.out_format) },
+        }
     }
 
-    /// Whether the export runs strip by strip: asked for, or the only way to keep the chosen size.
-    fn use_strips(&self) -> bool {
-        self.export_opts.low_memory || self.normal_export_too_big()
+    /// Where the file will be written: the chosen path with the extension of the format.
+    fn target_path(&self) -> PathBuf {
+        let path = PathBuf::from(self.out_path.trim());
+        if path.extension().is_none() { path.with_extension(self.out_format.ext()) } else { path }
+    }
+
+    /// (estimated file size, free space on the drive of the target) in bytes.
+    pub(super) fn disk_estimate(&self) -> (u64, Option<u64>) {
+        let (w, h) = self.export_size();
+        (crate::strip_write::estimated_file_bytes(w, h, self.write_format()), crate::sysmem::disk_free(&self.target_path()))
     }
 
     pub(super) fn run_render(&mut self) {
         if self.busy() || !self.aligned {
             return;
         }
-        let strips = self.use_strips();
-        let (_, _, need, free) = self.render_memory();
-        if let (Some(free), false) = (free, strips) {
-            let usable = (free as f64 * RENDER_MEMORY_SHARE) as u64;
-            if need > usable {
-                let fit = self.fit_size(need, usable as f64);
-                let unit = if self.export_opts.width_mode() { "px width" } else { "%" };
+        if self.out_path.trim().is_empty() {
+            self.out_path = self.default_out_path("panorama", self.out_format.ext());
+        }
+        let path = self.target_path();
+        let fmt = self.out_format;
+        let (ew, eh) = self.export_size();
+        if fmt == OutFormat::Jpeg && (ew > crate::strip_write::JPEG_MAX_SIDE || eh > crate::strip_write::JPEG_MAX_SIDE) {
+            self.set_status(format!("JPEG files can be at most {} pixels wide or high (this picture is {ew} x {eh}) – choose TIFF or a smaller size.", crate::strip_write::JPEG_MAX_SIDE), BAD);
+            return;
+        }
+        let (file_bytes, disk_free) = self.disk_estimate();
+        if let Some(free) = disk_free {
+            if file_bytes > free {
                 self.set_status(
-                    format!(
-                        "This size needs about {:.1} GB of memory, but only {:.1} GB are free. Choose at most {:.0} {unit} (or close other programs).",
-                        crate::sysmem::gb(need),
-                        crate::sysmem::gb(free),
-                        fit
-                    ),
+                    format!("The file needs up to {:.1} GB, but only {:.1} GB are free on the drive of {}. Choose a smaller size or another folder.", crate::sysmem::gb(file_bytes), crate::sysmem::gb(free), path.display()),
                     BAD,
                 );
                 return;
             }
         }
-        if self.out_path.trim().is_empty() {
-            self.out_path = self.default_out_path("panorama", self.out_format.ext());
-        }
-        let path = PathBuf::from(self.out_path.trim());
-        let path = if path.extension().is_none() { path.with_extension(self.out_format.ext()) } else { path };
         let active = self.active_indices();
         type Src = (Source, Arc<RgbImage>, u32, u32, M3, Lens, [f32; 3], Option<Arc<fine_align::DisplacementField>>, bool);
         let trusted = self.connected_photos();
@@ -222,109 +203,67 @@ impl PanoApp {
             })
             .collect();
         let view = self.view.clone();
-        let out_w = self.export_size().0;
+        let out_w = ew;
         let blend = self.blend;
         let render_opts = stitch::RenderOptions { levels: self.blend_levels, cubic: self.cubic_interp, prefer_detail: self.prefer_detail };
-        let fmt = self.out_format;
-        let q = self.jpeg_quality;
-        let sixteen = self.export_opts.sixteen_bit(fmt);
-        if strips {
-            let (ew, eh) = self.export_size();
-            if fmt == OutFormat::Jpeg && (ew > crate::strip_write::JPEG_MAX_SIDE || eh > crate::strip_write::JPEG_MAX_SIDE) {
-                self.set_status(format!("JPEG files can be at most {} pixels wide or high (this picture is {ew} x {eh}) – choose TIFF or a smaller size.", crate::strip_write::JPEG_MAX_SIDE), BAD);
-                return;
-            }
-            let cfg = crate::strip::StripConfig::default();
-            let total = self.strip_budget().unwrap_or(FALLBACK_EXPORT_BUDGET);
-            let (strip_budget, cache_bytes) = crate::strip::split_budget(total, &cfg);
-            self.start_job("Creating the panorama", move |report, cancel| {
-                let t0 = Instant::now();
-                let cache = Mutex::new(crate::photo_cache::PhotoCache::new(cache_bytes));
-                let loader = |i: usize, pixels: bool| -> Result<RenderPhoto, String> {
-                    let (src, work, w, h, rot, lens, gain, field, trusted) = &sources[i];
-                    let img = if pixels { cache.lock().unwrap().get_or_load(i, || src.load_full())? } else { work.clone() };
-                    Ok(RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted })
-                };
-                let prog = stitch::Progress { report, cancel };
-                let stop = || cancel.load(Ordering::Relaxed) || engine::cancelled();
-                let res = (|| {
-                    let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, strip_budget)?;
-                    let format = match fmt {
-                        OutFormat::Jpeg => crate::strip_write::Format::Jpeg { quality: q },
-                        OutFormat::Png => crate::strip_write::Format::Png,
-                        OutFormat::Tiff => crate::strip_write::Format::Tiff { sixteen_bit: sixteen },
-                    };
-                    let wo = crate::strip_write::WriteOptions::new(format, job.rows);
-                    write_atomically(&path, &stop, |tmp| {
-                        crate::strip_write::write_file(tmp, job.w, job.h, &wo, |sink| job.run(&loader, &mut |y0, c, v, _| sink.push(y0, c, v), &prog))
-                    })?;
-                    let c = cache.lock().unwrap();
-                    eprintln!(
-                        "low-memory export: {}x{} px, {} strips of {} rows, planned strip memory {:.2} GB, photo cache {} hits / {} misses ({:.2} GB), peak memory of the program {:.2} GB, {} ms",
-                        job.w,
-                        job.h,
-                        job.count,
-                        job.rows,
-                        crate::sysmem::gb(job.peak_bytes),
-                        c.hits,
-                        c.misses,
-                        crate::sysmem::gb(c.used()),
-                        crate::sysmem::gb(crate::sysmem::process().map(|p| p.1).unwrap_or(0)),
-                        t0.elapsed().as_millis()
-                    );
-                    Ok((path.clone(), t0.elapsed().as_millis(), job.w, job.h))
-                })();
-                cache.lock().unwrap().clear();
-                JobMsg::Rendered(res)
-            });
-            return;
-        }
+        let format = self.write_format();
+        let cfg = crate::strip::StripConfig::default();
+        let total = self.strip_budget().unwrap_or(FALLBACK_EXPORT_BUDGET);
+        let (strip_budget, cache_bytes) = crate::strip::split_budget(total, &cfg);
+        // The picture is made strip by strip. The strip height only follows from the memory that
+        // may be used; it never changes a single pixel, so the result is the same on every computer.
         self.start_job("Creating the panorama", move |report, cancel| {
             let t0 = Instant::now();
-            let cache: Mutex<Option<(usize, Arc<RgbImage>)>> = Mutex::new(None);
+            let cache = Mutex::new(crate::photo_cache::PhotoCache::new(cache_bytes));
             let loader = |i: usize, pixels: bool| -> Result<RenderPhoto, String> {
                 let (src, work, w, h, rot, lens, gain, field, trusted) = &sources[i];
-                let img = if pixels {
-                    let mut c = cache.lock().unwrap();
-                    match c.as_ref() {
-                        Some((k, im)) if *k == i => im.clone(),
-                        _ => {
-                            let im = src.load_full()?;
-                            *c = Some((i, im.clone()));
-                            im
-                        }
-                    }
-                } else {
-                    // seams only need the geometry plus where the photo is blown out: the small copy is enough
-                    work.clone()
-                };
+                // seams only need the geometry plus where the photo is blown out: the small copy is enough
+                let img = if pixels { cache.lock().unwrap().get_or_load(i, || src.load_full())? } else { work.clone() };
                 Ok(RenderPhoto { img, w: *w as f64, h: *h as f64, rot: *rot, lens: *lens, gain: *gain, field: field.clone(), full_long: (*w).max(*h) as f64, trusted: *trusted })
             };
             let prog = stitch::Progress { report, cancel };
-            let r = stitch::render_final(sources.len(), &loader, &view, out_w, blend, &render_opts, &prog);
             // the job's own flag and the global one are both set by "Cancel"
             let stop = || cancel.load(Ordering::Relaxed) || engine::cancelled();
-            let res = r.and_then(|(col, cov, w, h)| {
-                if stop() {
-                    return Err(stitch::CANCELLED.into());
-                }
-                report(0.97, "Converting the colours");
-                if sixteen {
-                    let rgba = stitch::to_rgba16(&col, &cov);
-                    drop((col, cov));
-                    report(0.98, "Saving the file");
-                    save_tiff16(&path, rgba, w, h, &stop)
-                } else {
+            let res = (|| {
+                // experiments: PW_OLD_EXPORT=1 renders the whole picture in memory (the earlier way), to compare
+                if std::env::var("PW_OLD_EXPORT").is_ok_and(|v| v == "1") && !matches!(format, crate::strip_write::Format::Tiff { sixteen_bit: true }) {
+                    let (col, cov, w, h) = stitch::render_final(sources.len(), &loader, &view, out_w, blend, &render_opts, &prog)?;
                     let rgba = stitch::to_rgba8(&col, &cov);
-                    drop((col, cov));
-                    report(0.98, "Saving the file");
-                    save_output_stoppable(&path, &rgba, w, h, fmt, q, &stop)
+                    let out_fmt = match format {
+                        crate::strip_write::Format::Jpeg { .. } => OutFormat::Jpeg,
+                        crate::strip_write::Format::Png => OutFormat::Png,
+                        crate::strip_write::Format::Tiff { .. } => OutFormat::Tiff,
+                    };
+                    let q = match format {
+                        crate::strip_write::Format::Jpeg { quality } => quality,
+                        _ => 90,
+                    };
+                    save_output_stoppable(&path, &rgba, w, h, out_fmt, q, &stop)?;
+                    return Ok((path.clone(), t0.elapsed().as_millis(), w, h));
                 }
-                .map(|_| (path.clone(), t0.elapsed().as_millis(), w, h))
-            });
-            if let Ok((_, ms, w, h)) = &res {
-                eprintln!("normal export: {w}x{h} px, peak memory of the program {:.2} GB, {ms} ms", crate::sysmem::gb(crate::sysmem::process().map(|p| p.1).unwrap_or(0)));
-            }
+                let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, strip_budget)?;
+                let wo = crate::strip_write::WriteOptions::new(format, job.rows);
+                // the unfinished file is written next to the final one (hidden, ".<name>.partial.<ext>")
+                write_atomically(&path, &stop, |tmp| {
+                    crate::strip_write::write_file(tmp, job.w, job.h, &wo, |sink| job.run(&loader, &mut |y0, c, v, _| sink.push(y0, c, v), &prog))
+                })?;
+                let c = cache.lock().unwrap();
+                eprintln!(
+                    "export: {}x{} px, {} strips of {} rows, planned strip memory {:.2} GB, photo cache {} hits / {} misses ({:.2} GB), peak memory of the program {:.2} GB, {} ms",
+                    job.w,
+                    job.h,
+                    job.count,
+                    job.rows,
+                    crate::sysmem::gb(job.peak_bytes),
+                    c.hits,
+                    c.misses,
+                    crate::sysmem::gb(c.used()),
+                    crate::sysmem::gb(crate::sysmem::process().map(|p| p.1).unwrap_or(0)),
+                    t0.elapsed().as_millis()
+                );
+                Ok((path.clone(), t0.elapsed().as_millis(), job.w, job.h))
+            })();
+            cache.lock().unwrap().clear();
             JobMsg::Rendered(res)
         });
     }
@@ -348,8 +287,6 @@ impl PanoApp {
                     ui.checkbox(&mut self.export_opts.enabled, "More size and file options")
                         .on_hover_text("Off: size from the slider below, files as before. On: choose a width in pixels and 16-bit TIFF.");
                     if self.export_opts.enabled {
-                        ui.checkbox(&mut self.export_opts.low_memory, "Low-memory export")
-                            .on_hover_text("Makes the picture strip by strip, so big panoramas fit into memory at full quality. Used automatically when the normal export would not fit.");
                         ui.horizontal(|ui| {
                             ui.radio_value(&mut self.export_opts.size_mode, SizeMode::Percent, "Percent of full detail");
                             ui.radio_value(&mut self.export_opts.size_mode, SizeMode::Width, "Width in pixels");
@@ -373,53 +310,29 @@ impl PanoApp {
                     let (wi, hi) = self.export_size();
                     let (w, h) = (wi as f64, hi as f64);
                     ui.label(format!("{w:.0} × {h:.0} px  ({:.1} megapixels)", w * h / 1e6));
+                    match self.strip_estimate() {
+                        Some(Ok(p)) => {
+                            let free = crate::sysmem::available().map(|f| format!(", {:.1} GB free", crate::sysmem::gb(f))).unwrap_or_default();
+                            let how = if p.count == 1 { "in one piece".to_string() } else { format!("in {} strips", p.count) };
+                            ui.label(
+                                RichText::new(format!("Memory: about {:.1} GB {how} ({free}). The picture is the same whatever the memory.", crate::sysmem::gb(p.peak_bytes)).replace("(, ", "(").replace("( ", "("))
+                                    .small()
+                                    .color(MUTED),
+                            );
+                        }
+                        Some(Err(e)) => {
+                            ui.label(RichText::new(e).color(BAD));
+                        }
+                        None => {}
+                    }
                     {
-                        let (_, _, need, free) = self.render_memory();
-                        let strips = self.use_strips();
-                        match free {
-                            Some(free) if strips => {
-                                let why = if self.export_opts.low_memory { "Low-memory export" } else { "The normal export would need too much memory, so the low-memory export is used" };
-                                match self.strip_estimate() {
-                                    Some(Ok(p)) => {
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{why}: full quality, about {:.1} GB of memory in {} strips ({:.1} GB free; the normal export needs {:.1} GB).",
-                                                crate::sysmem::gb(p.peak_bytes),
-                                                p.count,
-                                                crate::sysmem::gb(free),
-                                                crate::sysmem::gb(need)
-                                            ))
-                                            .small()
-                                            .color(MUTED),
-                                        );
-                                    }
-                                    Some(Err(e)) => {
-                                        ui.label(RichText::new(e).color(BAD));
-                                    }
-                                    None => {}
-                                }
+                        let (bytes, disk) = self.disk_estimate();
+                        match disk {
+                            Some(d) if bytes > d => {
+                                ui.label(RichText::new(format!("The file needs up to {:.1} GB, only {:.1} GB are free on the drive.", crate::sysmem::gb(bytes), crate::sysmem::gb(d))).color(BAD));
                             }
-                            Some(free) if need as f64 > free as f64 * RENDER_MEMORY_SHARE => {
-                                let fit = self.fit_size(need, free as f64 * RENDER_MEMORY_SHARE);
-                                let unit = if self.export_opts.width_mode() { "px" } else { "%" };
-                                ui.label(
-                                    RichText::new(format!(
-                                        "Needs about {:.1} GB of memory, only {:.1} GB free – choose at most {fit:.0} {unit}.",
-                                        crate::sysmem::gb(need),
-                                        crate::sysmem::gb(free),
-                                    ))
-                                    .color(BAD),
-                                );
-                                if ui.button(format!("Use {fit:.0} {unit}")).clicked() {
-                                    if self.export_opts.width_mode() {
-                                        self.export_opts.target_width = fit as u32;
-                                    } else {
-                                        self.out_scale = fit as f32;
-                                    }
-                                }
-                            }
-                            Some(free) => {
-                                ui.label(RichText::new(format!("needs about {:.1} GB of memory ({:.1} GB free)", crate::sysmem::gb(need), crate::sysmem::gb(free))).small().color(MUTED));
+                            Some(d) => {
+                                ui.label(RichText::new(format!("File: up to {:.1} GB ({:.1} GB free on the drive)", crate::sysmem::gb(bytes), crate::sysmem::gb(d))).small().color(MUTED));
                             }
                             None => {}
                         }
@@ -433,8 +346,8 @@ impl PanoApp {
                             }
                         });
                     }
-                    if w * h > 150e6 {
-                        ui.label(RichText::new("Very large – this needs a lot of memory.").small().color(WARN));
+                    if w * h > 500e6 {
+                        ui.label(RichText::new("Very large – this takes a while and needs a lot of disk space.").small().color(WARN));
                     }
                 });
                 ui.add_space(6.0);
@@ -552,14 +465,14 @@ mod tests {
         assert!(!o.enabled && !o.width_mode() && !o.sixteen_bit(OutFormat::Tiff));
         assert_eq!(output_width(4000.0, 70.0, &o), 2800);
         // switched off: width settings are ignored
-        let o = ExportOptions { enabled: false, size_mode: SizeMode::Width, target_width: 999, tiff_16bit: true, low_memory: false };
+        let o = ExportOptions { enabled: false, size_mode: SizeMode::Width, target_width: 999, tiff_16bit: true };
         assert_eq!(output_width(4000.0, 50.0, &o), 2000);
         assert!(!o.sixteen_bit(OutFormat::Tiff));
     }
 
     #[test]
     fn target_width_is_used_and_clamped() {
-        let mut o = ExportOptions { enabled: true, size_mode: SizeMode::Width, target_width: 3000, tiff_16bit: true, low_memory: false };
+        let mut o = ExportOptions { enabled: true, size_mode: SizeMode::Width, target_width: 3000, tiff_16bit: true };
         assert_eq!(output_width(4000.0, 10.0, &o), 3000);
         o.target_width = 1;
         assert_eq!(output_width(4000.0, 10.0, &o), MIN_TARGET_WIDTH as usize);
@@ -587,17 +500,6 @@ mod tests {
         save_output(&d.join("lo.jpg"), &rgba, 64, 64, OutFormat::Jpeg, 50).unwrap();
         save_output(&d.join("hi.jpg"), &rgba, 64, 64, OutFormat::Jpeg, 100).unwrap();
         assert!(std::fs::metadata(d.join("hi.jpg")).unwrap().len() > std::fs::metadata(d.join("lo.jpg")).unwrap().len());
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn tiff16_roundtrip_keeps_16_bits() {
-        let d = tmp_dir("t16");
-        let p = d.join("x.tif");
-        let px: Vec<u16> = (0..4u16).flat_map(|i| [i * 1000 + 1, 40000 + i, 65535, 65535]).collect();
-        save_tiff16(&p, px.clone(), 2, 2, &|| false).unwrap();
-        let im = image::open(&p).unwrap().into_rgba16();
-        assert_eq!(im.as_raw(), &px);
         let _ = std::fs::remove_dir_all(&d);
     }
 
