@@ -68,7 +68,7 @@ impl PanoApp {
             show_cp_list: false,
             fine_cfg: crate::fine_align::FineConfig::default(),
             last_fine: None,
-            blend_levels: 4,
+            blend_levels: 0,
             cubic_interp: true,
             prefer_detail: true,
             fields: Vec::new(),
