@@ -9,6 +9,13 @@ mod export;
 mod exposure;
 mod frame;
 mod jobs;
+mod masks_canvas;
+mod masks_seams;
+mod masks_state;
+#[cfg(test)]
+mod masks_tests;
+mod masks_tool;
+mod masks_ui;
 mod photos;
 mod pipeline;
 mod points;
@@ -82,6 +89,9 @@ impl eframe::App for PanoApp {
         }
         if self.show_graph && self.mode == Mode::Panorama {
             self.graph_window(&ctx);
+        }
+        if self.mk.open && self.mode == Mode::Panorama {
+            self.mask_window(&ctx);
         }
         if self.show_help {
             self.help_window(&ctx);
