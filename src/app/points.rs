@@ -88,7 +88,10 @@ impl PanoApp {
         let s0 = self.scale_prior(a, b);
         let (ga, gb) = (self.photos[a].gray.clone(), self.photos[b].gray.clone());
         let cfg = self.click_cfg.clone();
-        self.start_job("Patch click: refining", move |_, _| JobMsg::ClickMatched(Box::new(crate::click_match::run(a, b, &ga, &gb, ca, cb, hint, s0, &cfg))));
+        // what is known besides the clicks: the points of this pair and the alignment at the click
+        let align = if self.aligned && !self.needs_align { self.predict_from_alignment(a, b, ca).map(|(_, j)| j) } else { None };
+        let priors = crate::click_match::ClickPriors { seeds, align };
+        self.start_job("Patch click: refining", move |_, _| JobMsg::ClickMatched(Box::new(crate::click_match::run(a, b, &ga, &gb, ca, cb, hint, &priors, s0, &cfg))));
     }
 
     pub(super) fn on_click_matched(&mut self, r: crate::click_match::ClickResult) {
@@ -909,24 +912,29 @@ impl PanoApp {
             return Some((h_apply(&t, p.0, p.1), guided::jacobian(&t, p)));
         }
         if self.aligned && !self.needs_align {
-            let lf = self.lenses[self.photos[from].lens];
-            let lt = self.lenses[self.photos[to].lens];
-            let rf = self.photos[from].rot;
-            let rt = self.photos[to].rot;
-            let map = |q: P2| -> Option<P2> {
-                let w = mtv(&rf, crate::align::ray(&lf, self.to_norm(from, q)));
-                crate::align::project(&lt, mv(&rt, w)).map(|n| self.to_px(to, n))
-            };
-            let c = map(p)?;
-            let x = map((p.0 + 1.0, p.1))?;
-            let y = map((p.0, p.1 + 1.0))?;
-            let (w, h) = self.work_dims(to);
-            if c.0 < 0.0 || c.1 < 0.0 || c.0 >= w as f64 || c.1 >= h as f64 {
-                return None;
-            }
-            return Some((c, [x.0 - c.0, y.0 - c.0, x.1 - c.1, y.1 - c.1]));
+            return self.predict_from_alignment(from, to, p);
         }
         None
+    }
+
+    /// Where a spot of photo `from` lies in photo `to` and the local zoom/rotation, from the alignment alone.
+    pub(super) fn predict_from_alignment(&self, from: usize, to: usize, p: P2) -> Option<(P2, [f64; 4])> {
+        let lf = self.lenses[self.photos[from].lens];
+        let lt = self.lenses[self.photos[to].lens];
+        let rf = self.photos[from].rot;
+        let rt = self.photos[to].rot;
+        let map = |q: P2| -> Option<P2> {
+            let w = mtv(&rf, crate::align::ray(&lf, self.to_norm(from, q)));
+            crate::align::project(&lt, mv(&rt, w)).map(|n| self.to_px(to, n))
+        };
+        let c = map(p)?;
+        let x = map((p.0 + 1.0, p.1))?;
+        let y = map((p.0, p.1 + 1.0))?;
+        let (w, h) = self.work_dims(to);
+        if c.0 < 0.0 || c.1 < 0.0 || c.0 >= w as f64 || c.1 >= h as f64 {
+            return None;
+        }
+        Some((c, [x.0 - c.0, y.0 - c.0, x.1 - c.1, y.1 - c.1]))
     }
 
     /// Work pixels per full-size pixel of a photo.
