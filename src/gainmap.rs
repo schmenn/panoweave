@@ -76,14 +76,19 @@ pub struct GainMapConfig {
     pub cg_tol: f64,
 }
 
+/// Experiments: `PW_GM_GRID`, `PW_GM_SMOOTH`, `PW_GM_MAXDEV` replace the defaults of the same name.
+fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
 impl Default for GainMapConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            grid_long: DEFAULT_GRID_LONG,
-            smooth: DEFAULT_SMOOTH,
+            grid_long: env_or("PW_GM_GRID", DEFAULT_GRID_LONG),
+            smooth: env_or("PW_GM_SMOOTH", DEFAULT_SMOOTH),
             anchor: DEFAULT_ANCHOR,
-            max_dev: DEFAULT_MAX_DEV,
+            max_dev: env_or("PW_GM_MAXDEV", DEFAULT_MAX_DEV),
             min_samples: DEFAULT_MIN_SAMPLES,
             preview_width: DEFAULT_PREVIEW_WIDTH,
             min_edge_weight: DEFAULT_MIN_EDGE_WEIGHT,
