@@ -829,7 +829,7 @@ pub fn render_final(
                             }
                         }
                     });
-                fill_holes(&mut img, &valid, rw, rh);
+                fill_holes(&mut img, &valid, rw, rh, usize::MAX);
                 pyr.add(&img, &mask, rw, rh, ry0);
             }
             (prog.report)(0.96, "Finishing");
@@ -844,6 +844,168 @@ pub fn render_final(
             Ok((col, cov, w, h))
         }
     }
+}
+
+/// Receives one finished strip of the panorama: first row, colour and coverage of the inner rows
+/// (`col.len() / width` rows) and the panorama width.
+#[allow(dead_code)] // wired into the export in a later step
+pub type StripSink<'a> = &'a mut dyn FnMut(usize, &[[f32; 3]], &[f32], usize) -> Result<(), String>;
+
+/// Memory-saving final render (Smooth blend): the panorama is made strip by strip and every strip
+/// goes to `sink`, so only one strip (plus a margin for the multi-band blend) is in memory.
+/// Returns the panorama size. The strip height follows from `budget` (see `strip::plan`) and is
+/// a multiple of the coarsest pyramid level so that every strip sees the same pyramid grid as
+/// the whole image would. `render_final` stays the reference.
+#[allow(dead_code)] // wired into the export in a later step
+pub fn render_strips(
+    count: usize,
+    load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
+    view: &PanoView,
+    out_w: usize,
+    ro: &RenderOptions,
+    cfg: &crate::strip::StripConfig,
+    budget: u64,
+    sink: StripSink,
+    prog: &Progress,
+) -> Result<(usize, usize), String> {
+    let cancelled = || prog.cancel.load(Ordering::Relaxed) || crate::engine::cancelled();
+    let cb = view.crop_bounds();
+    let aspect = (cb[1] - cb[0]) / (cb[3] - cb[2]);
+    let w = out_w.max(16);
+    let h = ((w as f64 / aspect).round() as usize).max(16);
+    let m = Mapper::new(view, cb, w, h);
+    let vr = view.rotation();
+    // per photo: quality and the output rows it touches (geometry only, cheap)
+    let mut details = Vec::with_capacity(count);
+    let mut photo_rows = Vec::with_capacity(count);
+    for i in 0..count {
+        let p = load(i, false)?;
+        details.push((p.detail(), p.trusted));
+        photo_rows.push(roi_rows(&p, &m, &vr, h));
+    }
+    let qual = if ro.prefer_detail { quality_factors(&details) } else { vec![1.0; count] };
+    let levels = if ro.levels > 0 { ro.levels.min(auto_levels(w, h)) } else { auto_levels(w, h) };
+    let plan = crate::strip::plan(w, h, levels, Blend::Smooth, budget, cfg)?;
+    // strips start on the grid of the coarsest hole-fill level, so the fill is the same in every strip
+    let align = 1usize << (levels + cfg.fill_extra_levels);
+    let rows = if plan.rows >= h { h } else { (plan.rows / align).max(1) * align };
+    let margin = plan.margin.div_ceil(align) * align;
+    let strips = crate::strip::strips(h, rows);
+    let n = strips.len();
+    for (si, &(s0, s1)) in strips.iter().enumerate() {
+        if cancelled() {
+            return Err(CANCELLED.into());
+        }
+        (prog.report)(si as f32 / n as f32, &format!("Strip {} of {}", si + 1, n));
+        let (ya, yb) = crate::strip::padded((s0, s1), margin, h);
+        let (col, cov) = smooth_window(load, &m, &vr, &qual, &photo_rows, w, (ya, yb), levels, cfg.fill_extra_levels, ro, &cancelled)?;
+        let a = (s0 - ya) * w;
+        let b = (s1 - ya) * w;
+        sink(s0, &col[a..b], &cov[a..b], w)?;
+    }
+    Ok((w, h))
+}
+
+/// Smooth blend of the output rows `[ya, yb)` only (`ya` must be a multiple of 2^(levels + fill_extra)). Same
+/// two passes as in `render_final`, with all buffers just as high as the window.
+#[allow(dead_code)] // wired into the export in a later step
+#[allow(clippy::too_many_arguments)]
+fn smooth_window(
+    load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync),
+    m: &Mapper,
+    _vr: &M3,
+    qual: &[f32],
+    photo_rows: &[(usize, usize)],
+    w: usize,
+    (ya, yb): (usize, usize),
+    levels: usize,
+    fill_extra: usize,
+    ro: &RenderOptions,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<[f32; 3]>, Vec<f32>), String> {
+    let sample = |img: &RgbImage, x: f32, y: f32| if ro.cubic { crate::imgutil::sample_rgb_linear_cubic(img, x, y) } else { sample_rgb_linear(img, x, y) };
+    let wh = yb - ya;
+    let prefer = ro.prefer_detail;
+    // photos touching the window, with their rows relative to the window
+    let touching = crate::strip::photos_for(photo_rows, (ya, yb));
+    let rel = |i: usize| (photo_rows[i].0.max(ya) - ya, photo_rows[i].1.min(yb) - ya);
+    let mut best = alloc(w * wh, u16::MAX)?;
+    let mut best_w = alloc(w * wh, 0.0f32)?;
+    for &i in &touching {
+        if cancelled() {
+            return Err(CANCELLED.into());
+        }
+        let p = load(i, false)?;
+        let (y0, y1) = rel(i);
+        best.par_chunks_mut(w).zip(best_w.par_chunks_mut(w)).enumerate().for_each(|(ry, (br, bw))| {
+            if ry < y0 || ry >= y1 {
+                return;
+            }
+            let py = ya + ry;
+            for px in 0..w {
+                let Some(d) = m.dir(px, py) else { continue };
+                if let Some((x, y, wt)) = p.lookup(d) {
+                    let sc = if prefer { seam_score(qual[i], wt) } else { wt };
+                    let wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
+                    if wt > bw[px] {
+                        bw[px] = wt;
+                        br[px] = i as u16;
+                    }
+                }
+            }
+        });
+    }
+    drop(best_w);
+    let mut pyr = BlendPyramid::new(w, wh, levels)?;
+    // regions start on the grid of the coarsest fill level (`ya` is on it too)
+    let align = 1usize << (levels + fill_extra);
+    let pad = align * 2;
+    for &i in &touching {
+        if cancelled() {
+            return Err(CANCELLED.into());
+        }
+        let p = load(i, true)?;
+        let (y0, y1) = rel(i);
+        if y0 >= y1 {
+            continue;
+        }
+        let ry0 = (y0.saturating_sub(pad) / align) * align;
+        let ry1 = ((y1 + pad).div_ceil(align) * align).min(wh.div_ceil(align) * align);
+        let rh = ry1 - ry0;
+        let rw = w.div_ceil(align) * align;
+        let mut img = vec![[0.0f32; 3]; rw * rh];
+        let mut valid = vec![0.0f32; rw * rh];
+        let mut mask = vec![0.0f32; rw * rh];
+        img.par_chunks_mut(rw).zip(valid.par_chunks_mut(rw)).zip(mask.par_chunks_mut(rw)).enumerate().for_each(|(ry, ((ir, vr_), mr))| {
+            let wy = ry0 + ry;
+            if wy >= wh {
+                return;
+            }
+            let py = ya + wy;
+            for px in 0..w {
+                let Some(d) = m.dir(px, py) else { continue };
+                if let Some((x, y, _)) = p.lookup(d) {
+                    let c = sample(&p.img, x, y);
+                    ir[px] = [c[0] * p.gain[0], c[1] * p.gain[1], c[2] * p.gain[2]];
+                    vr_[px] = 1.0;
+                    if best[wy * w + px] == i as u16 {
+                        mr[px] = 1.0;
+                    }
+                }
+            }
+        });
+        fill_holes(&mut img, &valid, rw, rh, levels + fill_extra);
+        pyr.add(&img, &mask, rw, rh, ry0);
+    }
+    let (col, wgt) = pyr.collapse();
+    drop(wgt);
+    let mut cov = vec![0.0f32; w * wh];
+    cov.par_iter_mut().enumerate().for_each(|(i, c)| {
+        if best[i] != u16::MAX {
+            *c = 1.0;
+        }
+    });
+    Ok((col, cov))
 }
 
 /// Automatic number of multi-band levels for a panorama of `w` x `h` pixels (1..=7).
@@ -887,7 +1049,7 @@ fn roi_rows(p: &RenderPhoto, m: &Mapper, vr: &M3, h: usize) -> (usize, usize) {
 
 /// Fill invalid pixels with smooth values from coarser levels (push-pull), so multi-band
 /// blending does not pull in black at the seams.
-fn fill_holes(img: &mut [[f32; 3]], valid: &[f32], w: usize, h: usize) {
+fn fill_holes(img: &mut [[f32; 3]], valid: &[f32], w: usize, h: usize, max_levels: usize) {
     if w < 2 || h < 2 {
         return;
     }
@@ -898,7 +1060,7 @@ fn fill_holes(img: &mut [[f32; 3]], valid: &[f32], w: usize, h: usize) {
         .map(|(c, v)| [c[0] * v, c[1] * v, c[2] * v, *v])
         .collect();
     levels.push((base, w, h));
-    while levels.last().unwrap().1 > 1 && levels.last().unwrap().2 > 1 {
+    while levels.last().unwrap().1 > 1 && levels.last().unwrap().2 > 1 && levels.len() <= max_levels {
         let (prev, pw, ph) = levels.last().unwrap();
         let (nw, nh) = (pw.div_ceil(2), ph.div_ceil(2));
         let mut next = vec![[0.0f32; 4]; nw * nh];
@@ -1191,5 +1353,118 @@ mod rgba16_tests {
         assert!(b[4..].iter().all(|&v| v == 0));
         // 16 bit really has more levels
         assert_ne!(b[1] % 257, 0);
+    }
+}
+
+#[cfg(test)]
+mod strip_tests {
+    use super::*;
+    use crate::align::Lens;
+    use crate::geometry::camera_from_ypr;
+    use crate::strip::StripConfig;
+
+    fn scene(n: usize, detail_boost: bool) -> Vec<RenderPhoto> {
+        (0..n)
+            .map(|i| {
+                let img = crate::testutil::texture(300, 200, 7 + i as u64);
+                RenderPhoto {
+                    w: 300.0,
+                    h: 200.0,
+                    rot: camera_from_ypr((i as f64 * 22.0 - 22.0).to_radians(), (i as f64 * 3.0 - 3.0).to_radians(), 0.0),
+                    lens: Lens::from_hfov_deg(50.0),
+                    field: None,
+                    gain: [1.0 + 0.05 * i as f32, 1.0, 1.0 - 0.03 * i as f32],
+                    full_long: if detail_boost && i == 1 { 600.0 } else { 300.0 },
+                    trusted: true,
+                    img: Arc::new(img),
+                }
+            })
+            .collect()
+    }
+
+    struct Diff {
+        max: i32,
+        differing: usize,
+        total: usize,
+        mean: f64,
+    }
+
+    fn compare(a: &[u8], b: &[u8]) -> Diff {
+        assert_eq!(a.len(), b.len());
+        let mut d = Diff { max: 0, differing: 0, total: a.len() / 4, mean: 0.0 };
+        let mut sum = 0.0;
+        for (x, y) in a.chunks(4).zip(b.chunks(4)) {
+            let m = (0..4).map(|k| (x[k] as i32 - y[k] as i32).abs()).max().unwrap();
+            d.max = d.max.max(m);
+            sum += m as f64;
+            if m > 0 {
+                d.differing += 1;
+            }
+        }
+        d.mean = sum / d.total as f64;
+        d
+    }
+
+    /// Renders with strips of at most `strip_rows` rows. Returns (8-bit result, number of strips).
+    fn strips_of(photos: &[RenderPhoto], view: &PanoView, width: usize, ro: &RenderOptions, cfg: &StripConfig) -> (Vec<u8>, usize, usize, usize) {
+        let load = |i: usize, _px: bool| Ok(photos[i].clone());
+        let cancel = AtomicBool::new(false);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        let mut out: Vec<u8> = Vec::new();
+        let mut strips = 0;
+        let mut sink = |y0: usize, c: &[[f32; 3]], v: &[f32], sw: usize| {
+            let px = to_rgba8(c, v);
+            assert_eq!(out.len(), y0 * sw * 4, "strips must arrive in order without gaps");
+            out.extend_from_slice(&px);
+            strips += 1;
+            Ok(())
+        };
+        let (w, h) = render_strips(photos.len(), &load, view, width, ro, cfg, 8 << 30, &mut sink, &prog).unwrap();
+        assert_eq!(out.len(), w * h * 4);
+        (out, strips, w, h)
+    }
+
+    #[test]
+    fn strips_equal_one_window_and_stay_close_to_the_whole_image_render() {
+        let photos = scene(3, true);
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let load = |i: usize, _px: bool| Ok(photos[i].clone());
+        let cancel = AtomicBool::new(false);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        for (rows, levels) in [(64, 4), (128, 6)] {
+            let ro = RenderOptions { prefer_detail: true, levels, ..Default::default() };
+            let (col, cov, w, h) = render_final(photos.len(), &load, &view, 2000, Blend::Smooth, &ro, &prog).unwrap();
+            let reference = to_rgba8(&col, &cov);
+            // one window = the whole image in a single strip
+            let one = StripConfig { max_rows: 1 << 20, ..Default::default() };
+            let (whole, n, _, _) = strips_of(&photos, &view, 2000, &ro, &one);
+            assert_eq!(n, 1);
+            // several strips must give the very same pixels as the single window
+            let cfg = StripConfig { max_rows: rows, min_rows: 16, ..Default::default() };
+            let (strips, n, w2, h2) = strips_of(&photos, &view, 2000, &ro, &cfg);
+            assert_eq!((w, h), (w2, h2));
+            assert!(n >= 4, "expected several strips, got {n}");
+            let d = compare(&whole, &strips);
+            assert!(d.max <= 1, "levels {levels}: strips differ from one window: max {} in {}/{} px", d.max, d.differing, d.total);
+            // the earlier render fills holes over the whole photo, the strips over a local grid:
+            // not identical, but visually the same
+            let dr = compare(&reference, &strips);
+            eprintln!("levels {levels}: {n} strips; vs render_final max {} mean {:.3} differing {}/{}", dr.max, dr.mean, dr.differing, dr.total);
+            assert!(dr.mean < 1.5, "levels {levels}: mean difference {:.3}", dr.mean);
+        }
+    }
+
+    #[test]
+    fn cancelling_stops_the_strip_render() {
+        let photos = scene(2, false);
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let load = |i: usize, _px: bool| Ok(photos[i].clone());
+        let cancel = AtomicBool::new(true);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        let mut sink = |_: usize, _: &[[f32; 3]], _: &[f32], _: usize| Ok(());
+        let e = render_strips(2, &load, &view, 400, &RenderOptions::default(), &StripConfig::default(), 8 << 30, &mut sink, &prog).unwrap_err();
+        assert_eq!(e, CANCELLED);
     }
 }

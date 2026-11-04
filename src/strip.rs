@@ -33,6 +33,9 @@ pub struct StripConfig {
     pub roi_bytes_per_px: u64,
     /// margin factor: margin = `margin_factor << levels` rows
     pub margin_factor: usize,
+    /// extra push-pull levels (beyond the multi-band levels) for filling holes in a photo region;
+    /// the fill reaches `2^(levels + fill_extra_levels)` rows
+    pub fill_extra_levels: usize,
     /// a strip should be at least this many times higher than the margin (otherwise a lot of
     /// work is done twice)
     pub min_strip_to_margin: usize,
@@ -47,6 +50,7 @@ impl Default for StripConfig {
             budget_share: 0.5,
             roi_bytes_per_px: 20,
             margin_factor: 4,
+            fill_extra_levels: 2,
             min_strip_to_margin: 1,
         }
     }
@@ -67,10 +71,11 @@ pub struct StripPlan {
 
 /// Margin rows needed above and below a strip for `levels` multi-band levels. The lowest level
 /// covers `2^levels` rows of the output and the Gaussian filter reaches a few rows further, so
-/// `margin_factor << levels` leaves some room. Feather needs no margin (weights are local).
+/// `margin_factor << levels` leaves some room; the hole fill adds its own reach of
+/// `2^(levels + fill_extra_levels)` rows. Feather needs no margin (weights are local).
 pub fn margin_rows(levels: usize, blend: Blend, cfg: &StripConfig) -> usize {
     match blend {
-        Blend::Smooth => cfg.margin_factor << levels.min(10),
+        Blend::Smooth => (cfg.margin_factor << levels.min(10)) + (1usize << (levels + cfg.fill_extra_levels).min(14)),
         Blend::Feather => 0,
     }
 }
@@ -188,7 +193,7 @@ mod tests {
     #[test]
     fn plan_stays_within_the_budget_and_limits() {
         let cfg = StripConfig::default();
-        for budget in [GB, 4 * GB, 32 * GB] {
+        for budget in [2 * GB, 4 * GB, 32 * GB] {
             let p = plan(30_000, 20_000, 5, Blend::Smooth, budget, &cfg).unwrap();
             assert!(p.peak_bytes <= budget, "budget {budget}: {p:?}");
             assert!(p.rows >= cfg.min_rows && p.rows <= cfg.max_rows);
@@ -199,7 +204,7 @@ mod tests {
     #[test]
     fn a_bigger_budget_gives_higher_strips() {
         let cfg = StripConfig::default();
-        let small = plan(30_000, 20_000, 5, Blend::Smooth, GB, &cfg).unwrap();
+        let small = plan(30_000, 20_000, 5, Blend::Smooth, 2 * GB, &cfg).unwrap();
         let big = plan(30_000, 20_000, 5, Blend::Smooth, 8 * GB, &cfg).unwrap();
         assert!(big.rows > small.rows);
     }
@@ -218,7 +223,7 @@ mod tests {
         assert_eq!(p.margin, 0);
         assert_eq!(p.count, 1);
         assert_eq!(p.rows, 500);
-        assert_eq!(margin_rows(5, Blend::Smooth, &cfg), 4 << 5);
+        assert_eq!(margin_rows(5, Blend::Smooth, &cfg), (4 << 5) + (1 << 7));
     }
 
     #[test]
