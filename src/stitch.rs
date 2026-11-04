@@ -356,11 +356,23 @@ impl Mapper {
 
 /// Sample points along the border (and centre) of a photo, as world directions.
 pub fn photo_outline(p: &RenderPhoto, steps: usize) -> Vec<V3> {
+    outline(p, steps, false)
+}
+
+/// Outline of the photo; with `follow_field` the edge is moved the way the parallax correction
+/// moves it (the photo's border is where the corrected position leaves the image).
+fn outline(p: &RenderPhoto, steps: usize, follow_field: bool) -> Vec<V3> {
     let w = p.w;
     let h = p.h;
     let l = w.max(h);
     let mut pts = Vec::new();
     let to_dir = |x: f64, y: f64| -> V3 {
+        let (mut x, mut y) = (x, y);
+        if let (true, Some(f)) = (follow_field, &p.field) {
+            let d = f.at(x / w, y / h);
+            x -= d[0] * l;
+            y -= d[1] * l;
+        }
         let r = crate::align::ray(&p.lens, [(x - w * 0.5) / l, (y - h * 0.5) / l]);
         mtv(&p.rot, r)
     };
@@ -1115,11 +1127,19 @@ pub fn auto_levels(w: usize, h: usize) -> usize {
     l
 }
 
+/// Extra rows (output pixels) around the rows a photo touches; larger with a parallax field.
+const ROI_RESERVE: f64 = 4.0;
+const ROI_RESERVE_FIELD: f64 = 16.0;
+
 /// Rows of the output touched by photo `p`.
 fn roi_rows(p: &RenderPhoto, m: &Mapper, vr: &M3, h: usize) -> (usize, usize) {
     let mut y0 = f64::MAX;
     let mut y1 = f64::MIN;
-    let pts = photo_outline(p, 32);
+    let mut pts = photo_outline(p, 32);
+    if p.field.is_some() {
+        // the parallax field moves the edge of the photo: take both outlines
+        pts.extend(outline(p, 32, true));
+    }
     let mut bad = false;
     for d in pts {
         match m.to_px(d, vr) {
@@ -1133,8 +1153,10 @@ fn roi_rows(p: &RenderPhoto, m: &Mapper, vr: &M3, h: usize) -> (usize, usize) {
     if bad || y0 > y1 {
         return (0, h);
     }
-    let mut y0 = (y0 - 4.0).floor().max(0.0) as usize;
-    let mut y1 = ((y1 + 4.0).ceil().max(0.0) as usize).min(h);
+    // a little extra for the change of the field between the edge and the inside of the photo
+    let reserve = if p.field.is_some() { ROI_RESERVE_FIELD } else { ROI_RESERVE };
+    let mut y0 = (y0 - reserve).floor().max(0.0) as usize;
+    let mut y1 = ((y1 + reserve).ceil().max(0.0) as usize).min(h);
     // a photo containing a pole of the view extends to the top/bottom
     if p.lookup(mtv(vr, [0.0, -1.0, 0.0])).is_some() {
         y0 = 0;
@@ -1504,7 +1526,7 @@ mod strip_tests {
     }
 
     /// Renders with strips of at most `strip_rows` rows. Returns (8-bit result, number of strips).
-    fn strips_of(photos: &[RenderPhoto], view: &PanoView, width: usize, ro: &RenderOptions, cfg: &StripConfig) -> (Vec<u8>, usize, usize, usize) {
+    fn strips_of(photos: &[RenderPhoto], view: &PanoView, width: usize, blend: Blend, ro: &RenderOptions, cfg: &StripConfig) -> (Vec<u8>, usize, usize, usize) {
         let load = |i: usize, _px: bool| Ok(photos[i].clone());
         let cancel = AtomicBool::new(false);
         let prog = Progress { report: &|_, _| {}, cancel: &cancel };
@@ -1517,7 +1539,7 @@ mod strip_tests {
             strips += 1;
             Ok(())
         };
-        let (w, h) = render_strips(photos.len(), &load, view, width, Blend::Smooth, ro, cfg, 8 << 30, &mut sink, &prog).unwrap();
+        let (w, h) = render_strips(photos.len(), &load, view, width, blend, ro, cfg, 8 << 30, &mut sink, &prog).unwrap();
         assert_eq!(out.len(), w * h * 4);
         (out, strips, w, h)
     }
@@ -1536,11 +1558,11 @@ mod strip_tests {
             let reference = to_rgba8(&col, &cov);
             // one window = the whole image in a single strip
             let one = StripConfig { max_rows: 1 << 20, ..Default::default() };
-            let (whole, n, _, _) = strips_of(&photos, &view, 2000, &ro, &one);
+            let (whole, n, _, _) = strips_of(&photos, &view, 2000, Blend::Smooth, &ro, &one);
             assert_eq!(n, 1);
             // several strips must give the very same pixels as the single window
             let cfg = StripConfig { max_rows: rows, min_rows: 16, ..Default::default() };
-            let (strips, n, w2, h2) = strips_of(&photos, &view, 2000, &ro, &cfg);
+            let (strips, n, w2, h2) = strips_of(&photos, &view, 2000, Blend::Smooth, &ro, &cfg);
             assert_eq!((w, h), (w2, h2));
             assert!(n >= 4, "expected several strips, got {n}");
             let d = compare(&whole, &strips);
@@ -1576,6 +1598,34 @@ mod strip_tests {
             assert_eq!((w, h), (w2, h2));
             let d = compare(&reference, &out);
             assert_eq!(d.max, 0, "rows {rows}: {} pixels differ", d.differing);
+        }
+    }
+
+    /// The rows a photo touches must contain every row where the photo is really visible. With a
+    /// parallax field the photo's edge moves, so the rows have to follow it (checked pixel by pixel).
+    #[test]
+    fn rows_of_a_photo_cover_everything_it_shows_even_with_a_parallax_field() {
+        let mut photos = scene(3, false);
+        for (i, p) in photos.iter_mut().enumerate() {
+            let (gw, gh) = (8, 6);
+            // a smooth field of up to +-0.03 / 0.04 of the long side, different for every photo
+            let d = (0..gw * gh).map(|k| {
+                let (x, y) = ((k % gw) as f32 / gw as f32, (k / gw) as f32 / gh as f32);
+                [0.03 * ((i as f32 + 1.0) * 2.0 * x).sin(), 0.04 * ((i as f32 + 1.0) * 1.5 + 3.0 * y).sin() + 0.02]
+            });
+            p.field = Some(Arc::new(crate::fine_align::DisplacementField { gw, gh, d: d.collect() }));
+        }
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        let cb = view.crop_bounds();
+        let (w, h) = (900usize, ((900.0 / ((cb[1] - cb[0]) / (cb[3] - cb[2]))).round() as usize).max(16));
+        let m = Mapper::new(&view, cb, w, h);
+        let vr = view.rotation();
+        for (i, p) in photos.iter().enumerate() {
+            let (y0, y1) = roi_rows(p, &m, &vr, h);
+            let rows: Vec<usize> = (0..h).filter(|&py| (0..w).any(|px| m.dir(px, py).is_some_and(|d| p.lookup(d).is_some()))).collect();
+            let (lo, hi) = (*rows.first().unwrap(), *rows.last().unwrap() + 1);
+            assert!(y0 <= lo && y1 >= hi, "photo {i}: visible rows {lo}..{hi}, but only {y0}..{y1} are used");
         }
     }
 

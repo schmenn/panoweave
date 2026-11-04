@@ -1,6 +1,7 @@
 //! Project files (.pwproj, JSON): photos, lenses, points, alignment and framing.
 
 use crate::align::{ControlPoint, Lens};
+use crate::fine_align::{DisplacementField, ParallaxConfig};
 use crate::geometry::M3;
 use crate::stitch::PanoView;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,9 @@ pub struct ProjectPhoto {
     pub lens: usize,
     pub rot: M3,
     pub enabled: bool,
+    /// local parallax correction of this photo (computed by the alignment), if there is one
+    #[serde(default)]
+    pub field: Option<DisplacementField>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -22,6 +26,9 @@ pub struct ProjectFile {
     pub cps: Vec<ControlPoint>,
     pub view: PanoView,
     pub aligned: bool,
+    /// settings of the parallax correction (old files: off)
+    #[serde(default)]
+    pub parallax: Option<ParallaxConfig>,
 }
 
 pub fn save(path: &std::path::Path, p: &ProjectFile) -> Result<(), String> {
@@ -43,13 +50,14 @@ mod tests {
         ProjectFile {
             version: 1,
             photos: vec![
-                ProjectPhoto { path: PathBuf::from("a.jpg"), lens: 0, rot: IDENTITY, enabled: true },
-                ProjectPhoto { path: PathBuf::from("b.jpg"), lens: 0, rot: crate::geometry::rodrigues([0.0, 0.2, 0.0]), enabled: false },
+                ProjectPhoto { path: PathBuf::from("a.jpg"), lens: 0, rot: IDENTITY, enabled: true, field: None },
+                ProjectPhoto { path: PathBuf::from("b.jpg"), lens: 0, rot: crate::geometry::rodrigues([0.0, 0.2, 0.0]), enabled: false, field: Some(DisplacementField { gw: 2, gh: 2, d: vec![[0.001, -0.002], [0.0, 0.0], [0.003, 0.004], [-0.005, 0.0]] }) },
             ],
             lenses: vec![Lens::from_hfov_deg(60.0)],
             cps: vec![ControlPoint::new(0, 1, [0.1, 0.2], [-0.3, 0.05], true)],
             view: PanoView::default(),
             aligned: true,
+            parallax: Some(ParallaxConfig { enabled: true, max_shift: 9.0, ..Default::default() }),
         }
     }
 
@@ -79,6 +87,23 @@ mod tests {
         assert_eq!(q.cps[0].pb, [-0.3, 0.05]);
         assert!(q.cps[0].manual);
         assert!(q.aligned);
+        // the parallax correction survives saving and loading
+        assert!(q.photos[0].field.is_none());
+        let f = q.photos[1].field.as_ref().unwrap();
+        assert_eq!((f.gw, f.gh, f.d.len()), (2, 2, 4));
+        assert!((f.d[2][1] - 0.004).abs() < 1e-7);
+        let pc = q.parallax.unwrap();
+        assert!(pc.enabled && pc.max_shift == 9.0);
+    }
+
+    #[test]
+    fn old_project_files_without_parallax_still_load() {
+        // a file saved before the parallax keys existed: cut the new keys out of a saved one
+        let mut v: serde_json::Value = serde_json::to_value(sample()).unwrap();
+        v.as_object_mut().unwrap().remove("parallax");
+        v["photos"][1].as_object_mut().unwrap().remove("field");
+        let pf: ProjectFile = serde_json::from_value(v).unwrap();
+        assert!(pf.parallax.is_none() && pf.photos[1].field.is_none());
     }
 
     #[test]
