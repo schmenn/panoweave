@@ -23,14 +23,14 @@ pub(super) struct ExportOptions {
     pub target_width: u32,
     /// TIFF only: 16 bits per channel instead of 8
     pub tiff_16bit: bool,
-    /// find the seams between the photos with the seam finder (around poles, lamps and people that
+    /// find the seams between the photos with the seam finder (on by default; around poles, lamps and people that
     /// the photos see from different sides); off = the photo with the best score wins at every pixel
     pub smart_seams: bool,
 }
 
 impl Default for ExportOptions {
     fn default() -> Self {
-        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false, smart_seams: false }
+        Self { enabled: false, size_mode: SizeMode::Percent, target_width: DEFAULT_TARGET_WIDTH, tiff_16bit: false, smart_seams: true }
     }
 }
 
@@ -431,7 +431,7 @@ impl PanoApp {
                     {
                         self.preview_dirty = true;
                     }
-                    ui.add_enabled(self.blend == Blend::Smooth, egui::Checkbox::new(&mut self.export_opts.smart_seams, "Smart seams – steer the seams around poles, lamps and people (slower)"))
+                    ui.add_enabled(self.blend == Blend::Smooth, egui::Checkbox::new(&mut self.export_opts.smart_seams, "Smart seams – steer the seams around poles, lamps and people (slower, recommended)"))
                         .on_hover_text("Off (default): the photo with the most detail wins where photos overlap. On: the seams are searched so that they run where the photos agree, so a close object that two photos see from different sides is not cut in two. The export takes some seconds longer. Only for Smooth seams.");
                     self.mask_button(ui);
                 });

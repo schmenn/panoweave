@@ -76,7 +76,7 @@ pub struct GainMapConfig {
     pub cg_tol: f64,
 }
 
-/// Experiments: `PW_GM_GRID`, `PW_GM_SMOOTH`, `PW_GM_MAXDEV` replace the defaults of the same name.
+/// Experiments: `PW_GM_GRID`, `PW_GM_SMOOTH`, `PW_GM_MAXDEV`, `PW_GM_ANCHOR`, `PW_GM_EDGE`, `PW_GM_BLUR`, `PW_GM_GRAD`, `PW_GM_HUBER`, `PW_GM_COVER` replace the defaults of the same name.
 fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
@@ -87,18 +87,18 @@ impl Default for GainMapConfig {
             enabled: true,
             grid_long: env_or("PW_GM_GRID", DEFAULT_GRID_LONG),
             smooth: env_or("PW_GM_SMOOTH", DEFAULT_SMOOTH),
-            anchor: DEFAULT_ANCHOR,
+            anchor: env_or("PW_GM_ANCHOR", DEFAULT_ANCHOR),
             max_dev: env_or("PW_GM_MAXDEV", DEFAULT_MAX_DEV),
             min_samples: DEFAULT_MIN_SAMPLES,
             preview_width: DEFAULT_PREVIEW_WIDTH,
-            min_edge_weight: DEFAULT_MIN_EDGE_WEIGHT,
-            blur_radius: DEFAULT_BLUR_RADIUS,
+            min_edge_weight: env_or("PW_GM_EDGE", DEFAULT_MIN_EDGE_WEIGHT),
+            blur_radius: env_or("PW_GM_BLUR", DEFAULT_BLUR_RADIUS),
             edge_step: DEFAULT_EDGE_STEP,
-            max_gradient: DEFAULT_MAX_GRADIENT,
+            max_gradient: env_or("PW_GM_GRAD", DEFAULT_MAX_GRADIENT),
             stride: DEFAULT_STRIDE,
             max_obs: DEFAULT_MAX_OBS,
-            max_cover: DEFAULT_MAX_COVER,
-            huber: DEFAULT_HUBER,
+            max_cover: env_or("PW_GM_COVER", DEFAULT_MAX_COVER),
+            huber: env_or("PW_GM_HUBER", DEFAULT_HUBER),
             irls_iters: DEFAULT_IRLS_ITERS,
             cg_iters: DEFAULT_CG_ITERS,
             cg_tol: DEFAULT_CG_TOL,
@@ -267,6 +267,9 @@ fn build_layer(p: &RenderPhoto, m: &Mapper, w: usize, h: usize, cfg: &GainMapCon
             gx.max(gy) <= cfg.max_gradient
         })
         .collect();
+    if std::env::var("PW_GM_DEBUG").is_ok() {
+        eprintln!("  layer: {} usable px, {} flat px", valid.iter().filter(|&&v| v).count(), flat.iter().filter(|&&v| v).count());
+    }
     let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
     for i in (0..w * h).filter(|&i| flat[i]) {
         x0 = x0.min(i % w);
@@ -351,6 +354,10 @@ pub fn compute_gain_maps(photos: &[RenderPhoto], view: &PanoView, cfg: &GainMapC
     if crate::engine::cancelled() {
         return none();
     }
+    if std::env::var("PW_GM_DEBUG").is_ok() {
+        let ok: Vec<usize> = layers.iter().map(|l| l.as_ref().map_or(0, |l| l.ok.iter().filter(|&&v| v).count())).collect();
+        eprintln!("gain maps: flat usable pixels per photo {ok:?}");
+    }
     let mut obs = thin(collect_obs(&layers, photos, w, h, cfg), cfg.max_obs);
     drop(layers);
     // photos with too few comparisons drop out (and with them the comparisons they take part in)
@@ -414,6 +421,9 @@ pub fn compute_gain_maps(photos: &[RenderPhoto], view: &PanoView, cfg: &GainMapC
     let params = SolveParams { n: total, lam: cfg.smooth * unit, anchor: cfg.anchor * unit, huber: cfg.huber, irls_iters: cfg.irls_iters, cg_iters: cfg.cg_iters, cg_tol: cfg.cg_tol };
     let sol: Vec<Option<Vec<f64>>> = (0..3).into_par_iter().map(|ch| solve_channel(&sobs, &links, &params, ch)).collect();
     let (Some(x0), Some(x1), Some(x2)) = (sol[0].as_ref(), sol[1].as_ref(), sol[2].as_ref()) else { return none() };
+    if std::env::var("PW_GM_DEBUG").is_ok() {
+        report_pairs(&obs, &first, [x0, x1, x2], n);
+    }
     let lim = cfg.max_dev;
     (0..n)
         .map(|k| {
@@ -425,6 +435,33 @@ pub fn compute_gain_maps(photos: &[RenderPhoto], view: &PanoView, cfg: &GainMapC
             Some(GainMap { gw, gh, d })
         })
         .collect()
+}
+
+/// Experiments (`PW_GM_DEBUG=1`): per pair of photos, how well they agree in the overlap before and after the correction.
+fn report_pairs(obs: &[RawObs], first: &[usize], x: [&Vec<f64>; 3], n: usize) {
+    use std::collections::BTreeMap;
+    // (count, sum of d, sum of d - prediction) per pair and channel
+    let mut pairs: BTreeMap<(usize, usize), (usize, [f64; 3], [f64; 3])> = BTreeMap::new();
+    let mut per_photo = vec![0usize; n];
+    for o in obs {
+        let e = pairs.entry((o.a.min(o.b), o.a.max(o.b))).or_default();
+        let sign = if o.a < o.b { 1.0 } else { -1.0 };
+        e.0 += 1;
+        per_photo[o.a] += 1;
+        per_photo[o.b] += 1;
+        for c in 0..3 {
+            let pred: f64 = (0..4).map(|j| o.wa[j] as f64 * x[c][first[o.a] + o.ca[j]] - o.wb[j] as f64 * x[c][first[o.b] + o.cb[j]]).sum();
+            e.1[c] += sign * o.d[c] as f64;
+            e.2[c] += sign * (o.d[c] as f64 - pred);
+        }
+    }
+    let mut rows: Vec<_> = pairs.iter().map(|(k, v)| (*k, v.0, v.1.map(|s| s / v.0 as f64), v.2.map(|s| s / v.0 as f64))).collect();
+    rows.sort_by(|a, b| b.3.iter().map(|v| v.abs()).fold(0.0, f64::max).partial_cmp(&a.3.iter().map(|v| v.abs()).fold(0.0, f64::max)).unwrap_or(std::cmp::Ordering::Equal));
+    eprintln!("gain maps: comparisons per photo {per_photo:?}");
+    eprintln!("gain maps: pair (a,b) n | mean ln(Ib/Ia) before RGB | after RGB   (worst first)");
+    for ((a, b), cnt, before, after) in rows.iter().take(12) {
+        eprintln!("  ({a:2},{b:2}) {cnt:5} | {:+.3} {:+.3} {:+.3} | {:+.3} {:+.3} {:+.3}", before[0], before[1], before[2], after[0], after[1], after[2]);
+    }
 }
 
 #[cfg(test)]
