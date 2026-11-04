@@ -1036,6 +1036,7 @@ fn compute_labels(
         return Ok(None);
     }
     let (bsz, bw, bh) = crate::seams::grid(w, h, cfg.max_side);
+    let t0 = std::time::Instant::now();
     let mut photos = Vec::with_capacity(photo_rows.len());
     for (i, &(y0, y1)) in photo_rows.iter().enumerate() {
         if cancelled() {
@@ -1067,7 +1068,11 @@ fn compute_labels(
         });
         photos.push(pb);
     }
+    let t1 = t0.elapsed();
     let labels = crate::seams::find(&photos, bw, bh, &cfg, cancelled)?;
+    if std::env::var("PW_SEAM_DEBUG").is_ok() {
+        eprintln!("seam finder: grid {bw}x{bh} blocks of {bsz} px, {} photos, blocks {:.1} s, graph cuts {:.1} s", photos.len(), t1.as_secs_f32(), (t0.elapsed() - t1).as_secs_f32());
+    }
     let map = crate::seams::LabelMap { bw, bh, bsz, labels };
     if let Ok(f) = std::env::var("PW_SEAM_DEBUG") {
         // experiments: a picture of the seams (one block = one pixel)

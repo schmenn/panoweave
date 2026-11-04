@@ -28,6 +28,9 @@ pub const POSITIVE: u8 = 2;
 /// The person painted "do not use this photo here" over the block.
 pub const NEGATIVE: u8 = 4;
 
+/// Photos whose rectangles come closer than this many blocks are not expanded side by side.
+const ROUND_GAP: usize = 3;
+
 /// Label of a block no photo covers.
 pub const NONE: u16 = u16::MAX;
 
@@ -61,11 +64,16 @@ pub struct SeamConfig {
     pub diff_power: f32,
     /// passes over all photos (stops early when nothing changes)
     pub cycles: usize,
+    /// grids with at least this many blocks along the long side are solved in two steps: first on the halved grid,
+    /// then on the full grid only within `band` blocks of the seams found (much faster; 0 = always in one step)
+    pub coarse_min_side: usize,
+    /// width (blocks, each side) of the band around the coarse seams that may still change in the second step
+    pub band: usize,
 }
 
 impl Default for SeamConfig {
     fn default() -> Self {
-        SeamConfig { enabled: false, max_side: 1536, data_weight: 0.05, smooth_weight: 1.0, cut_cost: 0.01, missing_diff: 0.5, diff_power: 1.0, cycles: 2 }
+        SeamConfig { enabled: false, max_side: 1536, data_weight: 0.05, smooth_weight: 1.0, cut_cost: 0.01, missing_diff: 0.5, diff_power: 1.0, cycles: 2, coarse_min_side: 256, band: 8 }
     }
 }
 
@@ -449,28 +457,52 @@ impl Graph {
 // ---------------------------------------------------------------------------------------------
 // alpha expansion
 
-/// One expansion move: every block photo `alpha` may use decides between keeping its label and switching to `alpha`.
-/// Returns whether any label changed.
-fn expand(pr: &Problem, labels: &mut [u16], alpha: usize, node_of: &mut [u32]) -> bool {
-    let (bw, bh) = (pr.bw, pr.bh);
-    // the blocks that can switch (or already show alpha)
-    let ph = &pr.photos[alpha];
-    let mut vs: Vec<usize> = Vec::new();
-    for by in ph.by0..(ph.by0 + ph.rows).min(bh) {
+/// The rectangle of blocks a photo covers: (bx0, bx1, by0, by1), end exclusive.
+type Extent = (usize, usize, usize, usize);
+
+fn extent(ph: &PhotoBlocks, bw: usize) -> Option<Extent> {
+    let (mut x0, mut x1, mut y0, mut y1) = (usize::MAX, 0usize, usize::MAX, 0usize);
+    for r in 0..ph.rows {
         for bx in 0..bw {
+            if ph.samples[r * bw + bx].flags & VALID != 0 {
+                x0 = x0.min(bx);
+                x1 = x1.max(bx + 1);
+                y0 = y0.min(ph.by0 + r);
+                y1 = y1.max(ph.by0 + r + 1);
+            }
+        }
+    }
+    (x1 > x0).then_some((x0, x1, y0, y1))
+}
+
+/// Do two rectangles come closer than `gap` blocks?
+fn near(a: Extent, b: Extent, gap: usize) -> bool {
+    a.0 < b.1 + gap && b.0 < a.1 + gap && a.2 < b.3 + gap && b.2 < a.3 + gap
+}
+
+/// One expansion move: every block photo `alpha` may use decides between keeping its label and switching to `alpha`.
+/// Reads the labels only (inside the photo's rectangle and one block around it) and returns the blocks that switch to
+/// `alpha`, so moves of photos that are far apart can run side by side.
+fn expand(pr: &Problem, labels: &[u16], alpha: usize, ext: Extent, free: Option<&[bool]>) -> Vec<usize> {
+    let (bw, bh) = (pr.bw, pr.bh);
+    let (ex0, ex1, ey0, ey1) = ext;
+    // the blocks that can switch to alpha (blocks that already show alpha are no nodes: they stay alpha, and what they
+    // cost their neighbours is added to those below)
+    let mut node_of: std::collections::HashMap<usize, u32> = std::collections::HashMap::new();
+    let mut vs: Vec<usize> = Vec::new();
+    for by in ey0..ey1.min(bh) {
+        for bx in ex0..ex1.min(bw) {
             let b = by * bw + bx;
-            if labels[b] != NONE && pr.sample(alpha, b).is_some() {
-                node_of[b] = vs.len() as u32;
+            if labels[b] != NONE && labels[b] as usize != alpha && free.is_none_or(|f| f[b]) && pr.sample(alpha, b).is_some() {
+                node_of.insert(b, vs.len() as u32);
                 vs.push(b);
             }
         }
     }
-    if vs.iter().all(|&b| labels[b] as usize == alpha) {
-        for &b in &vs {
-            node_of[b] = u32::MAX;
-        }
-        return false;
+    if vs.is_empty() {
+        return Vec::new();
     }
+    let node = |b: usize| -> u32 { node_of.get(&b).copied().unwrap_or(u32::MAX) };
     let n = vs.len();
     let (s, t) = (n, n + 1);
     // unary terms: cost of keeping (to the sink side) and of switching (source side)
@@ -484,15 +516,17 @@ fn expand(pr: &Problem, labels: &mut [u16], alpha: usize, node_of: &mut [u32]) -
         }
     }
     let mut next_aux = n + 2;
-    // neighbour terms (every pair of neighbouring blocks once)
-    for b in 0..bw * bh {
-        let (bx, by) = (b % bw, b / bw);
+    // neighbour terms (every pair of neighbouring blocks once; only pairs with a block of the photo can matter)
+    let (rx0, rx1, ry0, ry1) = (ex0.saturating_sub(1), (ex1 + 1).min(bw), ey0.saturating_sub(1), (ey1 + 1).min(bh));
+    for by in ry0..ry1 {
+        for bx in rx0..rx1 {
+        let b = by * bw + bx;
         for q in [(bx + 1 < bw).then(|| b + 1), (by + 1 < bh).then(|| b + bw)].into_iter().flatten() {
             let (cp, cq) = (labels[b], labels[q]);
             if cp == NONE || cq == NONE {
                 continue;
             }
-            let (np, nq) = (node_of[b], node_of[q]);
+            let (np, nq) = (node(b), node(q));
             let (ip, iq) = (np != u32::MAX, nq != u32::MAX);
             if !ip && !iq {
                 continue;
@@ -543,6 +577,7 @@ fn expand(pr: &Problem, labels: &mut [u16], alpha: usize, node_of: &mut [u32]) -
                 (false, false) => {}
             }
         }
+        }
     }
     g.n = next_aux;
     for (v, &b) in vs.iter().enumerate() {
@@ -556,27 +591,15 @@ fn expand(pr: &Problem, labels: &mut [u16], alpha: usize, node_of: &mut [u32]) -
     g.finish();
     g.max_flow(s, t);
     let on_source = g.reachable(s);
-    let mut changed = false;
-    for (v, &b) in vs.iter().enumerate() {
-        if on_source[v] && labels[b] as usize != alpha {
-            labels[b] = alpha as u16;
-            changed = true;
-        }
-        node_of[b] = u32::MAX;
-    }
-    changed
+    vs.iter().enumerate().filter(|&(v, &b)| on_source[v] && labels[b] as usize != alpha).map(|(_, &b)| b).collect()
 }
 
-/// Finds the seams. `photos[i]` are the blocks of photo `i`, the grid is `bw` x `bh` blocks (see [`grid`]).
-/// `cancelled` is checked between the expansion moves. Returns one label per block.
-pub fn find(photos: &[PhotoBlocks], bw: usize, bh: usize, cfg: &SeamConfig, cancelled: &dyn Fn() -> bool) -> Result<Vec<u16>, String> {
-    if photos.len() >= NONE as usize {
-        return Err("too many photos for the seam finder".into());
-    }
+/// One level of the search: expansion moves until nothing changes (at most `cfg.cycles` passes). `init` is the
+/// starting labelling (None: the photo with the best score in every block, the way seams were found before);
+/// `free` limits the blocks that may change (None: all).
+fn solve(photos: &[PhotoBlocks], bw: usize, bh: usize, cfg: &SeamConfig, init: Option<Vec<u16>>, free: Option<&[bool]>, cancelled: &dyn Fn() -> bool) -> Result<Vec<u16>, String> {
     let pr = Problem::new(photos, bw, bh, *cfg);
-    // start: the photo with the best score in every block (the way seams were found before)
-    let mut labels = vec![NONE; bw * bh];
-    for b in 0..bw * bh {
+    let best_start = |b: usize| -> u16 {
         let mut best = (NONE, f32::MIN);
         for i in 0..photos.len() {
             if let Some(s) = pr.sample(i, b) {
@@ -585,22 +608,167 @@ pub fn find(photos: &[PhotoBlocks], bw: usize, bh: usize, cfg: &SeamConfig, canc
                 }
             }
         }
-        labels[b] = best.0;
-    }
-    let mut node_of = vec![u32::MAX; bw * bh];
+        best.0
+    };
+    let mut labels = match init {
+        // a label that may not be used in the block (or is missing) falls back to the best photo there
+        Some(mut l) => {
+            for b in 0..bw * bh {
+                if l[b] == NONE || pr.sample(l[b] as usize, b).is_none() {
+                    l[b] = best_start(b);
+                }
+            }
+            l
+        }
+        None => (0..bw * bh).map(best_start).collect(),
+    };
+    use rayon::prelude::*;
+    let ext: Vec<Option<Extent>> = photos.iter().map(|p| extent(p, bw)).collect();
+    // a photo has to be (re)run when the labels changed somewhere in its area since its last run
+    let mut dirty = vec![true; photos.len()];
     for _ in 0..cfg.cycles {
-        let mut changed = false;
-        for alpha in 0..photos.len() {
+        let mut pending: Vec<usize> = (0..photos.len()).filter(|&a| dirty[a] && ext[a].is_some()).collect();
+        if pending.is_empty() {
+            break;
+        }
+        while !pending.is_empty() {
             if cancelled() {
                 return Err(crate::stitch::CANCELLED.into());
             }
-            changed |= expand(&pr, &mut labels, alpha, &mut node_of);
-        }
-        if !changed {
-            break;
+            // photos that are far apart cannot influence each other: they run side by side, in a fixed order of rounds
+            let (mut round, mut rest): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
+            for &a in &pending {
+                let ea = ext[a].expect("pending photos have an extent");
+                if round.iter().all(|&b| !near(ea, ext[b].expect("round photos have an extent"), ROUND_GAP)) {
+                    round.push(a);
+                } else {
+                    rest.push(a);
+                }
+            }
+            let moves: Vec<Vec<usize>> = round.par_iter().map(|&a| expand(&pr, &labels, a, ext[a].expect("round photos have an extent"), free)).collect();
+            for (&a, blocks) in round.iter().zip(&moves) {
+                dirty[a] = false;
+                for &b in blocks {
+                    labels[b] = a as u16;
+                }
+                if blocks.is_empty() {
+                    continue;
+                }
+                // everybody whose area (and the block around it) contains a changed block has to look again
+                for (o, e) in ext.iter().enumerate() {
+                    if o == a {
+                        continue;
+                    }
+                    if let Some(e) = e {
+                        if blocks.iter().any(|&b| {
+                            let (bx, by) = (b % bw, b / bw);
+                            bx + 1 >= e.0 && bx < e.1 + 1 && by + 1 >= e.2 && by < e.3 + 1
+                        }) {
+                            dirty[o] = true;
+                        }
+                    }
+                }
+            }
+            pending = rest;
         }
     }
     Ok(labels)
+}
+
+/// The blocks within `r` blocks (chessboard distance) of a seam, that is of a block with a different photo next to it.
+fn band_mask(labels: &[u16], bw: usize, bh: usize, r: usize) -> Vec<bool> {
+    const FAR: u32 = u32::MAX / 2;
+    let mut d = vec![FAR; bw * bh];
+    for by in 0..bh {
+        for bx in 0..bw {
+            let b = by * bw + bx;
+            let l = labels[b];
+            let differs = |q: usize| labels[q] != l && labels[q] != NONE && l != NONE;
+            if (bx + 1 < bw && differs(b + 1)) || (bx > 0 && differs(b - 1)) || (by + 1 < bh && differs(b + bw)) || (by > 0 && differs(b - bw)) {
+                d[b] = 0;
+            }
+        }
+    }
+    for by in 0..bh {
+        for bx in 0..bw {
+            let b = by * bw + bx;
+            let mut m = d[b];
+            if bx > 0 {
+                m = m.min(d[b - 1].saturating_add(1));
+            }
+            if by > 0 {
+                m = m.min(d[b - bw].saturating_add(1));
+                if bx > 0 {
+                    m = m.min(d[b - bw - 1].saturating_add(1));
+                }
+                if bx + 1 < bw {
+                    m = m.min(d[b - bw + 1].saturating_add(1));
+                }
+            }
+            d[b] = m;
+        }
+    }
+    for by in (0..bh).rev() {
+        for bx in (0..bw).rev() {
+            let b = by * bw + bx;
+            let mut m = d[b];
+            if bx + 1 < bw {
+                m = m.min(d[b + 1].saturating_add(1));
+            }
+            if by + 1 < bh {
+                m = m.min(d[b + bw].saturating_add(1));
+                if bx + 1 < bw {
+                    m = m.min(d[b + bw + 1].saturating_add(1));
+                }
+                if bx > 0 {
+                    m = m.min(d[b + bw - 1].saturating_add(1));
+                }
+            }
+            d[b] = m;
+        }
+    }
+    d.iter().map(|&v| v as usize <= r).collect()
+}
+
+/// The photo blocks on a grid half as fine: every second block in each direction.
+fn halve(photos: &[PhotoBlocks], bw: usize, bh: usize) -> (Vec<PhotoBlocks>, usize, usize) {
+    let (cw, ch) = (bw.div_ceil(2), bh.div_ceil(2));
+    let out = photos
+        .iter()
+        .map(|p| {
+            let cy0 = p.by0.div_ceil(2);
+            let cy1 = (p.by0 + p.rows).div_ceil(2).min(ch);
+            let mut c = PhotoBlocks::new(cy0, cy1.saturating_sub(cy0), cw);
+            for cy in cy0..cy1 {
+                for cx in 0..cw {
+                    c.samples[(cy - cy0) * cw + cx] = p.samples[(2 * cy - p.by0) * bw + 2 * cx];
+                }
+            }
+            c
+        })
+        .collect();
+    (out, cw, ch)
+}
+
+/// Finds the seams. `photos[i]` are the blocks of photo `i`, the grid is `bw` x `bh` blocks (see [`grid`]).
+/// Large grids are solved in two steps (see `SeamConfig::coarse_min_side`). `cancelled` is checked between
+/// the expansion moves. Returns one label per block.
+pub fn find(photos: &[PhotoBlocks], bw: usize, bh: usize, cfg: &SeamConfig, cancelled: &dyn Fn() -> bool) -> Result<Vec<u16>, String> {
+    if photos.len() >= NONE as usize {
+        return Err("too many photos for the seam finder".into());
+    }
+    if cfg.coarse_min_side == 0 || bw.max(bh) < cfg.coarse_min_side {
+        return solve(photos, bw, bh, cfg, None, None, cancelled);
+    }
+    // step 1: the halved grid. A coarse block stands for four fine ones and a coarse edge for two, so the
+    // weights are scaled to keep the balance between the terms.
+    let (coarse, cw, ch) = halve(photos, bw, bh);
+    let ccfg = SeamConfig { data_weight: cfg.data_weight * 4.0, smooth_weight: cfg.smooth_weight * 2.0, cut_cost: cfg.cut_cost * 2.0, ..*cfg };
+    let cl = solve(&coarse, cw, ch, &ccfg, None, None, cancelled)?;
+    // step 2: the full grid, starting from the coarse result; only blocks near its seams may change
+    let init: Vec<u16> = (0..bw * bh).map(|b| cl[(b / bw / 2).min(ch - 1) * cw + (b % bw / 2).min(cw - 1)]).collect();
+    let free = band_mask(&init, bw, bh, cfg.band.max(1));
+    solve(photos, bw, bh, cfg, Some(init), Some(&free), cancelled)
 }
 
 impl LabelMap {
@@ -698,6 +866,53 @@ mod tests {
         assert!((6..=13).any(|by| (19..=21).map(|bx| off[by * BW + bx]).any(|x| x != off[by * BW + 19])), "the start labelling cuts the object");
         // the energy went down
         assert!(labelling_energy(&photos, BW, BH, &cfg(), &l) < labelling_energy(&photos, BW, BH, &cfg(), &off));
+    }
+
+    /// A wide grid so that the two-step search is used: the seam still goes around the object, the result is valid
+    /// and always the same, and it is nearly as good as the one-step result.
+    #[test]
+    fn the_two_step_search_is_as_good_as_the_one_step_search() {
+        const W: usize = 360;
+        const H: usize = 40;
+        let photo_w = |x0: usize, x1: usize, colour: &dyn Fn(usize, usize) -> [u8; 3]| {
+            let mut p = PhotoBlocks::new(0, H, W);
+            for by in 0..H {
+                for bx in x0..x1 {
+                    let t = (bx - x0) as f32 + 0.5;
+                    let edge = t.min((x1 - x0) as f32 - t) / ((x1 - x0) as f32 * 0.5);
+                    p.samples[by * W + bx] = Sample { rgb: colour(bx, by), flags: VALID, score: edge.max(1e-6) };
+                }
+            }
+            p
+        };
+        let grey = |_: usize, _: usize| [100u8, 100, 100];
+        let object = |bx: usize, by: usize| if (184..=190).contains(&bx) && (12..=28).contains(&by) { [250u8, 250, 250] } else { [100, 100, 100] };
+        let photos = [photo_w(0, 230, &grey), photo_w(130, 360, &object)];
+        let two = SeamConfig { enabled: true, coarse_min_side: 100, ..SeamConfig::default() };
+        let one = SeamConfig { coarse_min_side: 0, ..two };
+        let l2 = find(&photos, W, H, &two, &never).unwrap();
+        assert_eq!(l2, find(&photos, W, H, &two, &never).unwrap(), "always the same");
+        for by in 12..=28 {
+            let labels: Vec<u16> = (184..=190).map(|bx| l2[by * W + bx]).collect();
+            assert!(labels.iter().all(|&x| x == labels[0]), "row {by}: the seam cuts the object: {labels:?}");
+        }
+        for b in 0..W * H {
+            assert!(l2[b] != NONE && photos[l2[b] as usize].at(W, b % W, b / W).is_some(), "block {b} shows a photo that does not cover it");
+        }
+        let l1 = find(&photos, W, H, &one, &never).unwrap();
+        let (e1, e2) = (labelling_energy(&photos, W, H, &one, &l1), labelling_energy(&photos, W, H, &one, &l2));
+        assert!(e2 as f64 <= e1 as f64 * 1.05 + 1000.0, "two steps: {e2}, one step: {e1}");
+    }
+
+    #[test]
+    fn the_band_around_the_seams_is_the_given_distance_wide() {
+        // two photos side by side: the seam is between column 9 and 10 of a 20 x 5 grid
+        let labels: Vec<u16> = (0..100).map(|b| if b % 20 < 10 { 0 } else { 1 }).collect();
+        let m = band_mask(&labels, 20, 5, 2);
+        let cols: Vec<usize> = (0..20).filter(|&x| m[2 * 20 + x]).collect();
+        assert_eq!(cols, vec![7, 8, 9, 10, 11, 12]);
+        // a single photo has no seam
+        assert!(band_mask(&vec![0u16; 100], 20, 5, 3).iter().all(|&v| !v));
     }
 
     #[test]
