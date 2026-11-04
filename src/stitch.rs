@@ -969,6 +969,11 @@ pub fn prepare_strips(
 }
 
 impl StripJob {
+    /// The seam finder's result (None when the seam finder was off or the blending is not Smooth).
+    pub fn labels(&self) -> Option<&Arc<crate::seams::LabelMap>> {
+        self.labels.as_ref()
+    }
+
     /// Renders the panorama strip by strip and hands every strip to `sink` (in order from the top).
     pub fn run(
         &self,
