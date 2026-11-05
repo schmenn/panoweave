@@ -3,8 +3,8 @@
 ## [Unreleased]
 
 ### Changed
-- Export: the blend pyramid (building the bands, putting the picture together) uses all CPU cores in the steps that still ran on one. Identical picture, the strips of a 13459x10541 px export took 204 s, before 242–271 s (runs on the same machine vary by about 10 %). `PW_TIMING=1` prints where the time goes (loading, writing, the steps of a strip).
-- Export: filling the gaps around the photo edges (`fill_holes`) now uses all CPU cores. The picture is identical pixel by pixel, a 13459x10541 px export took 227 s instead of 263 s.
+- Export: the blend pyramid (building the bands, putting the picture together) uses all CPU cores in the steps that still ran on one. Identical picture. Faster on several cores (single runs varied by about 15 % on the same machine, so no exact figure). `PW_TIMING=1` prints where the time goes (loading, writing, the steps of a strip).
+- Export: filling the gaps around the photo edges (`fill_holes`) now uses all CPU cores. The picture is identical pixel by pixel. Faster on several cores (no reliable figure: single runs vary by about 15 %).
 
 ### Added
 - Export with little free memory: when not even the smallest strip fits, the photo cache gives up memory first and then the number of blend levels goes down (not below 3). The export dialog says so, the log names the reason. With enough memory nothing changes. `PW_DEMO_TIMEOUT=<seconds>` raises the time limit of the demo runs.
