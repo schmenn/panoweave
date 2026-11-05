@@ -57,6 +57,9 @@ impl PanoApp {
             self.set_status(format!("Photos {} and {}: the estimated overlap is below {:.0} % or the pair already has enough points.", a + 1, b + 1, self.pair_cfg.min_overlap * 100.0), WARN);
             return;
         }
+        if n > 0 {
+            self.push_undo(&format!("finding points for photos {}/{}", a + 1, b + 1));
+        }
         self.cps.extend(cps);
         if n > 0 {
             self.set_status(format!("Photos {} and {}: {n} new points ({}). Aligning again…", a + 1, b + 1, steps.join("; ")), GOOD);
@@ -68,6 +71,9 @@ impl PanoApp {
     }
 
     pub(super) fn on_matched(&mut self, m: MatchResult) {
+        if !self.cps.is_empty() {
+            self.push_undo("finding points in all photos");
+        }
         self.cps = m.cps;
         self.matched = true;
         self.needs_align = true;
@@ -154,6 +160,7 @@ impl PanoApp {
             return;
         }
         let sel = self.pe.selected.and_then(|k| self.cps.get(k).copied());
+        self.push_undo(&format!("finding points for photos {}/{}", a + 1, b + 1));
         self.cps.retain(|c| c.manual || !((c.a == a && c.b == b) || (c.a == b && c.b == a)));
         let n = cps.len();
         self.cps.extend(cps);

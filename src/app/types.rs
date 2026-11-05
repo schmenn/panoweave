@@ -197,6 +197,8 @@ pub(super) struct PointEditor {
     pub(super) views: [PaneView; 2],
     /// photo half whose point gets searched (the other one keeps its spot)
     pub(super) moving: Option<Pane>,
+    /// the points as they were when the current drag of a point started (one undo step per drag)
+    pub(super) drag_before: Option<CpSnapshot>,
 }
 
 /// Matching window of the selected point: which half stays, and the local zoom/rotation
@@ -349,7 +351,8 @@ pub struct PanoApp {
     /// patch click mode of the point editor
     pub(super) click: ClickState,
     pub(super) click_cfg: crate::click_match::ClickConfig,
-    pub(super) undo: Vec<UndoEntry>,
+    /// undo / redo of the control points (every window feeds the same one)
+    pub(super) undo: super::history::History<CpSnapshot>,
     /// mask painting window
     pub(super) mk: super::masks_ui::MaskUi,
     /// secondary windows as real OS windows (position and size remembered)
@@ -364,9 +367,8 @@ pub(super) struct ClickState {
     pub(super) result: Option<crate::click_match::ClickResult>,
 }
 
-/// One step that can be undone in the point editor (points and the open suggestions).
-pub(super) struct UndoEntry {
-    pub(super) what: String,
+/// The state of the control points (and the open patch click suggestions) at one moment.
+pub(super) struct CpSnapshot {
     pub(super) cps: Vec<ControlPoint>,
     pub(super) result: Option<crate::click_match::ClickResult>,
 }

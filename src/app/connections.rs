@@ -109,7 +109,8 @@ impl PanoApp {
         let mut open = self.show_cp_list;
         let mut jump: Option<usize> = None;
         let mut delete: Vec<usize> = Vec::new();
-        let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None };
+        let mut removing_dups = false;
+        let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None, undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
@@ -146,6 +147,7 @@ impl PanoApp {
                             .clicked()
                         {
                             delete.extend(removable.iter().copied());
+                            removing_dups = true;
                         }
                     });
                 }
@@ -324,15 +326,10 @@ impl PanoApp {
         if !delete.is_empty() {
             delete.sort_unstable();
             delete.dedup();
-            self.push_undo(if delete.len() == 1 { "deleting a control point" } else { "deleting control points" });
-            for k in delete.into_iter().rev() {
-                if k < self.cps.len() {
-                    self.cps.remove(k);
-                }
-            }
-            self.pe.selected = None;
-            self.needs_align = true;
-            self.set_status("Points deleted. Align again (step 3) to update.", MUTED);
+            let n = delete.len();
+            let what = if removing_dups { format!("removing {n} duplicates") } else if n == 1 { "deleting a control point".to_string() } else { format!("deleting {n} points") };
+            self.delete_points(delete, &what);
+            self.set_status(format!("Done: {what}. Ctrl+Z brings the points back. Align again (step 3) to update."), MUTED);
         }
     }
 
@@ -342,7 +339,7 @@ impl PanoApp {
         let mut open = self.show_overlap;
         let (a, b) = (self.pe.a, self.pe.b);
         let mut redraw = false;
-        let spec = WinSpec { key: "overlap", title: "Overlap check".into(), size: [820.0, 640.0], min_size: [420.0, 320.0], fill: None };
+        let spec = WinSpec { key: "overlap", title: "Overlap check".into(), size: [820.0, 640.0], min_size: [420.0, 320.0], fill: None, undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
@@ -548,7 +545,7 @@ impl PanoApp {
         let groups = image_groups(n, &active, &act_cps);
         let mut action: Option<(u8, usize, usize)> = None;
         let mut photo_choice = None;
-        let spec = WinSpec { key: "graph", title: "Connections between the photos".into(), size: [760.0, 640.0], min_size: [420.0, 320.0], fill: Some(PANEL) };
+        let spec = WinSpec { key: "graph", title: "Connections between the photos".into(), size: [760.0, 640.0], min_size: [420.0, 320.0], fill: Some(PANEL), undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
@@ -743,7 +740,7 @@ impl PanoApp {
 
     pub(super) fn help_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_help;
-        let spec = WinSpec { key: "help", title: "How PanoWeave works".into(), size: [520.0, 420.0], min_size: [360.0, 240.0], fill: None };
+        let spec = WinSpec { key: "help", title: "How PanoWeave works".into(), size: [520.0, 420.0], min_size: [360.0, 240.0], fill: None, undo_keys: false };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {

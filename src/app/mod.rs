@@ -8,6 +8,7 @@ mod demo;
 mod export;
 mod exposure;
 mod frame;
+pub(crate) mod history;
 mod jobs;
 mod masks_canvas;
 mod masks_seams;
@@ -117,5 +118,7 @@ impl eframe::App for PanoApp {
         } else {
             self.patch_win.closed_tick();
         }
+        // last, so a window that used the key itself (masks) keeps it
+        self.handle_undo_keys(&ctx);
     }
 }
