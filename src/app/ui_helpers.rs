@@ -3,9 +3,9 @@ use super::*;
 pub(super) fn setup_style(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     ctx.all_styles_mut(|s| {
-        s.spacing.item_spacing = Vec2::new(8.0, 7.0);
+        s.spacing.item_spacing = Vec2::new(GAP, GAP_Y);
         s.spacing.button_padding = Vec2::new(10.0, 5.0);
-        s.spacing.interact_size.y = 26.0;
+        s.spacing.interact_size.y = ROW_H;
         let v = &mut s.visuals;
         v.panel_fill = PANEL;
         v.window_fill = CARD;
@@ -14,14 +14,14 @@ pub(super) fn setup_style(ctx: &egui::Context) {
         v.selection.bg_fill = ACCENT_DARK;
         v.selection.stroke = Stroke::new(1.0, ACCENT);
         v.hyperlink_color = ACCENT;
-        v.widgets.inactive.corner_radius = CornerRadius::same(6);
-        v.widgets.hovered.corner_radius = CornerRadius::same(6);
-        v.widgets.active.corner_radius = CornerRadius::same(6);
-        v.widgets.noninteractive.corner_radius = CornerRadius::same(6);
+        for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+            w.corner_radius = CornerRadius::same(RADIUS);
+        }
+        v.menu_corner_radius = CornerRadius::same(RADIUS_CARD);
         v.widgets.inactive.weak_bg_fill = Color32::from_rgb(48, 52, 61);
         v.widgets.hovered.weak_bg_fill = Color32::from_rgb(60, 65, 77);
         v.widgets.active.weak_bg_fill = ACCENT_DARK;
-        v.window_corner_radius = CornerRadius::same(10);
+        v.window_corner_radius = CornerRadius::same(RADIUS_CARD);
         s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(14.5));
         s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(14.5));
         s.text_styles.insert(egui::TextStyle::Heading, FontId::proportional(21.0));
@@ -36,18 +36,18 @@ pub(super) fn color_image(img: &RgbImage) -> egui::ColorImage {
 pub(super) fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(RichText::new(text).color(Color32::WHITE).strong().size(15.0))
+        egui::Button::new(RichText::new(text).color(Color32::WHITE).strong().size(BIG_FONT))
             .fill(ACCENT_DARK)
             .stroke(Stroke::new(1.0, ACCENT))
-            .min_size(Vec2::new(0.0, 34.0)),
+            .min_size(Vec2::new(0.0, BIG_H)),
     )
 }
 
 pub(super) fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .fill(CARD)
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(egui::Margin::same(14))
+        .corner_radius(CornerRadius::same(RADIUS_CARD))
+        .inner_margin(egui::Margin::same(CARD_MARGIN))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add(ui)
@@ -162,4 +162,32 @@ pub(super) fn dashed_rect(p: &egui::Painter, r: Rect, col: Color32) {
     seg(r.right_top(), r.right_bottom());
     seg(r.right_bottom(), r.left_bottom());
     seg(r.left_bottom(), r.left_top());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn style_uses_central_constants() {
+        let ctx = egui::Context::default();
+        setup_style(&ctx);
+        let st = ctx.style_of(egui::Theme::Dark);
+        let w = &st.visuals.widgets;
+        let want = CornerRadius::same(RADIUS);
+        for (name, r) in [
+            ("noninteractive", w.noninteractive.corner_radius),
+            ("inactive", w.inactive.corner_radius),
+            ("hovered", w.hovered.corner_radius),
+            ("active", w.active.corner_radius),
+            ("open", w.open.corner_radius),
+        ] {
+            assert_eq!(r, want, "widget state {name}");
+        }
+        assert_eq!(st.visuals.window_corner_radius, CornerRadius::same(RADIUS_CARD));
+        assert_eq!(st.visuals.menu_corner_radius, CornerRadius::same(RADIUS_CARD));
+        assert_eq!(st.spacing.item_spacing, Vec2::new(GAP, GAP_Y));
+        assert_eq!(st.spacing.interact_size.y, ROW_H);
+        assert!(RADIUS < RADIUS_CARD && BIG_H > ROW_H);
+    }
 }

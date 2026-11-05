@@ -62,7 +62,7 @@ impl PanoApp {
     /// The "Edit masks..." button of the Blending card (only for Smooth seams).
     pub(super) fn mask_button(&mut self, ui: &mut egui::Ui) {
         let smooth = self.blend == Blend::Smooth;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let b = ui.add_enabled(smooth, egui::Button::new("🖌  Edit masks…")).on_hover_text("Paint where a photo must or must not be used, for example to keep a pole or a person whole.");
             if !smooth {
                 b.on_disabled_hover_text("Masks only steer Smooth seams.");

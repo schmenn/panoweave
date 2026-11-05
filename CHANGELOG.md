@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- GUI: one set of style values (`RADIUS` 3 for buttons/fields, `RADIUS_CARD` 6 for cards, tiles, menus and windows, `GAP`, `ROW_H`, `BIG_H` in `consts.rs`) replaces the scattered corner radii (4 to 10), margins and button heights. Rows with many controls (align, frame, export, masks, exposure, start page) now wrap instead of widening the window. No functional change.
 - Export: the blend pyramid (building the bands, putting the picture together) uses all CPU cores in the steps that still ran on one. Identical picture. Faster on several cores (single runs varied by about 15 % on the same machine, so no exact figure). `PW_TIMING=1` prints where the time goes (loading, writing, the steps of a strip).
 - Export: filling the gaps around the photo edges (`fill_holes`) now uses all CPU cores. The picture is identical pixel by pixel. Faster on several cores (no reliable figure: single runs vary by about 15 %).
 

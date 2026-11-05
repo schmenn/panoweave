@@ -30,6 +30,25 @@ pub(super) const IMAGE_CACHE_UPPER_BOUND: u64 = 268435456; // 0x10000000
 /// Share of the free memory the final render may use.
 /// Memory budget of the low-memory export when the free memory of the computer is unknown (2 GB).
 pub(super) const FALLBACK_EXPORT_BUDGET: u64 = 2 << 30;
+// ---- Central style values (used by `setup_style`, `card`, `primary_button` and every hand-made frame) ----
+/// Corner radius of buttons, fields, combo boxes, checkboxes and thumbnails (small, so controls look flat and tidy).
+pub(super) const RADIUS: u8 = 3;
+/// Corner radius of cards, tiles and windows.
+pub(super) const RADIUS_CARD: u8 = 6;
+/// Gap between neighbouring elements (`item_spacing.x`); also the unit for padding inside tiles.
+pub(super) const GAP: f32 = 8.0;
+/// Vertical gap between rows (`item_spacing.y`).
+pub(super) const GAP_Y: f32 = 7.0;
+/// Height of normal buttons and fields (`interact_size.y`).
+pub(super) const ROW_H: f32 = 26.0;
+/// Height of big buttons (primary actions, start-page buttons, mode tabs).
+pub(super) const BIG_H: f32 = 34.0;
+/// Font size of big buttons.
+pub(super) const BIG_FONT: f32 = 15.0;
+/// Inner margin of cards.
+pub(super) const CARD_MARGIN: i8 = 14;
+/// Inner margin of small tiles (photo thumbnails, hints inside panels).
+pub(super) const TILE_MARGIN: i8 = 8;
 pub(super) const ACCENT: Color32 = Color32::from_rgb(70, 160, 255);
 pub(super) const ACCENT_DARK: Color32 = Color32::from_rgb(34, 92, 160);
 pub(super) const GOOD: Color32 = Color32::from_rgb(90, 200, 120);
