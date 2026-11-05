@@ -297,6 +297,11 @@ pub struct PanoApp {
     pub(super) cp_sort: (CpCol, bool),
     pub(super) cp_only_pair: bool,
     pub(super) cp_min_err: f64,
+    /// marking of control points that lie on top of each other (list window)
+    pub(super) dup_cfg: crate::duplicate_points::DupConfig,
+    pub(super) cp_only_dups: bool,
+    /// result of the duplicate check with a fingerprint of the points it was made for
+    pub(super) dup_cache: Option<(u64, Vec<crate::duplicate_points::Duplicate>)>,
     /// sorted rows of the control point list and the number within each pair (cached)
     pub(super) cp_rows_cache: Option<(String, Vec<usize>, Vec<usize>)>,
     pub(super) render_started: bool,
