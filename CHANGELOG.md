@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Export with little free memory: when not even the smallest strip fits, the photo cache gives up memory first and then the number of blend levels goes down (not below 3). The export dialog says so, the log names the reason. With enough memory nothing changes. `PW_DEMO_TIMEOUT=<seconds>` raises the time limit of the demo runs.
+
 ## [0.1.1] - 2026-11-05
 
 ### Fixed

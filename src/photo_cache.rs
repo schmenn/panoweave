@@ -50,6 +50,15 @@ impl PhotoCache {
         Ok(img)
     }
 
+    /// Changes the size limit; photos beyond it are dropped, least recently used first.
+    pub fn set_capacity(&mut self, cap: u64) {
+        self.cap = cap;
+        while self.used > self.cap && !self.items.is_empty() {
+            let (_, old) = self.items.remove(0);
+            self.used -= bytes_of(&old);
+        }
+    }
+
     /// Frees everything (after the export).
     pub fn clear(&mut self) {
         self.items.clear();
@@ -63,6 +72,19 @@ mod tests {
 
     fn img() -> Arc<RgbImage> {
         Arc::new(RgbImage::new(10, 10)) // 300 bytes
+    }
+
+    #[test]
+    fn a_smaller_capacity_drops_the_oldest_photos() {
+        let mut c = PhotoCache::new(10_000);
+        for k in 0..3 {
+            c.get_or_load(k, || Ok(img())).unwrap();
+        }
+        assert_eq!(c.used(), 900);
+        c.set_capacity(600);
+        assert_eq!(c.used(), 600);
+        c.get_or_load(2, || Ok(img())).unwrap();
+        assert_eq!(c.hits, 1, "the newest photo is still cached");
     }
 
     #[test]
