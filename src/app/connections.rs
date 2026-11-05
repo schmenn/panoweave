@@ -324,6 +324,7 @@ impl PanoApp {
         if !delete.is_empty() {
             delete.sort_unstable();
             delete.dedup();
+            self.push_undo(if delete.len() == 1 { "deleting a control point" } else { "deleting control points" });
             for k in delete.into_iter().rev() {
                 if k < self.cps.len() {
                     self.cps.remove(k);
