@@ -4,6 +4,10 @@
 
 ### Added
 - Export with little free memory: when not even the smallest strip fits, the photo cache gives up memory first and then the number of blend levels goes down (not below 3). The export dialog says so, the log names the reason. With enough memory nothing changes. `PW_DEMO_TIMEOUT=<seconds>` raises the time limit of the demo runs.
+- The export plans with 1.4 times the strip memory it counted before (`StripConfig::memory_factor`): measured on two runs, the program used 1.40 and 1.38 times the planned strip memory (no fixed part), so the old estimate missed temporary copies. This holds on any computer; the budget itself still follows the free memory. The log line of an export now shows the program's memory at the start and its highest value during the export.
+
+### Fixed
+- Crop frame (step 4): dragging a white edge moved the picture instead of the edge about half of the time (the edge was looked for where the pointer was after the drag threshold, not where it was pressed).
 
 ## [0.1.1] - 2026-11-05
 

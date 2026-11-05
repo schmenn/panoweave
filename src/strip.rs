@@ -29,6 +29,10 @@ pub struct StripConfig {
     pub max_rows: usize,
     /// share of the free system memory the export may use (0..1)
     pub budget_share: f64,
+    /// the estimate of the buffers per pixel misses temporary copies; measured on two runs (strip 3.32 GB and
+    /// 1.38 GB planned) the export used 1.40 and 1.38 times the planned strip memory (extra part: 40 % and 38 %,
+    /// no fixed part). The planned strip memory is multiplied by this, so it holds on any computer.
+    pub memory_factor: f64,
     /// extra bytes per pixel of the strip for the working copy of one photo (Smooth only)
     pub roi_bytes_per_px: u64,
     /// margin factor: margin = `margin_factor << levels` rows
@@ -57,6 +61,7 @@ impl Default for StripConfig {
             min_rows: 64,
             max_rows: 4096,
             budget_share: 0.75,
+            memory_factor: 1.4,
             roi_bytes_per_px: 20,
             margin_factor: 4,
             fill_extra_levels: 2,
@@ -93,7 +98,7 @@ pub fn margin_rows(levels: usize, blend: Blend, cfg: &StripConfig) -> usize {
     }
 }
 
-/// Planned memory of one strip with `rows` inner rows.
+/// Planned memory of one strip with `rows` inner rows (buffers times `memory_factor`).
 pub fn strip_bytes(width: usize, rows: usize, margin: usize, blend: Blend, cfg: &StripConfig) -> u64 {
     let total_rows = rows as u64 + 2 * margin as u64;
     let px = width as u64 * total_rows;
@@ -102,7 +107,7 @@ pub fn strip_bytes(width: usize, rows: usize, margin: usize, blend: Blend, cfg: 
         Blend::Feather => 0,
     };
     // `estimate_bytes` is linear in the pixel count, so one row of width `width` gives the per-pixel figure
-    stitch::estimate_bytes(width, 1, blend) * total_rows + px * roi
+    ((stitch::estimate_bytes(width, 1, blend) * total_rows + px * roi) as f64 * cfg.memory_factor.max(1.0)) as u64
 }
 
 /// The memory budget in bytes: `budget_share` of the free memory, or an explicit `override_bytes`
@@ -312,6 +317,24 @@ mod tests {
         assert_eq!(f.levels_wanted, 7);
         assert!(f.plan.peak_bytes <= f.strip_budget && f.strip_budget + f.cache_bytes <= total);
         assert!(f.plan.count > 1);
+    }
+
+    #[test]
+    fn the_planned_strip_memory_includes_the_measured_factor() {
+        let plain = StripConfig { memory_factor: 1.0, ..StripConfig::default() };
+        let cfg = StripConfig::default();
+        let (a, b) = (strip_bytes(10_000, 500, 100, Blend::Smooth, &plain), strip_bytes(10_000, 500, 100, Blend::Smooth, &cfg));
+        assert!((b as f64 / a as f64 - 1.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn six_free_gigabytes_are_enough_for_two_gigapixels() {
+        let cfg = StripConfig::default();
+        let total = budget_bytes(Some(6 * GB), None, &cfg).unwrap();
+        let f = fit(60_000, 33_000, 7, Blend::Smooth, total, &cfg).unwrap();
+        assert!(f.levels >= 4, "levels {}", f.levels);
+        // strips (with the measured factor) plus cache stay inside 75 percent of the free memory
+        assert!(f.plan.peak_bytes + f.cache_bytes <= total);
     }
 
     #[test]
