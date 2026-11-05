@@ -159,7 +159,7 @@ impl PanoApp {
                     v.center.y = v.center.y.clamp(0.0, g.h);
                 }
                 PaneEvent::Click(pane, pos) => {
-                    if self.click.on {
+                    if self.pe.tool == PointTool::PatchClick {
                         let p = px_of(pane, pos);
                         let (w, h) = (geo[pane.i()].w as f64, geo[pane.i()].h as f64);
                         if p.0 >= 0.0 && p.1 >= 0.0 && p.0 <= w - 1.0 && p.1 <= h - 1.0 {
@@ -175,7 +175,7 @@ impl PanoApp {
                             }
                             self.run_click();
                         }
-                    } else if self.pe.adding {
+                    } else if self.pe.tool == PointTool::Add {
                         let p = px_of(pane, pos);
                         let (w, h) = (geo[pane.i()].w as f64, geo[pane.i()].h as f64);
                         if p.0 >= -0.5 && p.1 >= -0.5 && p.0 <= w - 0.5 && p.1 <= h - 0.5 {

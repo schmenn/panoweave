@@ -71,7 +71,10 @@ impl PanoApp {
             self.delete_selected();
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.pe.pending = None;
+            // Esc cancels a half-placed point first, otherwise it leaves the tool
+            if self.pe.pending.take().is_none() {
+                self.pe.tool = PointTool::Edit;
+            }
         }
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z)) && !ui.ctx().egui_wants_keyboard_input() {
             self.undo_last();
@@ -117,23 +120,25 @@ impl PanoApp {
             {
                 self.run_pair_points();
             }
-            let add_txt = if self.pe.adding { "✔ Done adding" } else { "➕ Add point" };
+            let adding = self.pe.tool == PointTool::Add;
+            let add_txt = if adding { "✔ Done adding" } else { "➕ Add point" };
             if ui
-                .add(egui::Button::selectable(self.pe.adding, add_txt))
+                .add(egui::Button::selectable(adding, add_txt))
                 .on_hover_text("Click a spot in one photo, then the same spot in the other. Points snap to the exact spot automatically.")
                 .clicked()
             {
-                self.pe.adding = !self.pe.adding;
+                self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::Add);
                 self.pe.pending = None;
             }
-            ui.checkbox(&mut self.auto_grow, "then find more automatically");
+            if self.pe.tool == PointTool::Add {
+                ui.checkbox(&mut self.auto_grow, "then find more automatically");
+            }
             if ui
-                .add(egui::Button::selectable(self.click.on, "🎯 Patch click"))
+                .add(egui::Button::selectable(self.pe.tool == PointTool::PatchClick, "🎯 Patch click"))
                 .on_hover_text("Click roughly the same spot left and right: the spot is refined by patch matching (also with different zoom) and more matching patches around it are proposed.")
                 .clicked()
             {
-                self.click.on = !self.click.on;
-                self.pe.adding = false;
+                self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::PatchClick);
                 self.pe.pending = None;
             }
             if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("↶ Undo")).on_hover_text(self.undo.last().map(|u| format!("Undo {} (Ctrl+Z)", u.what)).unwrap_or_default()).clicked() {
@@ -189,7 +194,8 @@ impl PanoApp {
 
     /// Hint line under the toolbar (or the strip of the patch click mode).
     fn points_hint(&mut self, ui: &mut egui::Ui) {
-        let hint = if self.pe.adding {
+        let adding = self.pe.tool == PointTool::Add;
+        let hint = if adding {
             match self.pe.pending {
                 Some((Pane::A, _)) => "Now click the same spot in the RIGHT photo – it snaps to the exact spot.",
                 Some((Pane::B, _)) => "Now click the same spot in the LEFT photo – it snaps to the exact spot.",
@@ -198,10 +204,10 @@ impl PanoApp {
         } else {
             "Scroll to zoom, drag the photo to move it, double-click to fit. Click a point to select it: red = match window, dashed white = search area. Drag it to move it (edges are shown, it snaps to the exact spot), Delete removes it."
         };
-        if self.click.on {
+        if self.pe.tool == PointTool::PatchClick {
             self.click_panel(ui);
         } else {
-            ui.label(RichText::new(hint).small().color(if self.pe.adding { ACCENT } else { MUTED }));
+            ui.label(RichText::new(hint).small().color(if adding { ACCENT } else { MUTED }));
         }
     }
 }
