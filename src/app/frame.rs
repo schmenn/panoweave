@@ -53,7 +53,7 @@ impl PanoApp {
             });
             return;
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Projection:");
             let before = self.view.projection;
             egui::ComboBox::from_id_salt("proj").width(220.0).selected_text(self.view.projection.name()).show_ui(ui, |ui| {

@@ -317,8 +317,8 @@ impl PanoApp {
                         let highlight = self.step == Step::Points && (self.pe.a == i || self.pe.b == i);
                         egui::Frame::new()
                             .fill(if highlight { Color32::from_rgb(38, 50, 68) } else { CARD })
-                            .corner_radius(CornerRadius::same(8))
-                            .inner_margin(egui::Margin::same(6))
+                            .corner_radius(CornerRadius::same(RADIUS_CARD))
+                            .inner_margin(egui::Margin::same(TILE_MARGIN))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
@@ -326,7 +326,7 @@ impl PanoApp {
                                     let ts = p.thumb.size_vec2();
                                     let th = tw * ts.y / ts.x;
                                     let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(tw, th.min(72.0))))
-                                        .corner_radius(4.0)
+                                        .corner_radius(CornerRadius::same(RADIUS))
                                         .tint(if p.enabled { Color32::WHITE } else { Color32::from_gray(90) })
                                         .sense(Sense::click());
                                     menu_resp.push((i, ui.add(img)));
@@ -425,29 +425,29 @@ impl PanoApp {
                     self.pick_photos();
                 }
                 ui.add_space(18.0);
-                ui.horizontal(|ui| {
-                    let w = 470.0;
+                ui.horizontal_wrapped(|ui| {
+                    let w = 2.0 * 230.0 + GAP;
                     ui.add_space((ui.available_width() - w).max(0.0) / 2.0);
-                    if ui.add_enabled(!self.busy(), egui::Button::new(RichText::new("🖼  Try it with sample photos").size(15.0)).min_size(Vec2::new(230.0, 34.0))).clicked() {
+                    if ui.add_enabled(!self.busy(), egui::Button::new(RichText::new("🖼  Try it with sample photos").size(BIG_FONT)).min_size(Vec2::new(230.0, BIG_H))).clicked() {
                         self.load_sample();
                     }
-                    if ui.add_enabled(!self.busy(), egui::Button::new(RichText::new("📂  Open a saved project").size(15.0)).min_size(Vec2::new(230.0, 34.0))).clicked() {
+                    if ui.add_enabled(!self.busy(), egui::Button::new(RichText::new("📂  Open a saved project").size(BIG_FONT)).min_size(Vec2::new(230.0, BIG_H))).clicked() {
                         if let Some(p) = rfd::FileDialog::new().add_filter("PanoWeave project", &["pwproj"]).pick_file() {
                             self.open_project(&p);
                         }
                     }
                 });
                 ui.add_space(26.0);
-                ui.horizontal(|ui| {
-                    let w = 3.0 * 230.0 + 2.0 * 12.0;
+                ui.horizontal_wrapped(|ui| {
+                    let w = 3.0 * 230.0 + 2.0 * GAP;
                     ui.add_space((ui.available_width() - w).max(0.0) / 2.0);
                     for (t, d) in [
                         ("1 · Add photos", "Shoot from one spot, turning the camera."),
                         ("2 · Create panorama", "One click finds points, aligns and frames."),
                         ("3 · Fine-tune & save", "Adjust the frame, fix points if needed."),
                     ] {
-                        egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                            ui.set_width(206.0);
+                        egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(RADIUS_CARD)).inner_margin(egui::Margin::same(CARD_MARGIN)).show(ui, |ui| {
+                            ui.set_width(230.0 - 2.0 * CARD_MARGIN as f32);
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(t).strong().color(Color32::WHITE));
                                 ui.label(RichText::new(d).small().color(MUTED));
@@ -458,7 +458,7 @@ impl PanoApp {
             });
             return;
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.heading(format!("{} photos", self.photos.len()));
             ui.add_space(10.0);
             if ui.add_enabled(!self.busy(), egui::Button::new("➕ Add more")).clicked() {
@@ -480,7 +480,7 @@ impl PanoApp {
                 if users.is_empty() {
                     continue;
                 }
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(format!("Lens {} (photos {}):", li + 1, users.join(", ")));
                     let mut deg = lens.hfov_deg();
                     if ui.add(egui::DragValue::new(&mut deg).range(1.0..=170.0).speed(0.2).suffix("° wide").max_decimals(1)).changed() {
@@ -505,12 +505,12 @@ impl PanoApp {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for (i, p) in self.photos.iter().enumerate() {
-                    egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(8)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+                    egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(RADIUS_CARD)).inner_margin(egui::Margin::same(TILE_MARGIN)).show(ui, |ui| {
                         ui.vertical(|ui| {
                             let s = p.thumb.size_vec2();
                             let w = 200.0;
                             let tint = if p.enabled { Color32::WHITE } else { Color32::from_gray(90) };
-                            let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(4.0).tint(tint).sense(Sense::click());
+                            let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(CornerRadius::same(RADIUS)).tint(tint).sense(Sense::click());
                             menu_resp.push((i, ui.add(img)));
                             let name = if p.mask.any() { format!("{}. {}  🖌", i + 1, p.name) } else { format!("{}. {}", i + 1, p.name) };
                             ui.label(RichText::new(name).small());

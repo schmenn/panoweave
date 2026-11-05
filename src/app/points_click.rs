@@ -108,7 +108,7 @@ impl PanoApp {
         if r.a != a || r.b != b {
             return;
         }
-        egui::Frame::new().fill(CARD).corner_radius(6.0).inner_margin(8.0).show(ui, |ui| {
+        egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(RADIUS_CARD)).inner_margin(egui::Margin::same(TILE_MARGIN)).show(ui, |ui| {
             if let Some(e) = &r.error {
                 ui.label(RichText::new(e).color(BAD));
                 return;

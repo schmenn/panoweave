@@ -187,7 +187,7 @@ impl PanoApp {
 
     // ----- step 3 -----
     pub(super) fn ui_align(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if primary_button(ui, "📐  Align photos", !self.busy() && !self.cps.is_empty()).clicked() {
                 self.run_align(false);
             }

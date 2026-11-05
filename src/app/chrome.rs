@@ -17,9 +17,9 @@ impl PanoApp {
                     ui.add_space(18.0);
                     for (m, label) in [(Mode::Panorama, "🌄  Panorama"), (Mode::Exposure, "◑  Exposure blend")] {
                         let sel = self.mode == m;
-                        let b = egui::Button::new(RichText::new(label).size(15.0).color(if sel { Color32::WHITE } else { MUTED }))
+                        let b = egui::Button::new(RichText::new(label).size(BIG_FONT).color(if sel { Color32::WHITE } else { MUTED }))
                             .fill(if sel { ACCENT_DARK } else { Color32::TRANSPARENT })
-                            .min_size(Vec2::new(0.0, 30.0));
+                            .min_size(Vec2::new(0.0, BIG_H));
                         if ui.add(b).clicked() {
                             self.mode = m;
                         }

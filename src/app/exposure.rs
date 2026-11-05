@@ -122,11 +122,11 @@ impl PanoApp {
                 let mut remove = None;
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     for (i, b) in self.brackets.iter().enumerate() {
-                        egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(8)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+                        egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(RADIUS_CARD)).inner_margin(egui::Margin::same(TILE_MARGIN)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 let s = b.thumb.size_vec2();
-                                ui.add(egui::Image::new(egui::load::SizedTexture::new(b.thumb.id(), Vec2::new(72.0, 72.0 * s.y / s.x))).corner_radius(4.0));
+                                ui.add(egui::Image::new(egui::load::SizedTexture::new(b.thumb.id(), Vec2::new(72.0, 72.0 * s.y / s.x))).corner_radius(CornerRadius::same(RADIUS)));
                                 ui.vertical(|ui| {
                                     ui.label(RichText::new(&b.name).strong());
                                     if let Some(t) = b.info.exposure_time {
@@ -152,19 +152,19 @@ impl PanoApp {
                     ui.label(RichText::new("Blend a bracketed series into one picture").size(22.0).color(Color32::WHITE));
                     ui.label(RichText::new("Add 2–9 photos of the same view taken with different exposures. Dark areas come from the bright shots, bright areas from the dark shots – no halos, no tone mapping needed.").color(MUTED));
                     ui.add_space(14.0);
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.add_space((ui.available_width() - 470.0).max(0.0) / 2.0);
                         if primary_button(ui, "➕  Add exposures…", !self.busy()).clicked() {
                             self.pick_photos();
                         }
-                        if ui.add_enabled(!self.busy(), egui::Button::new("🖼  Try with sample exposures").min_size(Vec2::new(0.0, 34.0))).clicked() {
+                        if ui.add_enabled(!self.busy(), egui::Button::new("🖼  Try with sample exposures").min_size(Vec2::new(0.0, BIG_H))).clicked() {
                             self.load_bracket_sample();
                         }
                     });
                 });
                 return;
             }
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let mut ch = false;
                 ch |= ui.checkbox(&mut self.fusion_align, "Align handheld shots").changed();
                 ui.separator();

@@ -329,13 +329,13 @@ impl PanoApp {
                     ui.checkbox(&mut self.export_opts.enabled, "More size and file options")
                         .on_hover_text("Off: size from the slider below, files as before. On: choose a width in pixels and 16-bit TIFF.");
                     if self.export_opts.enabled {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.radio_value(&mut self.export_opts.size_mode, SizeMode::Percent, "Percent of full detail");
                             ui.radio_value(&mut self.export_opts.size_mode, SizeMode::Width, "Width in pixels");
                         });
                     }
                     if self.export_opts.width_mode() {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.add(egui::DragValue::new(&mut self.export_opts.target_width).range(MIN_TARGET_WIDTH..=MAX_TARGET_WIDTH).suffix(" px"));
                             for (t, v) in [("4000", 4000), ("8000", 8000), ("16000", 16000)] {
                                 if ui.button(t).clicked() {
@@ -391,7 +391,7 @@ impl PanoApp {
                         }
                     }
                     if !self.export_opts.width_mode() {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             for (t, v) in [("Small", 25.0), ("Medium", 50.0), ("Full", 100.0)] {
                                 if ui.button(t).clicked() {
                                     self.out_scale = v;
@@ -406,7 +406,7 @@ impl PanoApp {
                 ui.add_space(6.0);
                 card(ui, |ui| {
                     ui.label(RichText::new("File").strong());
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         for f in [OutFormat::Jpeg, OutFormat::Png, OutFormat::Tiff] {
                             if ui.add(egui::Button::selectable(self.out_format == f, f.name())).clicked() {
                                 self.out_format = f;
@@ -420,7 +420,7 @@ impl PanoApp {
                     if self.export_opts.enabled && self.out_format == OutFormat::Tiff {
                         ui.checkbox(&mut self.export_opts.tiff_16bit, "16 bits per colour channel (much larger file)");
                     }
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut self.out_path).desired_width(ui.available_width() - 90.0));
                         if ui.button("Choose…").clicked() {
                             if let Some(p) = rfd::FileDialog::new()
@@ -446,7 +446,7 @@ impl PanoApp {
                             self.preview_dirty = true;
                         }
                     });
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label("Seam transition (detail levels)");
                         egui::ComboBox::from_id_salt("blend_levels")
                             .selected_text(if self.blend_levels == 0 { "Automatic (wide, as before)".to_string() } else { format!("{} (narrow ≈ {} px)", self.blend_levels, 1usize << self.blend_levels) })
@@ -475,10 +475,10 @@ impl PanoApp {
                 }
                 if let Some(p) = self.last_output.clone() {
                     ui.add_space(6.0);
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new(format!("✔ Saved: {}", p.display())).color(GOOD));
                     });
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui.button("Open picture").clicked() {
                             let _ = open::that(&p);
                         }
