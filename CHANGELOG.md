@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Export: the blend pyramid (building the bands, putting the picture together) uses all CPU cores in the steps that still ran on one. Identical picture, the strips of a 13459x10541 px export took 204 s, before 242–271 s (runs on the same machine vary by about 10 %). `PW_TIMING=1` prints where the time goes (loading, writing, the steps of a strip).
 - Export: filling the gaps around the photo edges (`fill_holes`) now uses all CPU cores. The picture is identical pixel by pixel, a 13459x10541 px export took 227 s instead of 263 s.
 
 ### Added

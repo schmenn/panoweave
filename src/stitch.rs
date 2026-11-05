@@ -1008,6 +1008,15 @@ impl StripJob {
         let cancelled = || prog.cancel.load(Ordering::Relaxed) || crate::engine::cancelled();
         let strips = crate::strip::strips(self.h, self.rows);
         let n = strips.len();
+        let (load_ns, sink_ns) = (std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0));
+        let t_run = std::time::Instant::now();
+        let timed_load = |i: usize, full: bool| {
+            let t = std::time::Instant::now();
+            let r = load(i, full);
+            load_ns.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            r
+        };
+        let load: &(dyn Fn(usize, bool) -> Result<RenderPhoto, String> + Sync) = &timed_load;
         for (si, &(s0, s1)) in strips.iter().enumerate() {
             if cancelled() {
                 return Err(CANCELLED.into());
@@ -1020,7 +1029,13 @@ impl StripJob {
             };
             let a = (s0 - ya) * self.w;
             let b = (s1 - ya) * self.w;
+            let t = std::time::Instant::now();
             sink(s0, &col[a..b], &cov[a..b], self.w)?;
+            sink_ns.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        if std::env::var("PW_TIMING").is_ok() {
+            let sec = |a: &std::sync::atomic::AtomicU64| a.load(Ordering::Relaxed) as f64 / 1e9;
+            eprintln!("timing: strips {:.1} s in total, of which loading photos {:.1} s, writing {:.1} s", t_run.elapsed().as_secs_f64(), sec(&load_ns), sec(&sink_ns));
         }
         Ok(())
     }
@@ -1233,6 +1248,7 @@ fn smooth_window(
     // photos touching the window, with their rows relative to the window
     let touching = crate::strip::photos_for(photo_rows, (ya, yb));
     let rel = |i: usize| (photo_rows[i].0.max(ya) - ya, photo_rows[i].1.min(yb) - ya);
+    let t_a = std::time::Instant::now();
     let mut best = alloc(w * wh, u16::MAX)?;
     let mut best_w = alloc(w * wh, 0.0f32)?;
     for &i in &touching {
@@ -1262,6 +1278,8 @@ fn smooth_window(
         });
     }
     drop(best_w);
+    let (mut d_fill, mut d_samp, mut d_add) = (0.0f64, 0.0f64, 0.0f64);
+    let d_best = t_a.elapsed().as_secs_f64();
     let mut pyr = BlendPyramid::new(w, wh, levels)?;
     // regions start on the grid of the coarsest fill level (`ya` is on it too)
     let align = 1usize << (levels + fill_extra);
@@ -1279,6 +1297,7 @@ fn smooth_window(
         let ry1 = ((y1 + pad).div_ceil(align) * align).min(wh.div_ceil(align) * align);
         let rh = ry1 - ry0;
         let rw = w.div_ceil(align) * align;
+        let t_s = std::time::Instant::now();
         let mut img = vec![[0.0f32; 3]; rw * rh];
         let mut valid = vec![0.0f32; rw * rh];
         let mut mask = vec![0.0f32; rw * rh];
@@ -1301,10 +1320,19 @@ fn smooth_window(
                 }
             }
         });
+        d_samp += t_s.elapsed().as_secs_f64();
+        let t_f = std::time::Instant::now();
         fill_holes(&mut img, &valid, rw, rh, levels + fill_extra);
+        d_fill += t_f.elapsed().as_secs_f64();
+        let t_p = std::time::Instant::now();
         pyr.add(&img, &mask, rw, rh, ry0);
+        d_add += t_p.elapsed().as_secs_f64();
     }
+    let t_c = std::time::Instant::now();
     let (col, wgt) = pyr.collapse();
+    if std::env::var("PW_TIMING").is_ok() {
+        eprintln!("timing window: best {d_best:.2} s, sampling {d_samp:.2} s, fill {d_fill:.2} s, pyramid add {d_add:.2} s, collapse {:.2} s ({} photos)", t_c.elapsed().as_secs_f64(), touching.len());
+    }
     drop(wgt);
     let mut cov = vec![0.0f32; w * wh];
     cov.par_iter_mut().enumerate().for_each(|(i, c)| {
@@ -1503,7 +1531,7 @@ fn up2(src: &[[f32; 4]], sw: usize, sh: usize, w: usize, h: usize) -> Vec<[f32; 
 /// Gaussian & Laplacian pyramid of [r, g, b, mask] where the colour part is the Laplacian of the
 /// image weighted by the Gaussian of the mask.
 fn band_pyramid(img: &[[f32; 3]], mask: &[f32], w: usize, h: usize, levels: usize) -> Vec<(Vec<[f32; 4]>, usize, usize)> {
-    let base: Vec<[f32; 4]> = img.iter().zip(mask).map(|(c, m)| [c[0], c[1], c[2], *m]).collect();
+    let base: Vec<[f32; 4]> = img.par_iter().zip(mask.par_iter()).map(|(c, m)| [c[0], c[1], c[2], *m]).collect();
     let mut gauss = vec![(base, w, h)];
     for _ in 0..levels {
         let (p, pw, ph) = gauss.last().unwrap();
@@ -1516,15 +1544,15 @@ fn band_pyramid(img: &[[f32; 3]], mask: &[f32], w: usize, h: usize, levels: usiz
         let lap: Vec<[f32; 4]> = if l < levels {
             let (n, nw, nh) = &gauss[l + 1];
             let up = up2(n, *nw, *nh, *gw, *gh);
-            g.iter()
-                .zip(&up)
+            g.par_iter()
+                .zip(up.par_iter())
                 .map(|(a, b)| {
                     let m = a[3];
                     [(a[0] - b[0]) * m, (a[1] - b[1]) * m, (a[2] - b[2]) * m, m]
                 })
                 .collect()
         } else {
-            g.iter().map(|a| [a[0] * a[3], a[1] * a[3], a[2] * a[3], a[3]]).collect()
+            g.par_iter().map(|a| [a[0] * a[3], a[1] * a[3], a[2] * a[3], a[3]]).collect()
         };
         out.push((lap, *gw, *gh));
     }
@@ -1592,12 +1620,12 @@ impl BlendPyramid {
         let mut cur = bands.pop().unwrap();
         while let Some((b, bw, bh)) = bands.pop() {
             let up = up2(&cur.0, cur.1, cur.2, bw, bh);
-            let merged: Vec<[f32; 4]> = b.iter().zip(&up).map(|(l, u)| [l[0] + u[0], l[1] + u[1], l[2] + u[2], l[3]]).collect();
+            let merged: Vec<[f32; 4]> = b.par_iter().zip(up.par_iter()).map(|(l, u)| [l[0] + u[0], l[1] + u[1], l[2] + u[2], l[3]]).collect();
             cur = (merged, bw, bh);
         }
         let (data, _, _) = cur;
-        let col = data.iter().map(|v| [v[0].max(0.0), v[1].max(0.0), v[2].max(0.0)]).collect();
-        let wgt = data.iter().map(|v| v[3]).collect();
+        let col = data.par_iter().map(|v| [v[0].max(0.0), v[1].max(0.0), v[2].max(0.0)]).collect();
+        let wgt = data.par_iter().map(|v| v[3]).collect();
         let _ = (self.w, self.h);
         (col, wgt)
     }
