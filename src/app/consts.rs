@@ -40,8 +40,9 @@ pub(super) const BG: Color32 = Color32::from_rgb(20, 21, 25);
 pub(super) const CARD: Color32 = Color32::from_rgb(36, 39, 46);
 pub(super) const MUTED: Color32 = Color32::from_rgb(150, 156, 168);
 
-/// Steps kept for undo.
-pub(super) const UNDO_DEPTH: usize = 30;
+/// Steps kept for undo (and again for redo). Every step holds a copy of all control points
+/// (~100 bytes each, up to ~12 000 points), so 20 steps stay below ~25 MB per stack.
+pub(super) const UNDO_DEPTH: usize = 20;
 
 /// Automated screenshots give up waiting after this long.
 pub(super) const DEMO_TIMEOUT_S: u64 = 300;

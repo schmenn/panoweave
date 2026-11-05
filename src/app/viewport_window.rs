@@ -31,6 +31,9 @@ pub(super) struct WinSpec {
     pub min_size: [f32; 2],
     /// background of the window (`None`: the theme's panel colour)
     pub fill: Option<Color32>,
+    /// Ctrl+Z / Ctrl+Y typed in this window undo / redo the control points (not for windows with
+    /// their own history, like the masks)
+    pub undo_keys: bool,
 }
 
 /// Position (top-left of the outer frame, points) and inner size (points) of a window.
@@ -108,6 +111,8 @@ pub(super) struct ViewportWindows {
     wins: HashMap<&'static str, WinState>,
     /// automatic runs (`--screenshot`) must not write the settings
     pub no_save: bool,
+    /// undo key seen in a window of its own since the app last looked (see `handle_undo_keys`)
+    pub undo_request: Option<super::history::UndoKey>,
     /// other settings file (tests)
     path: Option<PathBuf>,
 }
@@ -149,6 +154,8 @@ impl ViewportWindows {
         }
         let panel_fill = spec.fill;
         let mut close = false;
+        let mut undo_req = None;
+        let want_undo = spec.undo_keys;
         ctx.show_viewport_immediate(ViewportId::from_hash_of(("pw_window", spec.key)), b, |ui, class| {
             let ctx = ui.ctx().clone();
             let (req, outer, inner, minimized) = ctx.input(|i| (i.viewport().close_requested(), i.viewport().outer_rect, i.viewport().inner_rect, i.viewport().minimized.unwrap_or(false)));
@@ -174,7 +181,14 @@ impl ViewportWindows {
                 }
                 content(ui);
             });
+            // after the content, so a window that handles the key itself keeps it
+            if want_undo && class != ViewportClass::EmbeddedWindow {
+                undo_req = undo_req.or(super::history::read_undo_key(&ctx));
+            }
         });
+        if undo_req.is_some() {
+            self.undo_request = undo_req;
+        }
         if close {
             *open = false;
         }

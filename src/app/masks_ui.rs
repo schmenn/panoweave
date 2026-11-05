@@ -80,7 +80,7 @@ impl PanoApp {
     pub(super) fn mask_window(&mut self, ctx: &egui::Context) {
         self.poll_seam_preview(ctx);
         let mut open = self.mk.open;
-        let spec = WinSpec { key: "masks", title: "Masks".into(), size: [1000.0, 660.0], min_size: [640.0, 420.0], fill: None };
+        let spec = WinSpec { key: "masks", title: "Masks".into(), size: [1000.0, 660.0], min_size: [640.0, 420.0], fill: None, undo_keys: false };
         let mut vp = std::mem::take(&mut self.vp);
         vp.show(ctx, &spec, &mut open, self.demo.is_some(), |ui| self.mask_contents(ui));
         self.vp = vp;
