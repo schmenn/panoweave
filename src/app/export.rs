@@ -233,6 +233,21 @@ impl PanoApp {
         // may be used; it never changes a single pixel, so the result is the same on every computer.
         self.start_job("Creating the panorama", move |report, cancel| {
             let t0 = Instant::now();
+            // memory of the program when the export starts and its highest value during the export (sampled), to check the plan
+            let mem0 = crate::sysmem::process().map(|p| p.0).unwrap_or(0);
+            let mem_max = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(mem0));
+            let mem_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let sampler = {
+                let (mx, st) = (mem_max.clone(), mem_stop.clone());
+                std::thread::spawn(move || {
+                    while !st.load(Ordering::Relaxed) {
+                        if let Some((now, _)) = crate::sysmem::process() {
+                            mx.fetch_max(now, Ordering::Relaxed);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                })
+            };
             let cache = Mutex::new(crate::photo_cache::PhotoCache::new(cache_bytes));
             let loader = |i: usize, pixels: bool| -> Result<RenderPhoto, String> {
                 // seams only need the geometry plus where the photo is blown out: the small copy is enough
@@ -272,7 +287,7 @@ impl PanoApp {
                 })?;
                 let c = cache.lock().unwrap();
                 eprintln!(
-                    "export: {}x{} px, {} strips of {} rows, planned strip memory {:.2} GB, photo cache {} hits / {} misses ({:.2} GB), peak memory of the program {:.2} GB, {} ms",
+                    "export: {}x{} px, {} strips of {} rows, planned strip memory {:.2} GB, photo cache {} hits / {} misses ({:.2} GB), peak memory of the program {:.2} GB (at the start {:.2} GB, highest during the export {:.2} GB), {} ms",
                     job.w,
                     job.h,
                     job.count,
@@ -282,10 +297,14 @@ impl PanoApp {
                     c.misses,
                     crate::sysmem::gb(c.used()),
                     crate::sysmem::gb(crate::sysmem::process().map(|p| p.1).unwrap_or(0)),
+                    crate::sysmem::gb(mem0),
+                    crate::sysmem::gb(mem_max.load(Ordering::Relaxed)),
                     t0.elapsed().as_millis()
                 );
                 Ok((path.clone(), t0.elapsed().as_millis(), job.w, job.h))
             })();
+            mem_stop.store(true, Ordering::Relaxed);
+            let _ = sampler.join();
             cache.lock().unwrap().clear();
             JobMsg::Rendered(res)
         });
