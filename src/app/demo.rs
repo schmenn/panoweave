@@ -144,6 +144,9 @@ impl PanoApp {
                     if env("PW_OV_FILTER").as_deref() == Some("0") {
                         self.ov_filter = false;
                     }
+                    if env("PW_OV_TONE").as_deref() == Some("0") {
+                        self.ov_tone = false;
+                    }
                 }
                 "cplist" => {
                     self.step = Step::Points;

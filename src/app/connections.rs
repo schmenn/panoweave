@@ -314,6 +314,12 @@ impl PanoApp {
                         .checkbox(&mut self.ov_filter, "smooth fine photo")
                         .on_hover_text("A photo with more pixels per angle than the view is averaged down to the view's step first. Off: it is point-sampled, fine texture then shows up as a difference.")
                         .changed();
+                    if self.ov_mode != 2 {
+                        redraw |= ui
+                            .checkbox(&mut self.ov_tone, "match brightness")
+                            .on_hover_text("Blend and difference: brightness and contrast of photo B are matched to photo A over the common area first, so a different exposure or tone curve (e.g. wide-angle against tele camera) is not shown as a difference. Off: the plain brightness difference.")
+                            .changed();
+                    }
                     if ui.button("⟲ Centre").clicked() {
                         self.ov_center = None;
                         redraw = true;
@@ -374,7 +380,7 @@ impl PanoApp {
                         1 => crate::overlap::OverlapMode::Difference,
                         _ => crate::overlap::OverlapMode::Checker,
                     };
-                    let cfg = crate::overlap::OverlapConfig { prefilter: self.ov_filter, ..Default::default() };
+                    let cfg = crate::overlap::OverlapConfig { prefilter: self.ov_filter, match_tone: self.ov_tone, ..Default::default() };
                     if std::env::var("PW_OVERLAP_STATS").is_ok() {
                         // experiment: mean difference with and without the filter (see overlap.rs)
                         let off = crate::overlap::OverlapConfig { prefilter: false, ..cfg };
@@ -395,6 +401,24 @@ impl PanoApp {
                         res.sort_by(|x, y| x.partial_cmp(y).unwrap());
                         if !res.is_empty() {
                             eprintln!("overlap stats: {} control points, residual in view px: median {:.2} max {:.2} (plane step {:.5} rad)", res.len(), res[res.len() / 2], res[res.len() - 1], plane.scale);
+                        }
+                        let st = crate::overlap::overlap_stats([&rp[0], &rp[1]], &plane, rw, rh, &on);
+                        eprintln!(
+                            "overlap stats tone (sRGB luma, {} px): mean A {:.3} B {:.3}, std A {:.3} B {:.3}, B -> A: x{:.2} {:+.3}; gains {:?} {:?} gain_map {} {}; diff raw {:.4} tone matched {:.4}",
+                            st.fit.n, st.fit.mean[0], st.fit.mean[1], st.fit.std[0], st.fit.std[1], st.fit.slope, st.fit.offset, rp[0].gain, rp[1].gain, rp[0].gain_map.is_some(), rp[1].gain_map.is_some(), st.diff_raw, st.diff_fit
+                        );
+                        for blur in [1.0, 1.5, 2.0, 3.0, 4.0] {
+                            let line: Vec<String> = [(0.0, 0.0), (0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
+                                .iter()
+                                .map(|&sh| format!("{:.3}", crate::overlap::scan_difference([&rp[0], &rp[1]], &plane, rw, rh, blur, sh)))
+                                .collect();
+                            eprintln!("overlap stats scan blur x{blur}: shift 0,0 / +.5x -.5x +.5y -.5y / +1x -1x +1y -1y (view px): {}", line.join(" "));
+                        }
+                        for (k, name) in [(0usize, "A"), (1, "B")] {
+                            match crate::overlap::compare_with_export(&rp[k], &plane, rw, rh) {
+                                Ok((d, sg, cnt)) => eprintln!("overlap stats photo {name} alone: view vs export mean abs diff {d:.4} signed {sg:.4} over {cnt} px"),
+                                Err(e) => eprintln!("overlap stats photo {name}: export failed: {e}"),
+                            }
                         }
                         eprintln!("overlap stats pair {a},{b} zoom {:.2} px {n}: mean diff filtered {m_on:.4} unfiltered {m_off:.4} (filter ratios {ra:.2}, {rb:.2})", self.ov_zoom);
                     }

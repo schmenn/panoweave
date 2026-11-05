@@ -80,6 +80,7 @@ impl PanoApp {
             ov_zoom: 1.0,
             ov_arrows: true,
             ov_filter: true,
+            ov_tone: true,
             ov_center: None,
             ov_tex: None,
             ov_key: String::new(),
