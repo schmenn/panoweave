@@ -1370,19 +1370,23 @@ fn fill_holes(img: &mut [[f32; 3]], valid: &[f32], w: usize, h: usize, max_level
     if w < 2 || h < 2 {
         return;
     }
+    // every output pixel depends only on its own inputs, so the rows run on all cores (same result as one core)
     let mut levels: Vec<(Vec<[f32; 4]>, usize, usize)> = Vec::new();
-    let base: Vec<[f32; 4]> = img
-        .iter()
-        .zip(valid)
-        .map(|(c, v)| [c[0] * v, c[1] * v, c[2] * v, *v])
-        .collect();
+    let mut base = vec![[0.0f32; 4]; w * h];
+    base.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        for (x, o) in row.iter_mut().enumerate() {
+            let (c, v) = (img[y * w + x], valid[y * w + x]);
+            *o = [c[0] * v, c[1] * v, c[2] * v, v];
+        }
+    });
     levels.push((base, w, h));
     while levels.last().unwrap().1 > 1 && levels.last().unwrap().2 > 1 && levels.len() <= max_levels {
         let (prev, pw, ph) = levels.last().unwrap();
+        let (pw, ph) = (*pw, *ph);
         let (nw, nh) = (pw.div_ceil(2), ph.div_ceil(2));
         let mut next = vec![[0.0f32; 4]; nw * nh];
-        for y in 0..nh {
-            for x in 0..nw {
+        next.par_chunks_mut(nw).enumerate().for_each(|(y, row)| {
+            for (x, o) in row.iter_mut().enumerate() {
                 let mut s = [0.0f32; 4];
                 for dy in 0..2 {
                     for dx in 0..2 {
@@ -1394,9 +1398,9 @@ fn fill_holes(img: &mut [[f32; 3]], valid: &[f32], w: usize, h: usize, max_level
                         }
                     }
                 }
-                next[y * nw + x] = s;
+                *o = s;
             }
-        }
+        });
         levels.push((next, nw, nh));
         if nw * nh <= 1 {
             break;
@@ -1404,33 +1408,30 @@ fn fill_holes(img: &mut [[f32; 3]], valid: &[f32], w: usize, h: usize, max_level
     }
     // pull: from coarse to fine, fill pixels without weight
     for l in (0..levels.len() - 1).rev() {
-        let (coarse, cw, ch) = {
-            let (c, cw, ch) = &levels[l + 1];
-            (c.clone(), *cw, *ch)
-        };
-        let (fine, fw, fh) = &mut levels[l];
-        for y in 0..*fh {
-            for x in 0..*fw {
-                let i = y * *fw + x;
-                if fine[i][3] < 1e-6 {
+        let (fine_part, coarse_part) = levels.split_at_mut(l + 1);
+        let (coarse, cw, ch) = (&coarse_part[0].0, coarse_part[0].1, coarse_part[0].2);
+        let (fine, fw, _) = &mut fine_part[l];
+        let fw = *fw;
+        fine.par_chunks_mut(fw).enumerate().for_each(|(y, row)| {
+            for (x, px) in row.iter_mut().enumerate() {
+                if px[3] < 1e-6 {
                     let c = coarse[(y / 2).min(ch - 1) * cw + (x / 2).min(cw - 1)];
                     if c[3] > 1e-9 {
-                        fine[i] = [c[0] / c[3], c[1] / c[3], c[2] / c[3], 1.0];
+                        *px = [c[0] / c[3], c[1] / c[3], c[2] / c[3], 1.0];
                     }
-                } else if fine[i][3] != 1.0 {
-                    let wv = fine[i][3];
-                    fine[i] = [fine[i][0] / wv, fine[i][1] / wv, fine[i][2] / wv, 1.0];
+                } else if px[3] != 1.0 {
+                    let wv = px[3];
+                    *px = [px[0] / wv, px[1] / wv, px[2] / wv, 1.0];
                 }
             }
-        }
-        let _ = fh;
+        });
     }
     let (base, _, _) = &levels[0];
-    for (i, c) in img.iter_mut().enumerate() {
+    img.par_iter_mut().enumerate().for_each(|(i, c)| {
         if valid[i] < 0.5 {
             *c = [base[i][0], base[i][1], base[i][2]];
         }
-    }
+    });
 }
 
 // ---------- Laplacian pyramid blending ----------
@@ -1651,6 +1652,124 @@ mod quality_tests {
         // a photo without connections only fills gaps, however detailed it is
         let u = quality_factors(&[(3860.0, true), (9000.0, false)]);
         assert!(seam_score(u[0], 0.05) > seam_score(u[1], 1.0));
+    }
+}
+
+#[cfg(test)]
+mod fill_tests {
+    use super::*;
+
+    // the single-core version from before the rows ran in parallel
+    fn fill_holes_reference(img: &mut [[f32; 3]], valid: &[f32], w: usize, h: usize, max_levels: usize) {
+        if w < 2 || h < 2 {
+            return;
+        }
+        let mut levels: Vec<(Vec<[f32; 4]>, usize, usize)> = Vec::new();
+        let base: Vec<[f32; 4]> = img
+            .iter()
+            .zip(valid)
+            .map(|(c, v)| [c[0] * v, c[1] * v, c[2] * v, *v])
+            .collect();
+        levels.push((base, w, h));
+        while levels.last().unwrap().1 > 1 && levels.last().unwrap().2 > 1 && levels.len() <= max_levels {
+            let (prev, pw, ph) = levels.last().unwrap();
+            let (nw, nh) = (pw.div_ceil(2), ph.div_ceil(2));
+            let mut next = vec![[0.0f32; 4]; nw * nh];
+            for y in 0..nh {
+                for x in 0..nw {
+                    let mut s = [0.0f32; 4];
+                    for dy in 0..2 {
+                        for dx in 0..2 {
+                            let xx = (2 * x + dx).min(pw - 1);
+                            let yy = (2 * y + dy).min(ph - 1);
+                            let v = prev[yy * pw + xx];
+                            for k in 0..4 {
+                                s[k] += v[k];
+                            }
+                        }
+                    }
+                    next[y * nw + x] = s;
+                }
+            }
+            levels.push((next, nw, nh));
+            if nw * nh <= 1 {
+                break;
+            }
+        }
+        // pull: from coarse to fine, fill pixels without weight
+        for l in (0..levels.len() - 1).rev() {
+            let (coarse, cw, ch) = {
+                let (c, cw, ch) = &levels[l + 1];
+                (c.clone(), *cw, *ch)
+            };
+            let (fine, fw, fh) = &mut levels[l];
+            for y in 0..*fh {
+                for x in 0..*fw {
+                    let i = y * *fw + x;
+                    if fine[i][3] < 1e-6 {
+                        let c = coarse[(y / 2).min(ch - 1) * cw + (x / 2).min(cw - 1)];
+                        if c[3] > 1e-9 {
+                            fine[i] = [c[0] / c[3], c[1] / c[3], c[2] / c[3], 1.0];
+                        }
+                    } else if fine[i][3] != 1.0 {
+                        let wv = fine[i][3];
+                        fine[i] = [fine[i][0] / wv, fine[i][1] / wv, fine[i][2] / wv, 1.0];
+                    }
+                }
+            }
+            let _ = fh;
+        }
+        let (base, _, _) = &levels[0];
+        for (i, c) in img.iter_mut().enumerate() {
+            if valid[i] < 0.5 {
+                *c = [base[i][0], base[i][1], base[i][2]];
+            }
+        }
+    }
+
+    fn picture(w: usize, h: usize) -> (Vec<[f32; 3]>, Vec<f32>) {
+        let mut img = vec![[0.0f32; 3]; w * h];
+        let mut valid = vec![0.0f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                // a photo-like patch with a ragged edge and a hole inside
+                let inside = x + (y * 7) % 11 < w * 2 / 3 && !(x > w / 4 && x < w / 3 && y > h / 3 && y < h / 2);
+                if inside {
+                    img[y * w + x] = [x as f32 / w as f32, y as f32 / h as f32, ((x * y) % 17) as f32 / 17.0];
+                    valid[y * w + x] = if (x + y) % 13 == 0 { 0.5 } else { 1.0 };
+                }
+            }
+        }
+        (img, valid)
+    }
+
+    #[test]
+    fn parallel_fill_gives_exactly_the_single_core_result() {
+        for (w, h) in [(37usize, 29usize), (128, 96), (5, 3)] {
+            let (img, valid) = picture(w, h);
+            let (mut a, mut b) = (img.clone(), img);
+            fill_holes(&mut a, &valid, w, h, usize::MAX);
+            fill_holes_reference(&mut b, &valid, w, h, usize::MAX);
+            assert_eq!(a, b, "{w}x{h}");
+            let (mut a, mut b) = (a.clone(), b);
+            fill_holes(&mut a, &valid, w, h, 2);
+            fill_holes_reference(&mut b, &valid, w, h, 2);
+            assert_eq!(a, b, "{w}x{h} with 2 levels");
+        }
+    }
+
+    #[test]
+    fn valid_pixels_stay_and_holes_get_filled() {
+        let (w, h) = (64usize, 48usize);
+        let (img, valid) = picture(w, h);
+        let mut out = img.clone();
+        fill_holes(&mut out, &valid, w, h, usize::MAX);
+        for i in 0..w * h {
+            if valid[i] >= 0.5 {
+                assert_eq!(out[i], img[i]);
+            }
+        }
+        assert!((0..w * h).any(|i| valid[i] < 0.5 && out[i] != [0.0; 3]));
     }
 }
 
