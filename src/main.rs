@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod align;
+mod crashlog;
 mod app;
 mod engine;
 mod features;
@@ -149,6 +150,8 @@ fn imgdiff(args: &[String]) {
 }
 
 fn main() -> eframe::Result {
+    // the window program (no console in release builds) tells the person about a crash; headless runs just log it
+    crashlog::install(!std::env::args().any(|a| a == "--selftest" || a == "--loadtest" || a == "--imgdiff" || a == "--kpdebug" || a == "--pairtest" || a == "--paircheck"));
     {
         let raw: Vec<String> = std::env::args().skip(1).collect();
         if raw.first().map(|s| s.as_str()) == Some("--imgdiff") && raw.len() >= 3 {
