@@ -10,6 +10,7 @@
 - The export plans with 1.4 times the strip memory it counted before (`StripConfig::memory_factor`): measured on two runs, the program used 1.40 and 1.38 times the planned strip memory (no fixed part), so the old estimate missed temporary copies. This holds on any computer; the budget itself still follows the free memory. The log line of an export now shows the program's memory at the start and its highest value during the export.
 
 ### Fixed
+- Overlap check: a photo with more pixels per angle than the view (e.g. the 7 mm photos next to 16 mm ones, about 5 times finer) is now averaged down to the view's step before blending/differencing, instead of being point-sampled (aliasing made fine texture show up as a difference). New checkbox "smooth fine photo" (on by default; off = old behaviour). Measured once on the test project (pair 1/2, difference mode): mean difference 0.235 without, 0.209 with the filter; a pair of equal photos gives 0.077, so a large part of the difference in that pair remains and its cause is not established. The reported "stretched photo" in blend mode could not be reproduced: control points of the pairs land within about 1.2 view pixels, so the view geometry matches the export (same parameters).
 - Crop frame (step 4): dragging a white edge moved the picture instead of the edge about half of the time (the edge was looked for where the pointer was after the drag threshold, not where it was pressed).
 
 ## [0.1.1] - 2026-11-05

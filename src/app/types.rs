@@ -289,6 +289,7 @@ pub struct PanoApp {
     pub(super) ov_tile: usize,
     pub(super) ov_zoom: f32,
     pub(super) ov_arrows: bool,
+    pub(super) ov_filter: bool,
     pub(super) ov_center: Option<((usize, usize), V3)>,
     pub(super) ov_tex: Option<egui::TextureHandle>,
     pub(super) ov_key: String,

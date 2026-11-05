@@ -125,7 +125,26 @@ impl PanoApp {
         if !self.busy() && self.aligned {
             match d {
                 "points" | "pointsel" | "pointdrag" => self.step = Step::Points,
-                "overlap" => self.step = Step::Points,
+                "overlap" => {
+                    self.step = Step::Points;
+                    // experiments: PW_OV_PAIR=a,b (0-based), PW_OV_MODE=0|1|2, PW_OV_ZOOM, PW_OV_FILTER=0
+                    let env = |k: &str| std::env::var(k).ok();
+                    if let Some((a, b)) = env("PW_OV_PAIR").and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<usize>().ok()?, b.trim().parse::<usize>().ok()?)))) {
+                        if a < self.photos.len() && b < self.photos.len() {
+                            self.pe.a = a;
+                            self.pe.b = b;
+                        }
+                    }
+                    if let Some(m) = env("PW_OV_MODE").and_then(|v| v.parse().ok()) {
+                        self.ov_mode = m;
+                    }
+                    if let Some(z) = env("PW_OV_ZOOM").and_then(|v| v.parse().ok()) {
+                        self.ov_zoom = z;
+                    }
+                    if env("PW_OV_FILTER").as_deref() == Some("0") {
+                        self.ov_filter = false;
+                    }
+                }
                 "cplist" => {
                     self.step = Step::Points;
                     self.show_cp_list = true;

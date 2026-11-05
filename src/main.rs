@@ -23,6 +23,7 @@ mod project;
 mod sample;
 #[allow(dead_code)] // the painting tool in the UI uses the rest
 mod masks;
+mod overlap;
 mod seams;
 mod stitch;
 mod strip;

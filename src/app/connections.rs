@@ -310,6 +310,10 @@ impl PanoApp {
                     ui.separator();
                     redraw |= ui.add(egui::Slider::new(&mut self.ov_zoom, 0.25..=8.0).logarithmic(true).text("zoom")).changed();
                     ui.checkbox(&mut self.ov_arrows, "shift arrows");
+                    redraw |= ui
+                        .checkbox(&mut self.ov_filter, "smooth fine photo")
+                        .on_hover_text("A photo with more pixels per angle than the view is averaged down to the view's step first. Off: it is point-sampled, fine texture then shows up as a difference.")
+                        .changed();
                     if ui.button("⟲ Centre").clicked() {
                         self.ov_center = None;
                         redraw = true;
@@ -365,50 +369,36 @@ impl PanoApp {
                             mask: self.photos[i].mask.buf.clone(),
                         })
                         .collect();
-                    let (mode, alpha, tile) = (self.ov_mode, self.ov_alpha, self.ov_tile.max(1));
-                    let mut rgba = vec![0u8; rw * rh * 4];
-                    use rayon::prelude::*;
-                    rgba.par_chunks_mut(rw * 4).enumerate().for_each(|(y, row)| {
-                        for x in 0..rw {
-                            let d = plane.dir(x as f64 - rw as f64 * 0.5, y as f64 - rh as f64 * 0.5);
-                            let s = |p: &RenderPhoto| -> Option<[f32; 3]> {
-                                let (px, py, _) = p.lookup(d)?;
-                                let c = imgutil::sample_rgb_linear(&p.img, px, py);
-                                let g = p.gain_at(px, py);
-                                Some([c[0] * g[0], c[1] * g[1], c[2] * g[2]])
-                            };
-                            let (ca, cb) = (s(&rp[0]), s(&rp[1]));
-                            let lin = match (ca, cb) {
-                                (Some(u), Some(v)) => match mode {
-                                    0 => [u[0] * (1.0 - alpha) + v[0] * alpha, u[1] * (1.0 - alpha) + v[1] * alpha, u[2] * (1.0 - alpha) + v[2] * alpha],
-                                    1 => {
-                                        let g = |c: [f32; 3]| imgutil::linear_to_srgb(0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]);
-                                        let t = ((g(u) - g(v)).abs() * 4.0).min(1.0);
-                                        // heat map: black - red - yellow - white
-                                        let r = (t * 3.0).min(1.0);
-                                        let gg = (t * 3.0 - 1.0).clamp(0.0, 1.0);
-                                        let bb = (t * 3.0 - 2.0).clamp(0.0, 1.0);
-                                        let o = x * 4;
-                                        row[o] = (r * 255.0) as u8;
-                                        row[o + 1] = (gg * 255.0) as u8;
-                                        row[o + 2] = (bb * 255.0) as u8;
-                                        row[o + 3] = 255;
-                                        continue;
-                                    }
-                                    _ => {
-                                        if ((x / tile) + (y / tile)) % 2 == 0 { u } else { v }
-                                    }
-                                },
-                                (Some(u), None) | (None, Some(u)) => [u[0] * 0.35, u[1] * 0.35, u[2] * 0.35],
-                                (None, None) => [0.02, 0.02, 0.025],
-                            };
-                            let o = x * 4;
-                            for k in 0..3 {
-                                row[o + k] = (imgutil::linear_to_srgb(lin[k]) * 255.0) as u8;
+                    let mode = match self.ov_mode {
+                        0 => crate::overlap::OverlapMode::Blend,
+                        1 => crate::overlap::OverlapMode::Difference,
+                        _ => crate::overlap::OverlapMode::Checker,
+                    };
+                    let cfg = crate::overlap::OverlapConfig { prefilter: self.ov_filter, ..Default::default() };
+                    if std::env::var("PW_OVERLAP_STATS").is_ok() {
+                        // experiment: mean difference with and without the filter (see overlap.rs)
+                        let off = crate::overlap::OverlapConfig { prefilter: false, ..cfg };
+                        let on = crate::overlap::OverlapConfig { prefilter: true, ..cfg };
+                        let (m_on, n) = crate::overlap::mean_difference([&rp[0], &rp[1]], &plane, rw, rh, &on);
+                        let (m_off, _) = crate::overlap::mean_difference([&rp[0], &rp[1]], &plane, rw, rh, &off);
+                        let ra = crate::overlap::Prepared::new(&rp[0], plane.scale, &on).ratio;
+                        let rb = crate::overlap::Prepared::new(&rp[1], plane.scale, &on).ratio;
+                        // where do the control points of the pair land in the plane view?
+                        let mut res = Vec::new();
+                        for c in self.cps.iter().filter(|c| c.a == a && c.b == b) {
+                            let d = ga.px_to_dir(self.to_px(a, c.pa));
+                            let dbp = gb.px_to_dir(self.to_px(b, c.pb));
+                            if let (Some(u), Some(v)) = (plane.coords(d), plane.coords(dbp)) {
+                                res.push(((u.0 - v.0).powi(2) + (u.1 - v.1).powi(2)).sqrt());
                             }
-                            row[o + 3] = 255;
                         }
-                    });
+                        res.sort_by(|x, y| x.partial_cmp(y).unwrap());
+                        if !res.is_empty() {
+                            eprintln!("overlap stats: {} control points, residual in view px: median {:.2} max {:.2} (plane step {:.5} rad)", res.len(), res[res.len() / 2], res[res.len() - 1], plane.scale);
+                        }
+                        eprintln!("overlap stats pair {a},{b} zoom {:.2} px {n}: mean diff filtered {m_on:.4} unfiltered {m_off:.4} (filter ratios {ra:.2}, {rb:.2})", self.ov_zoom);
+                    }
+                    let rgba = crate::overlap::render_overlap([&rp[0], &rp[1]], &plane, rw, rh, mode, self.ov_alpha, self.ov_tile, &cfg);
                     let img = egui::ColorImage::from_rgba_unmultiplied([rw, rh], &rgba);
                     match &mut self.ov_tex {
                         Some(t) => t.set(img, egui::TextureOptions::LINEAR),
