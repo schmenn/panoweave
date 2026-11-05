@@ -165,22 +165,7 @@ impl PanoApp {
             }
         }
         // interaction
-        let near_edge = |pos: Pos2| -> Option<usize> {
-            let d = 7.0;
-            let in_y = pos.y > crop_rect.min.y - d && pos.y < crop_rect.max.y + d;
-            let in_x = pos.x > crop_rect.min.x - d && pos.x < crop_rect.max.x + d;
-            if in_y && (pos.x - crop_rect.min.x).abs() < d {
-                Some(0)
-            } else if in_y && (pos.x - crop_rect.max.x).abs() < d {
-                Some(1)
-            } else if in_x && (pos.y - crop_rect.min.y).abs() < d {
-                Some(2)
-            } else if in_x && (pos.y - crop_rect.max.y).abs() < d {
-                Some(3)
-            } else {
-                None
-            }
-        };
+        let near_edge = |pos: Pos2| crop_edge_at(crop_rect, pos, CROP_GRAB);
         if let Some(h) = resp.hover_pos() {
             match near_edge(h) {
                 Some(0) | Some(1) => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
@@ -189,7 +174,8 @@ impl PanoApp {
             }
         }
         if resp.drag_started() {
-            let pos = resp.interact_pointer_pos().unwrap_or_default();
+            // egui reports the start only after the pointer has moved a few pixels: test where it was pressed, not where it is now
+            let pos = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()).unwrap_or_default();
             self.frame_drag = match near_edge(pos) {
                 Some(e) => FrameDrag::Crop(e),
                 None if ui.input(|i| i.modifiers.shift) => FrameDrag::Roll,
@@ -264,5 +250,41 @@ impl PanoApp {
         if self.preview_rx.is_some() {
             ui.ctx().request_repaint();
         }
+    }
+}
+
+/// How close (in points) the pointer has to be to a crop edge to grab it.
+const CROP_GRAB: f32 = 8.0;
+
+/// Which crop edge (0 left, 1 right, 2 top, 3 bottom) lies within `d` of `pos`.
+fn crop_edge_at(crop_rect: Rect, pos: Pos2, d: f32) -> Option<usize> {
+    let in_y = pos.y > crop_rect.min.y - d && pos.y < crop_rect.max.y + d;
+    let in_x = pos.x > crop_rect.min.x - d && pos.x < crop_rect.max.x + d;
+    if in_y && (pos.x - crop_rect.min.x).abs() < d {
+        Some(0)
+    } else if in_y && (pos.x - crop_rect.max.x).abs() < d {
+        Some(1)
+    } else if in_x && (pos.y - crop_rect.min.y).abs() < d {
+        Some(2)
+    } else if in_x && (pos.y - crop_rect.max.y).abs() < d {
+        Some(3)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crop_edges_are_found_within_the_grab_distance() {
+        let r = Rect::from_min_max(Pos2::new(100.0, 50.0), Pos2::new(300.0, 250.0));
+        assert_eq!(crop_edge_at(r, Pos2::new(103.0, 120.0), 8.0), Some(0));
+        assert_eq!(crop_edge_at(r, Pos2::new(297.0, 120.0), 8.0), Some(1));
+        assert_eq!(crop_edge_at(r, Pos2::new(200.0, 55.0), 8.0), Some(2));
+        assert_eq!(crop_edge_at(r, Pos2::new(200.0, 246.0), 8.0), Some(3));
+        assert_eq!(crop_edge_at(r, Pos2::new(200.0, 150.0), 8.0), None, "inside the frame, away from the edges");
+        assert_eq!(crop_edge_at(r, Pos2::new(60.0, 150.0), 8.0), None, "far outside");
     }
 }
