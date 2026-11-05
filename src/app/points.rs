@@ -120,6 +120,14 @@ impl PanoApp {
             {
                 self.run_pair_points();
             }
+            if ui
+                .add(egui::Button::selectable(self.pe.tool == PointTool::Edit, "↖ Select / edit"))
+                .on_hover_text("Click a point to select it, drag it to move it, Delete removes it. Dragging empty space moves the photo, the wheel zooms.")
+                .clicked()
+            {
+                self.pe.tool = PointTool::Edit;
+                self.pe.pending = None;
+            }
             let adding = self.pe.tool == PointTool::Add;
             let add_txt = if adding { "✔ Done adding" } else { "➕ Add point" };
             if ui
