@@ -247,7 +247,7 @@ impl PanoApp {
     /// Patch click: rough clicks (orange), refined spot and suggestions.
     fn paint_click_marks(&self, painter: &egui::Painter, d: &PaneDraw, a: usize, b: usize) {
         let pane = d.pane;
-        if self.click.on {
+        if self.pe.tool == PointTool::PatchClick {
             let orange = Color32::from_rgb(255, 150, 40);
             let click = if pane == Pane::A { self.click.a } else { self.click.b };
             if let Some(c) = click {
@@ -283,7 +283,7 @@ impl PanoApp {
     /// Loupe while placing points.
     fn paint_loupe(&self, painter: &egui::Painter, d: &PaneDraw, resp: &egui::Response) {
         let PaneDraw { rect, idx, v, tex_id, img_rect, .. } = *d;
-        if self.pe.adding && v.zoom < 3.0 {
+        if self.pe.tool == PointTool::Add && v.zoom < 3.0 {
             if let (Some(hp), Some(t)) = (resp.hover_pos(), tex_id) {
                 if img_rect.contains(hp) {
                     let lr = Rect::from_min_size(rect.right_bottom() - Vec2::new(170.0, 170.0), Vec2::splat(160.0));
@@ -305,7 +305,7 @@ impl PanoApp {
     /// Scroll, click and drag input of one half.
     fn pane_input(&self, ui: &egui::Ui, resp: &egui::Response, pane: Pane, events: &mut Vec<PaneEvent>) {
         if resp.hovered() {
-            ui.ctx().set_cursor_icon(if self.pe.adding { egui::CursorIcon::Crosshair } else { egui::CursorIcon::Default });
+            ui.ctx().set_cursor_icon(if self.pe.tool == PointTool::Add { egui::CursorIcon::Crosshair } else { egui::CursorIcon::Default });
             let sc = ui.input(|i| i.smooth_scroll_delta.y);
             if sc.abs() > 0.1 {
                 if let Some(hp) = resp.hover_pos() {

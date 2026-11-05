@@ -10,6 +10,7 @@
 - The export plans with 1.4 times the strip memory it counted before (`StripConfig::memory_factor`): measured on two runs, the program used 1.40 and 1.38 times the planned strip memory (no fixed part), so the old estimate missed temporary copies. This holds on any computer; the budget itself still follows the free memory. The log line of an export now shows the program's memory at the start and its highest value during the export.
 
 ### Fixed
+- Point editor (step 4): "Add point" and "Patch click" are now one tool choice (like radio buttons) instead of two independent switches. Before, both could light up while a click only did a patch click, and switching patch click off also switched add off. Pressing the active tool again, or Esc, returns to selecting points; "then find more automatically" only shows with "Add point".
 - Crop frame (step 4): dragging a white edge moved the picture instead of the edge about half of the time (the edge was looked for where the pointer was after the drag threshold, not where it was pressed).
 
 ## [0.1.1] - 2026-11-05

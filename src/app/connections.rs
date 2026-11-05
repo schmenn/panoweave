@@ -668,11 +668,10 @@ impl PanoApp {
                 self.pe.pending = None;
                 self.step = Step::Points;
                 if manual {
-                    self.click.on = true;
+                    self.pe.tool = PointTool::PatchClick;
                     self.click.a = None;
                     self.click.b = None;
                     self.click.result = None;
-                    self.pe.adding = false;
                 }
             }
             Some((1, a, b)) => self.run_pair_recheck(a, b),
