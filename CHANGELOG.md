@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-05
+
+### Fixed
+- Sporadic crash on Windows (about every fourth start of the export/frame step): wgpu panicked with "Failed to create staging buffer" when Vulkan, DirectX 12 and OpenGL were started side by side. Windows now starts DirectX 12 only; `WGPU_BACKEND` still overrides it. 24 of 24 test runs finished (before: 7 of 27 crashed).
+
+### Added
+- Crash report: a panic is written to `%APPDATA%\PanoWeave\crash.log` and the window program shows a message with the file location. The graphics adapter in use is noted in `gpu.log` next to it.
+
 ## [0.1.0] - 2026-11-05
 
 First public version.

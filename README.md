@@ -45,6 +45,10 @@ The binary is written to `target/release/panoweave.exe`. Debug builds (`cargo bu
 
 RAW photos are read with `imagepipe` / `rawloader`, which are LGPL licensed. They are built in by default (feature `raw`); `cargo build --release --no-default-features` leaves them out (JPEG, PNG and TIFF keep working).
 
+### Windows SmartScreen
+
+The release `.exe` is not code-signed, so Windows SmartScreen may say "Windows protected your PC" for a new download. Click "More info", then "Run anyway". You can compare the SHA-256 checksum of the zip (`Get-FileHash <file>`) with the one in the release notes.
+
 ## Usage
 
 Start the program and add photos in the first step, or pass image files on the command line. The steps then guide you through finding points, aligning, cropping and exporting. If photos end up in separate groups, the Connections window lists them, and you can connect them manually with the point editor.

@@ -15,6 +15,19 @@ pub fn format_report(version: &str, unix_secs: u64, thread: &str, message: &str,
     format!("--- PanoWeave {version} crashed (unix time {unix_secs}) ---\nthread: {thread}\nmessage: {message}\nat: {location}\nbacktrace:\n{backtrace}\n\n")
 }
 
+/// Notes which graphics adapter was chosen at start (stderr and `gpu.log` next to the crash log, overwritten each start),
+/// so a crash report can be matched with the adapter that was in use.
+pub fn log_gpu(line: &str) {
+    eprintln!("graphics adapter: {line}");
+    if let Some(p) = log_path().map(|p| p.with_file_name("gpu.log")) {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(p, format!("{line}
+"));
+    }
+}
+
 /// Installs the hook. `show_dialog`: also show a message box (only for the window program).
 pub fn install(show_dialog: bool) {
     let default = std::panic::take_hook();

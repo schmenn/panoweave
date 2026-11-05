@@ -149,6 +149,18 @@ fn imgdiff(args: &[String]) {
     }
 }
 
+/// Graphics setup. On Windows only DirectX 12 is started (unless `WGPU_BACKEND` says otherwise): with the default
+/// choice (Vulkan, DX12 and OpenGL side by side) about every fourth run of v0.1.0 died with a wgpu panic
+/// ("Failed to create staging buffer") on the same adapter; with one fixed backend 0 of 24 test runs did.
+fn wgpu_configuration() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
+    let mut setup = WgpuSetupCreateNew::without_display_handle();
+    if cfg!(windows) && eframe::wgpu::Backends::from_env().is_none() {
+        setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+    }
+    WgpuConfiguration { wgpu_setup: WgpuSetup::CreateNew(setup), ..Default::default() }
+}
+
 fn main() -> eframe::Result {
     // the window program (no console in release builds) tells the person about a crash; headless runs just log it
     crashlog::install(!std::env::args().any(|a| a == "--selftest" || a == "--loadtest" || a == "--imgdiff" || a == "--kpdebug" || a == "--pairtest" || a == "--paircheck"));
@@ -185,9 +197,16 @@ fn main() -> eframe::Result {
             .with_title("PanoWeave – panorama studio")
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([960.0, 600.0]),
+        wgpu_options: wgpu_configuration(),
         ..Default::default()
     };
-    eframe::run_native("PanoWeave", options, Box::new(move |cc| Ok(Box::new(app::PanoApp::new(cc, args)))))
+    eframe::run_native("PanoWeave", options, Box::new(move |cc| {
+        if let Some(rs) = cc.wgpu_render_state.as_ref() {
+            let i = rs.adapter.get_info();
+            crashlog::log_gpu(&format!("{} | backend {:?} | type {:?} | driver {} {}", i.name, i.backend, i.device_type, i.driver, i.driver_info));
+        }
+        Ok(Box::new(app::PanoApp::new(cc, args)))
+    }))
 }
 
 use eframe::egui;
