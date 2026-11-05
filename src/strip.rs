@@ -41,6 +41,13 @@ pub struct StripConfig {
     /// a strip should be at least this many times higher than the margin (otherwise a lot of
     /// work is done twice)
     pub min_strip_to_margin: usize,
+    /// when not even the smallest strip fits: first give the photo cache's memory to the strips, then use
+    /// fewer blend levels (never below `min_levels`). Off = the export stops with the message instead.
+    pub adapt_levels: bool,
+    /// fewest blend levels the planner falls back to
+    pub min_levels: usize,
+    /// share of the budget the photo cache keeps at the least (the rest may go to the strips)
+    pub min_cache_share: f64,
 }
 
 impl Default for StripConfig {
@@ -55,6 +62,9 @@ impl Default for StripConfig {
             fill_extra_levels: 2,
             cache_share: 0.3,
             min_strip_to_margin: 1,
+            adapt_levels: true,
+            min_levels: 3,
+            min_cache_share: 0.05,
         }
     }
 }
@@ -135,6 +145,49 @@ pub fn plan(width: usize, height: usize, levels: usize, blend: Blend, budget: u6
         rows = ((rows / align) * align).max(min_rows);
     }
     Ok(StripPlan { rows, margin, count: height.div_ceil(rows), peak_bytes: strip_bytes(width, rows, margin, blend, cfg) })
+}
+
+/// The plan the export uses: strips, the blend levels that fit, and how the budget is shared.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fit {
+    pub plan: StripPlan,
+    /// blend levels actually used (less than asked for when the memory is tight)
+    pub levels: usize,
+    /// blend levels asked for
+    pub levels_wanted: usize,
+    /// bytes for the strips
+    pub strip_budget: u64,
+    /// bytes for the photo cache
+    pub cache_bytes: u64,
+}
+
+/// Plans the strips within the whole export budget `total` (strips plus photo cache). The normal split comes
+/// first. If not even the smallest strip fits, the cache gives up memory (it only makes the export faster), and
+/// only after that the number of blend levels goes down (the margin of a strip grows with 2^levels and is most
+/// of its memory for big panoramas). Each step is tried at the current levels before the levels are lowered, so
+/// quality is given up last. With `adapt_levels` off this is `split_budget` plus `plan`.
+pub fn fit(width: usize, height: usize, levels: usize, blend: Blend, total: u64, cfg: &StripConfig) -> Result<Fit, String> {
+    let (sb, cb) = split_budget(total, cfg);
+    let first = plan(width, height, levels, blend, sb, cfg);
+    let first_err = match first {
+        Ok(plan) => return Ok(Fit { plan, levels, levels_wanted: levels, strip_budget: sb, cache_bytes: cb }),
+        Err(e) => e,
+    };
+    if !cfg.adapt_levels {
+        return Err(first_err);
+    }
+    let keep = (total as f64 * cfg.min_cache_share.clamp(0.0, 0.9)) as u64;
+    let (lean_sb, lean_cb) = (total - keep, keep);
+    // Feather has no margin, so the levels do not matter there
+    let lowest = if blend == Blend::Smooth { cfg.min_levels.clamp(1, levels.max(1)) } else { levels };
+    let mut last_err = first_err;
+    for lv in (lowest..=levels).rev() {
+        match plan(width, height, lv, blend, lean_sb, cfg) {
+            Ok(plan) => return Ok(Fit { plan, levels: lv, levels_wanted: levels, strip_budget: lean_sb, cache_bytes: lean_cb }),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(format!("{last_err} (tried down to {lowest} blend levels with the photo cache reduced)"))
 }
 
 /// Splits the export memory budget into the part for the strips and the part for the photo cache.
@@ -244,6 +297,45 @@ mod tests {
         assert_eq!(p.count, 1);
         assert_eq!(p.rows, 500);
         assert_eq!(margin_rows(5, Blend::Smooth, &cfg), (4 << 5) + (1 << 7));
+    }
+
+    #[test]
+    fn a_two_gigapixel_picture_fits_into_a_small_budget_with_fewer_levels() {
+        let cfg = StripConfig::default();
+        // 60000 x 33000 px, 6 GB free -> 4.5 GB budget for the export
+        let (w, h) = (60_000usize, 33_000usize);
+        assert!(w * h > 1_900_000_000);
+        let total = 4 * GB + GB / 2;
+        assert!(plan(w, h, 7, Blend::Smooth, split_budget(total, &cfg).0, &cfg).is_err(), "7 levels do not fit (the reason for the fallback)");
+        let f = fit(w, h, 7, Blend::Smooth, total, &cfg).unwrap();
+        assert!(f.levels < 7 && f.levels >= cfg.min_levels, "levels {}", f.levels);
+        assert_eq!(f.levels_wanted, 7);
+        assert!(f.plan.peak_bytes <= f.strip_budget && f.strip_budget + f.cache_bytes <= total);
+        assert!(f.plan.count > 1);
+    }
+
+    #[test]
+    fn nothing_changes_when_the_normal_plan_fits_or_the_switch_is_off() {
+        let cfg = StripConfig::default();
+        let f = fit(4000, 2000, 6, Blend::Smooth, 8 * GB, &cfg).unwrap();
+        assert_eq!((f.levels, f.levels_wanted), (6, 6));
+        assert_eq!((f.strip_budget, f.cache_bytes), split_budget(8 * GB, &cfg));
+        let off = StripConfig { adapt_levels: false, ..cfg };
+        assert!(fit(60_000, 33_000, 7, Blend::Smooth, 4 * GB, &off).is_err());
+    }
+
+    #[test]
+    fn the_cache_gives_way_before_the_levels_do() {
+        let cfg = StripConfig::default();
+        let (w, h, lv) = (20_000usize, 10_000usize, 7usize);
+        // a total where the smallest strip fits only if the cache share is cut
+        let margin = margin_rows(lv, Blend::Smooth, &cfg).div_ceil(512) * 512;
+        let smallest = strip_bytes(w, 512, margin, Blend::Smooth, &cfg);
+        let total = (smallest as f64 / 0.9) as u64;
+        assert!(plan(w, h, lv, Blend::Smooth, split_budget(total, &cfg).0, &cfg).is_err());
+        let f = fit(w, h, lv, Blend::Smooth, total, &cfg).unwrap();
+        assert_eq!(f.levels, lv, "same levels, smaller cache");
+        assert!(f.cache_bytes < split_budget(total, &cfg).1);
     }
 
     #[test]

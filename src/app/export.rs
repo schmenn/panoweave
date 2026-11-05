@@ -141,12 +141,11 @@ impl PanoApp {
 
     /// Plan of the export at the chosen size: strip height, number of strips, memory per strip.
     /// The picture is the same whatever the plan is; less memory only means more strips.
-    pub(super) fn strip_estimate(&self) -> Option<Result<crate::strip::StripPlan, String>> {
+    pub(super) fn strip_estimate(&self) -> Option<Result<crate::strip::Fit, String>> {
         let cfg = crate::strip::StripConfig::default();
         let (w, h) = self.export_size();
         let levels = if self.blend_levels > 0 { self.blend_levels.min(stitch::auto_levels(w, h)) } else { stitch::auto_levels(w, h) };
-        let (strip_budget, _) = crate::strip::split_budget(self.strip_budget()?, &cfg);
-        Some(crate::strip::plan(w, h, levels, self.blend, strip_budget, &cfg))
+        Some(crate::strip::fit(w, h, levels, self.blend, self.strip_budget()?, &cfg))
     }
 
     /// The file format of the strip writers for the chosen output.
@@ -229,7 +228,7 @@ impl PanoApp {
         let format = self.write_format();
         let cfg = crate::strip::StripConfig::default();
         let total = self.strip_budget().unwrap_or(FALLBACK_EXPORT_BUDGET);
-        let (strip_budget, cache_bytes) = crate::strip::split_budget(total, &cfg);
+        let (_, cache_bytes) = crate::strip::split_budget(total, &cfg);
         // The picture is made strip by strip. The strip height only follows from the memory that
         // may be used; it never changes a single pixel, so the result is the same on every computer.
         self.start_job("Creating the panorama", move |report, cancel| {
@@ -260,7 +259,12 @@ impl PanoApp {
                     save_output_stoppable(&path, &rgba, w, h, out_fmt, q, &stop)?;
                     return Ok((path.clone(), t0.elapsed().as_millis(), w, h));
                 }
-                let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, strip_budget, &prog)?;
+                let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, total, &prog)?;
+                // when the memory is tight the planner takes memory from the photo cache and, if needed, lowers the blend levels
+                cache.lock().unwrap().set_capacity(job.cache_bytes);
+                if job.levels_used < job.levels_wanted {
+                    eprintln!("export: blend levels lowered from {} to {} to fit into the memory ({:.2} GB for the whole export)", job.levels_wanted, job.levels_used, crate::sysmem::gb(total));
+                }
                 let wo = crate::strip_write::WriteOptions::new(format, job.rows);
                 // the unfinished file is written next to the final one (hidden, ".<name>.partial.<ext>")
                 write_atomically(&path, &stop, |tmp| {
@@ -330,7 +334,8 @@ impl PanoApp {
                     let (w, h) = (wi as f64, hi as f64);
                     ui.label(format!("{w:.0} × {h:.0} px  ({:.1} megapixels)", w * h / 1e6));
                     match self.strip_estimate() {
-                        Some(Ok(p)) => {
+                        Some(Ok(f)) => {
+                            let p = f.plan;
                             let free = crate::sysmem::available().map(|f| format!(", {:.1} GB free", crate::sysmem::gb(f))).unwrap_or_default();
                             let how = if p.count == 1 { "in one piece".to_string() } else { format!("in {} strips", p.count) };
                             ui.label(
@@ -338,6 +343,16 @@ impl PanoApp {
                                     .small()
                                     .color(MUTED),
                             );
+                            if f.levels < f.levels_wanted {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Not enough free memory for {} blend levels at this size: {} are used (the blending zones get narrower, the seams stay where they are). Choose a smaller size or close other programs for the full quality.",
+                                        f.levels_wanted, f.levels
+                                    ))
+                                    .small()
+                                    .color(WARN),
+                                );
+                            }
                         }
                         Some(Err(e)) => {
                             ui.label(RichText::new(e).color(BAD));
