@@ -130,6 +130,11 @@ impl PanoApp {
         // keep points of disabled photos, replace the rest
         let mut cps: Vec<ControlPoint> = self.cps.iter().filter(|c| !(active.contains(&c.a) && active.contains(&c.b))).copied().collect();
         cps.extend(a.cps);
+        // outliers the alignment dropped can be brought back; changed errors are no step
+        let removed = self.cps.len().saturating_sub(cps.len());
+        if removed > 0 {
+            self.push_undo(&format!("alignment removing {removed} outlier points"));
+        }
         self.cps = cps;
         self.aligned = true;
         self.needs_align = false;

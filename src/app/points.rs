@@ -71,10 +71,10 @@ impl PanoApp {
             self.delete_selected();
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.pe.pending = None;
-        }
-        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z)) && !ui.ctx().egui_wants_keyboard_input() {
-            self.undo_last();
+            // Esc cancels a half-placed point first, otherwise it leaves the tool
+            if self.pe.pending.take().is_none() {
+                self.pe.tool = PointTool::Edit;
+            }
         }
     }
 
@@ -117,27 +117,40 @@ impl PanoApp {
             {
                 self.run_pair_points();
             }
-            let add_txt = if self.pe.adding { "✔ Done adding" } else { "➕ Add point" };
             if ui
-                .add(egui::Button::selectable(self.pe.adding, add_txt))
+                .add(egui::Button::selectable(self.pe.tool == PointTool::Edit, "↖ Select / edit"))
+                .on_hover_text("Click a point to select it, drag it to move it, Delete removes it. Dragging empty space moves the photo, the wheel zooms.")
+                .clicked()
+            {
+                self.pe.tool = PointTool::Edit;
+                self.pe.pending = None;
+            }
+            let adding = self.pe.tool == PointTool::Add;
+            let add_txt = if adding { "✔ Done adding" } else { "➕ Add point" };
+            if ui
+                .add(egui::Button::selectable(adding, add_txt))
                 .on_hover_text("Click a spot in one photo, then the same spot in the other. Points snap to the exact spot automatically.")
                 .clicked()
             {
-                self.pe.adding = !self.pe.adding;
+                self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::Add);
                 self.pe.pending = None;
             }
-            ui.checkbox(&mut self.auto_grow, "then find more automatically");
+            if self.pe.tool == PointTool::Add {
+                ui.checkbox(&mut self.auto_grow, "then find more automatically");
+            }
             if ui
-                .add(egui::Button::selectable(self.click.on, "🎯 Patch click"))
+                .add(egui::Button::selectable(self.pe.tool == PointTool::PatchClick, "🎯 Patch click"))
                 .on_hover_text("Click roughly the same spot left and right: the spot is refined by patch matching (also with different zoom) and more matching patches around it are proposed.")
                 .clicked()
             {
-                self.click.on = !self.click.on;
-                self.pe.adding = false;
+                self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::PatchClick);
                 self.pe.pending = None;
             }
-            if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("↶ Undo")).on_hover_text(self.undo.last().map(|u| format!("Undo {} (Ctrl+Z)", u.what)).unwrap_or_default()).clicked() {
+            if ui.add_enabled(self.undo.can_undo(), egui::Button::new("↶ Undo")).on_hover_text(self.undo.undo_label().map(|w| format!("Undo {w} (Ctrl+Z)")).unwrap_or_default()).clicked() {
                 self.undo_last();
+            }
+            if ui.add_enabled(self.undo.can_redo(), egui::Button::new("↷ Redo")).on_hover_text(self.undo.redo_label().map(|w| format!("Redo {w} (Ctrl+Y)")).unwrap_or_default()).clicked() {
+                self.redo_last();
             }
             if ui.button("🕸 Connections").on_hover_text("Which photos are joined by points, which overlapping pairs have too few").clicked() {
                 self.show_graph = !self.show_graph;
@@ -153,9 +166,9 @@ impl PanoApp {
                 self.delete_selected();
             }
             if ui.button("Delete all in this pair").clicked() {
-                self.cps.retain(|c| !((c.a == a && c.b == b) || (c.a == b && c.b == a)));
+                let n = self.cps.iter().filter(|c| (c.a == a && c.b == b) || (c.a == b && c.b == a)).count();
+                self.edit_cps(&format!("deleting {n} points of photos {}/{}", a + 1, b + 1), |s| s.cps.retain(|c| !((c.a == a && c.b == b) || (c.a == b && c.b == a))));
                 self.pe.selected = None;
-                self.needs_align = true;
             }
             if ui.button("🔍 Check overlap").on_hover_text("Lay the two photos over each other: blend, difference, checkerboard, shift arrows").clicked() {
                 self.show_overlap = !self.show_overlap;
@@ -177,8 +190,8 @@ impl PanoApp {
                 if ui.add_enabled(on, egui::Button::new("Clean up")).clicked() {
                     let before = self.cps.len();
                     let t = self.err_threshold;
-                    self.cps.retain(|c| c.err <= t);
-                    self.needs_align = true;
+                    let n = self.cps.iter().filter(|c| c.err > t).count();
+                    self.edit_cps(&format!("cleaning up {n} points"), |s| s.cps.retain(|c| c.err <= t));
                     self.pe.selected = None;
                     let removed = before - self.cps.len();
                     self.set_status(format!("Removed {removed} points. Re-align in step 3 to update."), MUTED);
@@ -189,7 +202,8 @@ impl PanoApp {
 
     /// Hint line under the toolbar (or the strip of the patch click mode).
     fn points_hint(&mut self, ui: &mut egui::Ui) {
-        let hint = if self.pe.adding {
+        let adding = self.pe.tool == PointTool::Add;
+        let hint = if adding {
             match self.pe.pending {
                 Some((Pane::A, _)) => "Now click the same spot in the RIGHT photo – it snaps to the exact spot.",
                 Some((Pane::B, _)) => "Now click the same spot in the LEFT photo – it snaps to the exact spot.",
@@ -198,10 +212,10 @@ impl PanoApp {
         } else {
             "Scroll to zoom, drag the photo to move it, double-click to fit. Click a point to select it: red = match window, dashed white = search area. Drag it to move it (edges are shown, it snaps to the exact spot), Delete removes it."
         };
-        if self.click.on {
+        if self.pe.tool == PointTool::PatchClick {
             self.click_panel(ui);
         } else {
-            ui.label(RichText::new(hint).small().color(if self.pe.adding { ACCENT } else { MUTED }));
+            ui.label(RichText::new(hint).small().color(if adding { ACCENT } else { MUTED }));
         }
     }
 }

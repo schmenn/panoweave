@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod align;
+mod duplicate_points;
 mod crashlog;
 mod app;
 mod engine;

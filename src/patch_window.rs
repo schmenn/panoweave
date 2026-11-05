@@ -365,6 +365,8 @@ pub struct PatchWindow {
     pub no_save: bool,
     /// automated runs: scroll the detail view to this offset
     pub demo_scroll: Option<f32>,
+    /// Ctrl+Z / Ctrl+Y typed in this window (the app undoes / redoes the control points)
+    pub undo_request: Option<crate::app::history::UndoKey>,
     pano_key: String,
     save_now: bool,
     /// focus the window once after it was opened
@@ -508,6 +510,7 @@ impl PatchWindow {
             pano_key: String::new(),
             save_now: false,
             focus_once: false,
+            undo_request: None,
             saved: s.clone(),
             builder_pos: s.pos,
             builder_size: s.size,
@@ -659,6 +662,10 @@ impl PatchWindow {
                 }
             }
             self.ui(ui, pc);
+            // Ctrl+Z / Ctrl+Y act on the control points; the app performs the step
+            if let Some(k) = crate::app::history::read_undo_key(ui.ctx()) {
+                self.undo_request = Some(k);
+            }
         });
         let running = self.info.phase == Phase::Running || !self.thumb_pending.is_empty() || !self.full_pending.is_empty() || self.export.is_some();
         if running {

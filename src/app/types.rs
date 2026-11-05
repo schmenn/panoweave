@@ -164,18 +164,41 @@ pub(super) enum PaneEvent {
     DragEnd,
 }
 
+/// The one tool of the point editor: what a click into a photo does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(super) enum PointTool {
+    /// Select / drag points.
+    #[default]
+    Edit,
+    /// Place a point by clicking the same spot in both photos.
+    Add,
+    /// Rough click pair refined by patch matching.
+    PatchClick,
+}
+
+impl PointTool {
+    /// The tool after a tool button was pressed: the active one again leads back to `Edit`,
+    /// another one replaces it (never two at once).
+    pub(super) fn toggle(current: PointTool, pressed: PointTool) -> PointTool {
+        if current == pressed { PointTool::Edit } else { pressed }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct PointEditor {
     pub(super) a: usize,
     pub(super) b: usize,
     pub(super) selected: Option<usize>,
-    pub(super) adding: bool,
+    /// What a click into a photo does (radio-button style, see `PointTool::toggle`).
+    pub(super) tool: PointTool,
     pub(super) pending: Option<(Pane, [f64; 2])>,
     pub(super) dragging: Option<(usize, Pane)>,
     pub(super) panning: Option<Pane>,
     pub(super) views: [PaneView; 2],
     /// photo half whose point gets searched (the other one keeps its spot)
     pub(super) moving: Option<Pane>,
+    /// the points as they were when the current drag of a point started (one undo step per drag)
+    pub(super) drag_before: Option<CpSnapshot>,
 }
 
 /// Matching window of the selected point: which half stays, and the local zoom/rotation
@@ -299,6 +322,11 @@ pub struct PanoApp {
     pub(super) cp_sort: (CpCol, bool),
     pub(super) cp_only_pair: bool,
     pub(super) cp_min_err: f64,
+    /// marking of control points that lie on top of each other (list window)
+    pub(super) dup_cfg: crate::duplicate_points::DupConfig,
+    pub(super) cp_only_dups: bool,
+    /// result of the duplicate check with a fingerprint of the points it was made for
+    pub(super) dup_cache: Option<(u64, Vec<crate::duplicate_points::Duplicate>)>,
     /// sorted rows of the control point list and the number within each pair (cached)
     pub(super) cp_rows_cache: Option<(String, Vec<usize>, Vec<usize>)>,
     pub(super) render_started: bool,
@@ -325,7 +353,8 @@ pub struct PanoApp {
     /// patch click mode of the point editor
     pub(super) click: ClickState,
     pub(super) click_cfg: crate::click_match::ClickConfig,
-    pub(super) undo: Vec<UndoEntry>,
+    /// undo / redo of the control points (every window feeds the same one)
+    pub(super) undo: super::history::History<CpSnapshot>,
     /// mask painting window
     pub(super) mk: super::masks_ui::MaskUi,
     /// secondary windows as real OS windows (position and size remembered)
@@ -335,15 +364,28 @@ pub struct PanoApp {
 /// Patch click mode: the two rough clicks and the last result (suggestions).
 #[derive(Default)]
 pub(super) struct ClickState {
-    pub(super) on: bool,
     pub(super) a: Option<P2>,
     pub(super) b: Option<P2>,
     pub(super) result: Option<crate::click_match::ClickResult>,
 }
 
-/// One step that can be undone in the point editor (points and the open suggestions).
-pub(super) struct UndoEntry {
-    pub(super) what: String,
+/// The state of the control points (and the open patch click suggestions) at one moment.
+pub(super) struct CpSnapshot {
     pub(super) cps: Vec<ControlPoint>,
     pub(super) result: Option<crate::click_match::ClickResult>,
+}
+
+#[cfg(test)]
+mod point_tool_tests {
+    use super::PointTool::{self, *};
+
+    #[test]
+    fn toggle_is_radio_like() {
+        assert_eq!(PointTool::toggle(Edit, Add), Add);
+        assert_eq!(PointTool::toggle(Add, PatchClick), PatchClick);
+        assert_eq!(PointTool::toggle(PatchClick, Add), Add);
+        assert_eq!(PointTool::toggle(Add, Add), Edit);
+        assert_eq!(PointTool::toggle(PatchClick, PatchClick), Edit);
+        assert_eq!(PointTool::default(), Edit);
+    }
 }

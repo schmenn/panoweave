@@ -1,30 +1,125 @@
 use super::*;
 
 impl PanoApp {
+    /// The control points and the open suggestions as they are now.
+    pub(super) fn cp_snapshot(&self) -> CpSnapshot {
+        CpSnapshot { cps: self.cps.clone(), result: self.click.result.clone() }
+    }
+
+    /// Records the state before a change that is about to happen for sure. Prefer `edit_cps`,
+    /// which also skips the step when nothing changed.
     pub(super) fn push_undo(&mut self, what: &str) {
-        self.undo.push(UndoEntry { what: what.to_string(), cps: self.cps.clone(), result: self.click.result.clone() });
-        if self.undo.len() > UNDO_DEPTH {
-            self.undo.remove(0);
+        let before = self.cp_snapshot();
+        self.undo.push(what, before);
+    }
+
+    /// Records `before` as an undo step if the points (or the open suggestions) differ from now.
+    /// Returns whether a step was recorded; an unchanged list never makes an empty step.
+    pub(super) fn commit_undo(&mut self, what: &str, before: CpSnapshot) -> bool {
+        if same_points(&before.cps, &self.cps) && before.result.is_some() == self.click.result.is_some() {
+            return false;
         }
+        self.undo.push(what, before);
+        true
+    }
+
+    /// Runs a change of the control points as exactly one undo step (none if it changed nothing).
+    pub(super) fn edit_cps(&mut self, what: &str, change: impl FnOnce(&mut Self)) -> bool {
+        let before = self.cp_snapshot();
+        change(self);
+        let done = self.commit_undo(what, before);
+        if done {
+            self.needs_align = true;
+        }
+        done
+    }
+
+    fn restore_snapshot(&mut self, s: CpSnapshot) {
+        self.cps = s.cps;
+        self.click.result = s.result;
+        self.pe.selected = None;
+        self.pe.pending = None;
+        self.pe.dragging = None;
+        self.pe.drag_before = None;
+        // the lists in the point window are cached by a fingerprint: build them again
+        self.cp_rows_cache = None;
+        self.dup_cache = None;
+        self.needs_align = true;
     }
 
     pub(super) fn undo_last(&mut self) {
-        if let Some(u) = self.undo.pop() {
-            self.cps = u.cps;
-            self.click.result = u.result;
-            self.pe.selected = None;
-            self.needs_align = true;
-            self.set_status(format!("Undone: {}.", u.what), MUTED);
+        if self.busy() {
+            self.set_status("Please wait until the current task has finished, then undo.", WARN);
+            return;
+        }
+        let now = self.cp_snapshot();
+        match self.undo.undo(now) {
+            Some((what, prev)) => {
+                self.restore_snapshot(prev);
+                self.set_status(format!("Undone: {what}. Ctrl+Y brings it back."), MUTED);
+            }
+            None => self.set_status("Nothing to undo.", MUTED),
+        }
+    }
+
+    pub(super) fn redo_last(&mut self) {
+        if self.busy() {
+            self.set_status("Please wait until the current task has finished, then redo.", WARN);
+            return;
+        }
+        let now = self.cp_snapshot();
+        match self.undo.redo(now) {
+            Some((what, next)) => {
+                self.restore_snapshot(next);
+                self.set_status(format!("Redone: {what}."), MUTED);
+            }
+            None => self.set_status("Nothing to redo.", MUTED),
+        }
+    }
+
+    /// The one place where Ctrl+Z / Ctrl+Y act. Called once per frame at the end of the main
+    /// window; the secondary windows leave their key in `vp.undo_request` / `patch_win.undo_request`.
+    /// One key press makes one step, even if several windows saw it.
+    pub(super) fn handle_undo_keys(&mut self, ctx: &egui::Context) {
+        let mut key = std::mem::take(&mut self.vp.undo_request);
+        if let Some(k) = self.patch_win.undo_request.take() {
+            key = key.or(Some(k));
+        }
+        if self.mode == Mode::Panorama {
+            // the masks window keeps its own history and consumes its keys before this runs
+            key = key.or(super::history::read_undo_key(ctx));
+        }
+        match key {
+            Some(super::history::UndoKey::Undo) => self.undo_last(),
+            Some(super::history::UndoKey::Redo) => self.redo_last(),
+            None => {}
         }
     }
 
     pub(super) fn delete_selected(&mut self) {
         if let Some(k) = self.pe.selected.take() {
             if k < self.cps.len() {
-                self.cps.remove(k);
-                self.needs_align = true;
+                self.edit_cps("deleting a point", |s| {
+                    s.cps.remove(k);
+                });
             }
         }
+    }
+
+    /// Removes the points at `idx` (any order, duplicates allowed) as one undo step.
+    pub(super) fn delete_points(&mut self, mut idx: Vec<usize>, what: &str) {
+        idx.sort_unstable();
+        idx.dedup();
+        idx.retain(|&k| k < self.cps.len());
+        if idx.is_empty() {
+            return;
+        }
+        self.edit_cps(what, |s| {
+            for k in idx.into_iter().rev() {
+                s.cps.remove(k);
+            }
+        });
+        self.pe.selected = None;
     }
 
     pub(super) fn add_point_click(&mut self, pane: Pane, p: P2) {
@@ -78,6 +173,7 @@ impl PanoApp {
     pub(super) fn push_manual(&mut self, p1: Pane, n1: [f64; 2], n2: [f64; 2]) {
         let (a, b) = (self.pe.a, self.pe.b);
         let (pa, pb) = if p1 == Pane::A { (n1, n2) } else { (n2, n1) };
+        self.push_undo("adding a point");
         self.cps.push(ControlPoint::new(a, b, pa, pb, true));
         self.pe.selected = Some(self.cps.len() - 1);
         self.needs_align = true;
@@ -159,7 +255,7 @@ impl PanoApp {
                     v.center.y = v.center.y.clamp(0.0, g.h);
                 }
                 PaneEvent::Click(pane, pos) => {
-                    if self.click.on {
+                    if self.pe.tool == PointTool::PatchClick {
                         let p = px_of(pane, pos);
                         let (w, h) = (geo[pane.i()].w as f64, geo[pane.i()].h as f64);
                         if p.0 >= 0.0 && p.1 >= 0.0 && p.0 <= w - 1.0 && p.1 <= h - 1.0 {
@@ -175,7 +271,7 @@ impl PanoApp {
                             }
                             self.run_click();
                         }
-                    } else if self.pe.adding {
+                    } else if self.pe.tool == PointTool::Add {
                         let p = px_of(pane, pos);
                         let (w, h) = (geo[pane.i()].w as f64, geo[pane.i()].h as f64);
                         if p.0 >= -0.5 && p.1 >= -0.5 && p.0 <= w - 0.5 && p.1 <= h - 0.5 {
@@ -200,11 +296,13 @@ impl PanoApp {
                 }
                 PaneEvent::DragStart(pane, pos, primary) => {
                     self.pe.dragging = None;
+                    self.pe.drag_before = None;
                     self.pe.panning = None;
                     if primary {
                         if let Some(k) = nearest(pane, pos) {
                             self.pe.selected = Some(k);
                             self.pe.dragging = Some((k, pane));
+                            self.pe.drag_before = Some(self.cp_snapshot());
                             self.pe.moving = Some(pane);
                             continue;
                         }
@@ -237,9 +335,86 @@ impl PanoApp {
                     if let Some((k, pane)) = self.pe.dragging.take() {
                         self.snap_point(k, pane);
                     }
+                    // the whole drag (and the snap) is one step, none if the point did not move
+                    if let Some(before) = self.pe.drag_before.take() {
+                        self.commit_undo("moving a point", before);
+                    }
                     self.pe.panning = None;
                 }
             }
         }
+    }
+}
+
+/// Same points in the same order (position, photos, kind, weight, hand-placed). The alignment
+/// error and the patch-match results are derived values and do not count as a change.
+pub(super) fn same_points(a: &[ControlPoint], b: &[ControlPoint]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.a == y.a && x.b == y.b && x.pa == y.pa && x.pb == y.pb && x.manual == y.manual && x.weight == y.weight && x.kind == y.kind)
+}
+
+#[cfg(test)]
+mod undo_tests {
+    use super::super::masks_tests::app_with_photos;
+    use super::*;
+
+    fn pts(n: usize) -> Vec<ControlPoint> {
+        (0..n)
+            .map(|i| {
+                let mut c = ControlPoint::new(0, 1, [i as f64 * 0.01, 0.1], [0.2, i as f64 * 0.02], i % 3 == 0);
+                c.err = i as f64;
+                c.weight = 1.0 + i as f64;
+                c
+            })
+            .collect()
+    }
+
+    fn setup() -> PanoApp {
+        let mut app = app_with_photos(2);
+        app.cps = pts(8);
+        app.needs_align = false;
+        app
+    }
+
+    #[test]
+    fn delete_undo_restores_exactly_and_redo_deletes_again() {
+        let mut app = setup();
+        let orig = app.cps.clone();
+        app.delete_points(vec![5, 1, 1, 7], "deleting 3 points");
+        assert_eq!(app.cps.len(), 5);
+        assert!(app.needs_align);
+        app.needs_align = false;
+        app.undo_last();
+        assert_eq!(app.cps.len(), 8);
+        for (x, y) in app.cps.iter().zip(&orig) {
+            assert!(x.a == y.a && x.b == y.b && x.pa == y.pa && x.pb == y.pb && x.err == y.err && x.manual == y.manual && x.weight == y.weight);
+        }
+        assert!(app.needs_align && app.cp_rows_cache.is_none() && app.dup_cache.is_none());
+        app.redo_last();
+        assert_eq!(app.cps.len(), 5);
+        assert_eq!(app.cps[1].pa, orig[2].pa);
+    }
+
+    #[test]
+    fn new_change_after_undo_drops_redo_and_nothing_changed_is_no_step() {
+        let mut app = setup();
+        app.delete_points(vec![0], "deleting a point");
+        app.undo_last();
+        assert!(app.undo.can_redo());
+        // nothing to delete: no step, redo stays
+        app.delete_points(vec![99], "deleting a point");
+        assert!(app.undo.can_redo() && !app.undo.can_undo());
+        assert!(!app.edit_cps("noop", |_| {}));
+        app.edit_cps("adding a point", |s| s.cps.push(ControlPoint::new(0, 1, [0.0; 2], [0.0; 2], true)));
+        assert!(!app.undo.can_redo() && app.undo.can_undo());
+        assert_eq!(app.cps.len(), 9);
+        app.undo_last();
+        assert_eq!(app.cps.len(), 8);
+    }
+
+    #[test]
+    fn only_derived_values_changing_is_no_step() {
+        let mut app = setup();
+        assert!(!app.edit_cps("aligning", |s| s.cps.iter_mut().for_each(|c| c.err += 1.0)));
+        assert!(!app.undo.can_undo());
     }
 }

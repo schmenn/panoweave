@@ -82,11 +82,35 @@ impl PanoApp {
         self.pe.views[1] = PaneView { zoom: 4.0, center: Vec2::new(pb.0 as f32 + 0.5, pb.1 as f32 + 0.5), key: c.b + 1 };
     }
 
+    /// The points lying on top of each other, cached until the points or the settings change.
+    fn duplicates(&mut self) -> Vec<crate::duplicate_points::Duplicate> {
+        if !self.dup_cfg.enabled {
+            return Vec::new();
+        }
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.cps.len().hash(&mut h);
+        self.dup_cfg.tolerance_px.to_bits().hash(&mut h);
+        for c in &self.cps {
+            (c.a, c.b, c.manual, c.kind as u8, c.pa[0].to_bits(), c.pa[1].to_bits(), c.pb[0].to_bits(), c.pb[1].to_bits(), c.err.to_bits()).hash(&mut h);
+        }
+        let key = h.finish();
+        if let Some((k, d)) = &self.dup_cache {
+            if *k == key {
+                return d.clone();
+            }
+        }
+        let d = crate::duplicate_points::find(&self.cps, &self.dup_cfg);
+        self.dup_cache = Some((key, d.clone()));
+        d
+    }
+
     pub(super) fn cp_list_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_cp_list;
         let mut jump: Option<usize> = None;
         let mut delete: Vec<usize> = Vec::new();
-        let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None };
+        let mut removing_dups = false;
+        let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None, undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
@@ -101,8 +125,34 @@ impl PanoApp {
                         });
                     });
                 });
+                // points on top of each other (recomputed only when the points or the settings changed)
+                let dups = self.duplicates();
+                let dup_of: HashMap<usize, crate::duplicate_points::Duplicate> = dups.iter().map(|d| (d.point, *d)).collect();
+                let removable = crate::duplicate_points::removable(&self.cps, &dups);
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.dup_cfg.enabled, "find points on top of each other");
+                    ui.add_enabled_ui(self.dup_cfg.enabled, |ui| {
+                        ui.label("closer than");
+                        ui.add(egui::DragValue::new(&mut self.dup_cfg.tolerance_px).range(0.1..=20.0).speed(0.05).suffix(" px"));
+                        ui.checkbox(&mut self.cp_only_dups, "only those");
+                    });
+                });
+                if self.dup_cfg.enabled {
+                    let (same, contra) = (dups.iter().filter(|d| d.kind == crate::duplicate_points::DupKind::Same).count(), dups.iter().filter(|d| d.kind == crate::duplicate_points::DupKind::Contradicts).count());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(format!("{same} twice on the same spot · {contra} on the same spot in one photo but not in the other")).small().color(if dups.is_empty() { MUTED } else { WARN }));
+                        if ui
+                            .add_enabled(!removable.is_empty(), egui::Button::new(format!("🗑 Remove {} duplicates", removable.len())))
+                            .on_hover_text("Removes the second point of every pair that lies on the same spot in both photos. The better point stays (placed by hand first, then the smaller error). Points placed by hand are never removed, and points that only agree in one photo are only marked.")
+                            .clicked()
+                        {
+                            delete.extend(removable.iter().copied());
+                            removing_dups = true;
+                        }
+                    });
+                }
                 let cache_key = format!(
-                    "{}-{}-{}-{}-{}-{}-{}-{}",
+                    "{}-{}-{}-{}-{}-{}-{}-{}-{}-{}",
                     self.cps.len(),
                     self.align_version,
                     self.cp_sort.0 as u8,
@@ -110,7 +160,9 @@ impl PanoApp {
                     self.cp_only_pair,
                     pa,
                     pb,
-                    self.cp_min_err
+                    self.cp_min_err,
+                    self.cp_only_dups && self.dup_cfg.enabled,
+                    self.dup_cache.as_ref().map_or(0, |c| c.0)
                 );
                 let cached = self.cp_rows_cache.as_ref().filter(|c| c.0 == cache_key).map(|c| (c.1.clone(), c.2.clone()));
                 let (rows, pair_no) = if let Some(c) = cached { c } else {
@@ -119,7 +171,8 @@ impl PanoApp {
                         let c = &self.cps[k];
                         let pair_ok = !self.cp_only_pair || (c.a == pa && c.b == pb) || (c.a == pb && c.b == pa);
                         let err_ok = !self.aligned || c.err >= self.cp_min_err;
-                        pair_ok && err_ok
+                        let dup_ok = !(self.cp_only_dups && self.dup_cfg.enabled) || dup_of.contains_key(&k);
+                        pair_ok && err_ok && dup_ok
                     })
                     .collect();
                 // number of each point within its photo pair (the original's "P CP#" column)
@@ -211,10 +264,13 @@ impl PanoApp {
                         let (rect, resp) = ui.allocate_exact_size(Vec2::new(total_w, row_h), Sense::click());
                         let sel = self.pe.selected == Some(k);
                         let p = ui.painter();
+                        let dup = dup_of.get(&k);
                         if sel {
                             p.rect_filled(rect, 3.0, ACCENT_DARK);
                         } else if resp.hovered() {
                             p.rect_filled(rect, 3.0, Color32::from_rgb(48, 52, 61));
+                        } else if dup.is_some() {
+                            p.rect_filled(rect, 0.0, Color32::from_rgb(64, 48, 24));
                         } else if r % 2 == 1 {
                             p.rect_filled(rect, 0.0, Color32::from_rgb(32, 34, 40));
                         }
@@ -249,6 +305,13 @@ impl PanoApp {
                             p.with_clip_rect(clip).text(Pos2::new(x, rect.center().y), Align2::LEFT_CENTER, t, FontId::proportional(13.0), *col);
                             x += widths[i];
                         }
+                        if let Some(d) = dup {
+                            let what = match d.kind {
+                                crate::duplicate_points::DupKind::Same => "lies on the same spot as",
+                                crate::duplicate_points::DupKind::Contradicts => "lies on the same spot in one photo, but not in the other, as",
+                            };
+                            resp.clone().on_hover_text(format!("Point {} {} point {}", k + 1, what, d.other + 1));
+                        }
                         if resp.clicked() {
                             jump = Some(k);
                         }
@@ -263,14 +326,10 @@ impl PanoApp {
         if !delete.is_empty() {
             delete.sort_unstable();
             delete.dedup();
-            for k in delete.into_iter().rev() {
-                if k < self.cps.len() {
-                    self.cps.remove(k);
-                }
-            }
-            self.pe.selected = None;
-            self.needs_align = true;
-            self.set_status("Points deleted. Align again (step 3) to update.", MUTED);
+            let n = delete.len();
+            let what = if removing_dups { format!("removing {n} duplicates") } else if n == 1 { "deleting a control point".to_string() } else { format!("deleting {n} points") };
+            self.delete_points(delete, &what);
+            self.set_status(format!("Done: {what}. Ctrl+Z brings the points back. Align again (step 3) to update."), MUTED);
         }
     }
 
@@ -280,7 +339,7 @@ impl PanoApp {
         let mut open = self.show_overlap;
         let (a, b) = (self.pe.a, self.pe.b);
         let mut redraw = false;
-        let spec = WinSpec { key: "overlap", title: "Overlap check".into(), size: [820.0, 640.0], min_size: [420.0, 320.0], fill: None };
+        let spec = WinSpec { key: "overlap", title: "Overlap check".into(), size: [820.0, 640.0], min_size: [420.0, 320.0], fill: None, undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
@@ -500,7 +559,7 @@ impl PanoApp {
         let groups = image_groups(n, &active, &act_cps);
         let mut action: Option<(u8, usize, usize)> = None;
         let mut photo_choice = None;
-        let spec = WinSpec { key: "graph", title: "Connections between the photos".into(), size: [760.0, 640.0], min_size: [420.0, 320.0], fill: Some(PANEL) };
+        let spec = WinSpec { key: "graph", title: "Connections between the photos".into(), size: [760.0, 640.0], min_size: [420.0, 320.0], fill: Some(PANEL), undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
@@ -682,11 +741,10 @@ impl PanoApp {
                 self.pe.pending = None;
                 self.step = Step::Points;
                 if manual {
-                    self.click.on = true;
+                    self.pe.tool = PointTool::PatchClick;
                     self.click.a = None;
                     self.click.b = None;
                     self.click.result = None;
-                    self.pe.adding = false;
                 }
             }
             Some((1, a, b)) => self.run_pair_recheck(a, b),
@@ -696,7 +754,7 @@ impl PanoApp {
 
     pub(super) fn help_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_help;
-        let spec = WinSpec { key: "help", title: "How PanoWeave works".into(), size: [520.0, 420.0], min_size: [360.0, 240.0], fill: None };
+        let spec = WinSpec { key: "help", title: "How PanoWeave works".into(), size: [520.0, 420.0], min_size: [360.0, 240.0], fill: None, undo_keys: false };
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {

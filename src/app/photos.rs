@@ -146,6 +146,8 @@ impl PanoApp {
         if i < self.gain_maps.len() {
             self.gain_maps.remove(i);
         }
+        // photo numbers shift: older steps would point at the wrong photos
+        self.undo.clear();
         self.cps.retain(|c| c.a != i && c.b != i);
         for c in self.cps.iter_mut() {
             if c.a > i {
@@ -167,6 +169,7 @@ impl PanoApp {
         self.photos.clear();
         self.lenses.clear();
         self.cps.clear();
+        self.undo.clear();
         self.gains.clear();
         self.gain_maps.clear();
         self.view = PanoView::default();
@@ -258,6 +261,7 @@ impl PanoApp {
         }
         self.fields = pf.photos.iter().map(|pp| pp.field.clone().map(Arc::new)).collect();
         self.cps = pf.cps;
+        self.undo.clear();
         self.view = pf.view;
         self.aligned = pf.aligned;
         self.matched = !self.cps.is_empty();
