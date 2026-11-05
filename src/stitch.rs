@@ -930,6 +930,11 @@ pub struct StripJob {
     pub count: usize,
     /// planned peak memory of one strip in bytes
     pub peak_bytes: u64,
+    /// blend levels asked for and used (fewer when the memory is tight, see `strip::fit`)
+    pub levels_wanted: usize,
+    pub levels_used: usize,
+    /// bytes the photo cache may keep
+    pub cache_bytes: u64,
     blend: Blend,
     margin: usize,
     levels: usize,
@@ -957,6 +962,7 @@ pub fn prepare_strips(
     budget: u64,
     prog: &Progress,
 ) -> Result<StripJob, String> {
+    // `budget` is the whole memory of the export (strips and photo cache)
     let cb = view.crop_bounds();
     let aspect = (cb[1] - cb[0]) / (cb[3] - cb[2]);
     let w = out_w.max(16);
@@ -973,7 +979,8 @@ pub fn prepare_strips(
     }
     let qual = if ro.prefer_detail { quality_factors(&details) } else { vec![1.0; count] };
     let levels = if ro.levels > 0 { ro.levels.min(auto_levels(w, h)) } else { auto_levels(w, h) };
-    let plan = crate::strip::plan(w, h, levels, blend, budget, cfg)?;
+    let fit = crate::strip::fit(w, h, levels, blend, budget, cfg)?;
+    let (plan, levels) = (fit.plan, fit.levels);
     // the seam finder decides once for the whole panorama, so the picture does not depend on the strips
     let labels = if blend == Blend::Smooth {
         let cancelled = || prog.cancel.load(Ordering::Relaxed) || crate::engine::cancelled();
@@ -982,7 +989,7 @@ pub fn prepare_strips(
     } else {
         None
     };
-    Ok(StripJob { blend, labels, w, h, rows: plan.rows, count: plan.count, peak_bytes: plan.peak_bytes, margin: plan.margin, levels, fill_extra: cfg.fill_extra_levels, ro: *ro, m, vr, qual, photo_rows })
+    Ok(StripJob { blend, labels, w, h, rows: plan.rows, count: plan.count, peak_bytes: plan.peak_bytes, levels_wanted: fit.levels_wanted, levels_used: levels, cache_bytes: fit.cache_bytes, margin: plan.margin, levels, fill_extra: cfg.fill_extra_levels, ro: *ro, m, vr, qual, photo_rows })
 }
 
 impl StripJob {

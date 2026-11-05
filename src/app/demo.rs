@@ -221,7 +221,9 @@ impl PanoApp {
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if self.frames > 6000 && demo_clock().elapsed() > std::time::Duration::from_secs(DEMO_TIMEOUT_S) && !self.shot_requested {
+            // experiments with very large exports: PW_DEMO_TIMEOUT=<seconds> raises the limit
+            let timeout_s = std::env::var("PW_DEMO_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(DEMO_TIMEOUT_S);
+            if self.frames > 6000 && demo_clock().elapsed() > std::time::Duration::from_secs(timeout_s) && !self.shot_requested {
                 // never hang forever
                 self.shot_requested = true;
                 let slot = self.shot_data.clone();
