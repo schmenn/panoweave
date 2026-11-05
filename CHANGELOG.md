@@ -6,6 +6,7 @@
 - Export: filling the gaps around the photo edges (`fill_holes`) now uses all CPU cores. The picture is identical pixel by pixel, a 13459x10541 px export took 227 s instead of 263 s.
 
 ### Added
+- Control point list: points that lie on top of each other are found and marked (orange rows, hover says which point). Two points of a photo pair on the same spot in both photos are duplicates; the button "Remove N duplicates" removes the worse one of each (hand-placed points stay, nothing is removed without the click). Points that agree in only one photo are marked as contradicting, not removed. Switch and tolerance (default 2 px of the working image) are in the list window, "only those" filters the list.
 - Export with little free memory: when not even the smallest strip fits, the photo cache gives up memory first and then the number of blend levels goes down (not below 3). The export dialog says so, the log names the reason. With enough memory nothing changes. `PW_DEMO_TIMEOUT=<seconds>` raises the time limit of the demo runs.
 - The export plans with 1.4 times the strip memory it counted before (`StripConfig::memory_factor`): measured on two runs, the program used 1.40 and 1.38 times the planned strip memory (no fixed part), so the old estimate missed temporary copies. This holds on any computer; the budget itself still follows the free memory. The log line of an export now shows the program's memory at the start and its highest value during the export.
 
