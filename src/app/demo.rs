@@ -140,7 +140,7 @@ impl PanoApp {
                 }
                 "patchclick" => {
                     self.step = Step::Points;
-                    self.click.on = true;
+                    self.pe.tool = PointTool::PatchClick;
                     if self.click.a.is_none() && self.click.result.is_none() {
                         // rough clicks: a real point of the pair, the right one 12 px off
                         let (a, b) = (2.min(self.photos.len() - 2), 3.min(self.photos.len() - 1));
