@@ -29,6 +29,8 @@ Everything not saved in a file of this project is lost when the session ends. A 
 
 At session start read `local/HANDOVER.md`, `PLAN.md`, `WORKFLOW.md` and compare them with `git log` and `gh pr list`; at session end bring `HANDOVER.md` up to date. Details: `local/WORKFLOW.md`, section "Wissen sichern".
 
+Every subagent must read this file and `local/WORKFLOW.md` before it starts, and these rules override its default instructions (also for commit and PR texts: no session links, no "Generated with" line).
+
 ## Working rules
 
 - Work on a feature branch (`feature/…`, `fix/…`, `docs/…`, `chore/…`), open a PR, merge (squash) after the CI is green and the contributor agrees. Never commit to `main` directly, no `--force`, no `--no-verify`.
