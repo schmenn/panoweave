@@ -118,6 +118,7 @@ impl PanoApp {
         }
         self.gains = vec![[1.0; 3]; self.photos.len()];
         self.gain_maps = vec![None; self.photos.len()];
+        self.lens_models = vec![None; self.photos.len()];
         if let Some(pf) = self.pending_project.take() {
             self.apply_project(pf);
             self.set_status(format!("Project opened with {} photos.", self.photos.len()), GOOD);
@@ -145,6 +146,9 @@ impl PanoApp {
         self.gains.remove(i);
         if i < self.gain_maps.len() {
             self.gain_maps.remove(i);
+        }
+        if i < self.lens_models.len() {
+            self.lens_models.remove(i);
         }
         // photo numbers shift: older steps would point at the wrong photos
         self.undo.clear();

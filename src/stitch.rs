@@ -225,6 +225,8 @@ pub struct RenderPhoto {
     pub gain: [f32; 3],
     /// smooth brightness correction across the photo on top of `gain` (None: `gain` only)
     pub gain_map: Option<Arc<crate::gainmap::GainMap>>,
+    /// response curve and vignetting of the photo's lens, applied before `gain` (None: nothing)
+    pub photometry: Option<crate::lensphoto::LensModel>,
     /// long side of the ORIGINAL photo in pixels (its real resolution; `w`/`h` may describe a
     /// smaller working copy)
     pub full_long: f64,
@@ -318,6 +320,25 @@ impl RenderPhoto {
                 [self.gain[0] * c[0], self.gain[1] * c[1], self.gain[2] * c[2]]
             }
         }
+    }
+
+    /// The sampled linear colour `c` at the photo position (`x`, `y`) with the lens model applied
+    /// (unchanged without one). Positions as in `gain_at`.
+    #[inline]
+    pub fn photometry_at(&self, c: [f32; 3], x: f32, y: f32) -> [f32; 3] {
+        match &self.photometry {
+            None => c,
+            Some(m) => m.apply(c, x, y, self.w as f32, self.h as f32),
+        }
+    }
+
+    /// The sampled linear colour `c` at the photo position as it goes into the panorama: lens
+    /// model, then `gain_at`. Without a lens model exactly `c * gain_at(x, y)`.
+    #[inline]
+    pub fn shade(&self, c: [f32; 3], x: f32, y: f32) -> [f32; 3] {
+        let c = self.photometry_at(c, x, y);
+        let g = self.gain_at(x, y);
+        [c[0] * g[0], c[1] * g[1], c[2] * g[2]]
     }
 
     /// Pixels per radian of the original photo.
@@ -488,9 +509,9 @@ pub fn render_preview(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usiz
                 if let Some((x, y, wt)) = p.lookup(d) {
                     let c = sample_rgb_linear(&p.img, x, y);
                     let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[pi];
-                    let g = p.gain_at(x, y);
+                    let c = p.shade(c, x, y);
                     for k in 0..3 {
-                        acc[k] += c[k] * g[k] * wt;
+                        acc[k] += c[k] * wt;
                     }
                     ws += wt;
                 }
@@ -607,7 +628,7 @@ pub fn compute_gains(photos: &[RenderPhoto], view: &PanoView) -> Vec<[f32; 3]> {
             for (k, p) in photos.iter().enumerate() {
                 if let Some((x, y, wt)) = p.lookup(d) {
                     if wt > 0.05 {
-                        v.push((k, sample_rgb_linear(&p.img, x, y)));
+                        v.push((k, p.photometry_at(sample_rgb_linear(&p.img, x, y), x, y)));
                     }
                 }
             }
@@ -797,9 +818,9 @@ pub fn render_final(
                         if let Some((x, y, wt)) = p.lookup(d) {
                             let c = sample(&p.img, x, y);
                             let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[i];
-                            let g = p.gain_at(x, y);
+                            let c = p.shade(c, x, y);
                             for k in 0..3 {
-                                ar[px][k] += c[k] * g[k] * wt;
+                                ar[px][k] += c[k] * wt;
                             }
                             wr[px] += wt;
                         }
@@ -889,8 +910,7 @@ pub fn render_final(
                             let Some(d) = m.dir(px, py) else { continue };
                             if let Some((x, y, _)) = p.lookup(d) {
                                 let c = sample(&p.img, x, y);
-                                let g = p.gain_at(x, y);
-                                ir[px] = [c[0] * g[0], c[1] * g[1], c[2] * g[2]];
+                                ir[px] = p.shade(c, x, y);
                                 vr_[px] = 1.0;
                                 if best[py * w + px] == i as u16 {
                                     mr[px] = 1.0;
@@ -1110,15 +1130,15 @@ fn compute_labels(
                 let sc = if ro.prefer_detail { seam_score(q, wt) } else { wt };
                 let score = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
                 let c = sample_rgb_linear(&p.img, (x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5);
-                let to8 = |v: f32, g: f32| (crate::imgutil::linear_to_srgb(v * g) * 255.0 + 0.5) as u8;
-                let g = p.gain_at(x, y);
+                let to8 = |v: f32| (crate::imgutil::linear_to_srgb(v) * 255.0 + 0.5) as u8;
+                let c = p.shade(c, x, y);
                 let flags = VALID
                     | match p.mask_at(x, y) {
                         crate::masks::POSITIVE => crate::seams::POSITIVE,
                         crate::masks::NEGATIVE => crate::seams::NEGATIVE,
                         _ => 0,
                     };
-                *out = Sample { rgb: [to8(c[0], g[0]), to8(c[1], g[1]), to8(c[2], g[2])], flags, score };
+                *out = Sample { rgb: [to8(c[0]), to8(c[1]), to8(c[2])], flags, score };
             }
         });
         photos.push(pb);
@@ -1204,9 +1224,9 @@ fn feather_window(
                 if let Some((x, y, wt)) = p.lookup(d) {
                     let c = sample(&p.img, x, y);
                     let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[i];
-                    let g = p.gain_at(x, y);
+                    let c = p.shade(c, x, y);
                     for k in 0..3 {
-                        ar[px][k] += c[k] * g[k] * wt;
+                        ar[px][k] += c[k] * wt;
                     }
                     wr[px] += wt;
                 }
@@ -1311,8 +1331,7 @@ fn smooth_window(
                 let Some(d) = m.dir(px, py) else { continue };
                 if let Some((x, y, _)) = p.lookup(d) {
                     let c = sample(&p.img, x, y);
-                    let g = p.gain_at(x, y);
-                    ir[px] = [c[0] * g[0], c[1] * g[1], c[2] * g[2]];
+                    ir[px] = p.shade(c, x, y);
                     vr_[px] = 1.0;
                     if best[wy * w + px] == i as u16 {
                         mr[px] = 1.0;
@@ -1839,6 +1858,7 @@ mod strip_tests {
                     field: None,
                     gain: [1.0 + 0.05 * i as f32, 1.0, 1.0 - 0.03 * i as f32],
                     gain_map: None,
+                    photometry: None,
                     full_long: if detail_boost && i == 1 { 600.0 } else { 300.0 },
                     trusted: true,
                     mask: None,
@@ -2022,6 +2042,7 @@ mod strip_tests {
                 field: None,
                 gain: [1.0; 3],
                 gain_map: None,
+                photometry: None,
                 full_long: 300.0,
                 trusted: true,
                 mask: None,

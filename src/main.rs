@@ -20,6 +20,7 @@ mod patch_viz;
 mod patch_window;
 mod photo_cache;
 mod imgutil;
+mod lensphoto;
 mod project;
 mod sample;
 #[allow(dead_code)] // the painting tool in the UI uses the rest
@@ -509,6 +510,7 @@ fn selftest_run(files: Vec<PathBuf>) {
             lens: r.lenses[lens_of[i]],
             gain: [1.0; 3],
             gain_map: None,
+            photometry: None,
             field: fields.get(i).cloned().flatten(),
             full_long: p.w.max(p.h) as f64,
             trusted: true,

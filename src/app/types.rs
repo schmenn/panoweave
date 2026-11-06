@@ -240,6 +240,9 @@ pub struct PanoApp {
     /// smooth brightness correction per photo (not saved: worked out again from the photos)
     pub(super) gain_maps: Vec<Option<Arc<GainMap>>>,
     pub(super) gainmap_cfg: crate::gainmap::GainMapConfig,
+    /// response curve and vignetting per photo (from the model of its lens; not saved: worked out again)
+    pub(super) lens_models: Vec<Option<crate::lensphoto::LensModel>>,
+    pub(super) lens_cfg: crate::lensphoto::LensPhotoConfig,
     pub(super) view: PanoView,
     pub(super) aligned: bool,
     pub(super) matched: bool,

@@ -18,6 +18,8 @@ impl PanoApp {
             gains: vec![],
             gain_maps: vec![],
             gainmap_cfg: crate::gainmap::GainMapConfig::default(),
+            lens_models: vec![],
+            lens_cfg: crate::lensphoto::LensPhotoConfig::default(),
             view: PanoView::default(),
             aligned: false,
             matched: false,
