@@ -240,6 +240,7 @@ fn build_layer(p: &RenderPhoto, m: &Mapper, w: usize, h: usize, cfg: &GainMapCon
             let c = sample_rgb_linear(&p.img, x, y);
             if c.iter().all(|&v| v > lims.0 && v < lims.1) {
                 let i = py * w + px;
+                let c = p.photometry_at(c, x, y);
                 raw[i] = [c[0] * p.gain[0], c[1] * p.gain[1], c[2] * p.gain[2]];
                 valid[i] = true;
                 pos[i] = [(x + 0.5) / p.w as f32, (y + 0.5) / p.h as f32];
@@ -305,26 +306,74 @@ struct RawObs {
     d: [f32; 3],
 }
 
-fn collect_obs(layers: &[Option<Layer>], photos: &[RenderPhoto], w: usize, h: usize, cfg: &GainMapConfig) -> Vec<RawObs> {
-    let grids: Vec<(usize, usize)> = photos.iter().map(|p| grid_size(p.w, p.h, cfg.grid_long)).collect();
+/// Calls `f(a, la, ia, b, lb, ib)` for every pair of photos that both see a comparison spot
+/// (fixed order: rows, columns, photo numbers).
+fn for_each_pair<'a>(layers: &'a [Option<Layer>], w: usize, h: usize, cfg: &GainMapConfig, mut f: impl FnMut(usize, &'a Layer, usize, usize, &'a Layer, usize)) {
     let stride = cfg.stride.max(1);
-    let mut obs = Vec::new();
     for py in (0..h).step_by(stride) {
         for px in (0..w).step_by(stride) {
             let cover: Vec<(usize, usize)> = layers.iter().enumerate().filter_map(|(k, l)| l.as_ref().and_then(|l| l.at(px, py)).map(|i| (k, i))).take(cfg.max_cover.max(2)).collect();
             for (ai, &(a, ia)) in cover.iter().enumerate() {
                 for &(b, ib) in &cover[ai + 1..] {
-                    let (la, lb) = (layers[a].as_ref().unwrap(), layers[b].as_ref().unwrap());
-                    let (va, vb) = (la.lin[ia], lb.lin[ib]);
-                    let d = [0, 1, 2].map(|k| vb[k].max(1e-6).ln() - va[k].max(1e-6).ln());
-                    let (ca, wa) = cell(la.pos[ia][0], la.pos[ia][1], grids[a].0, grids[a].1);
-                    let (cb, wb) = cell(lb.pos[ib][0], lb.pos[ib][1], grids[b].0, grids[b].1);
-                    obs.push(RawObs { a, b, ca, wa, cb, wb, d });
+                    f(a, layers[a].as_ref().unwrap(), ia, b, layers[b].as_ref().unwrap(), ib);
                 }
             }
         }
     }
+}
+
+fn collect_obs(layers: &[Option<Layer>], photos: &[RenderPhoto], w: usize, h: usize, cfg: &GainMapConfig) -> Vec<RawObs> {
+    let grids: Vec<(usize, usize)> = photos.iter().map(|p| grid_size(p.w, p.h, cfg.grid_long)).collect();
+    let mut obs = Vec::new();
+    for_each_pair(layers, w, h, cfg, |a, la, ia, b, lb, ib| {
+        let (va, vb) = (la.lin[ia], lb.lin[ib]);
+        let d = [0, 1, 2].map(|k| vb[k].max(1e-6).ln() - va[k].max(1e-6).ln());
+        let (ca, wa) = cell(la.pos[ia][0], la.pos[ia][1], grids[a].0, grids[a].1);
+        let (cb, wb) = cell(lb.pos[ib][0], lb.pos[ib][1], grids[b].0, grids[b].1);
+        obs.push(RawObs { a, b, ca, wa, cb, wb, d });
+    });
     obs
+}
+
+/// One spot seen by two photos: photo numbers, positions (fractions of the photo) and the
+/// lightly blurred linear colour (with the photo's factor and lens model, if any).
+pub struct PairSample {
+    pub a: usize,
+    pub b: usize,
+    pub pa: [f32; 2],
+    pub pb: [f32; 2],
+    pub va: [f32; 3],
+    pub vb: [f32; 3],
+}
+
+/// The small panorama the comparisons are made on and every photo's usable view of it (None: cancelled).
+fn preview_layers(photos: &[RenderPhoto], view: &PanoView, cfg: &GainMapConfig) -> Option<(Vec<Option<Layer>>, usize, usize)> {
+    let aspect = view.aspect().clamp(0.05, 50.0);
+    let w = cfg.preview_width.max(16);
+    let h = ((w as f64 / aspect).round() as usize).clamp(8, 1600);
+    let m = Mapper::new(view, view.bounds, w, h);
+    let lims = clip_limits_linear();
+    let layers: Vec<Option<Layer>> = photos.par_iter().map(|p| build_layer(p, &m, w, h, cfg, lims)).collect();
+    if crate::engine::cancelled() {
+        return None;
+    }
+    Some((layers, w, h))
+}
+
+/// The same comparisons the gain maps are solved from (flat, well exposed spots in the overlaps,
+/// thinned to `cfg.max_obs`), for fits of other models (`lensphoto`). Empty when cancelled.
+pub fn pair_samples(photos: &[RenderPhoto], view: &PanoView, cfg: &GainMapConfig) -> Vec<PairSample> {
+    if photos.len() < 2 {
+        return Vec::new();
+    }
+    let Some((layers, w, h)) = preview_layers(photos, view, cfg) else { return Vec::new() };
+    let mut out = Vec::new();
+    for_each_pair(&layers, w, h, cfg, |a, la, ia, b, lb, ib| out.push(PairSample { a, b, pa: la.pos[ia], pb: lb.pos[ib], va: la.lin[ia], vb: lb.lin[ib] }));
+    if out.len() <= cfg.max_obs.max(1) {
+        return out;
+    }
+    let step = out.len().div_ceil(cfg.max_obs.max(1));
+    out.into_iter().enumerate().filter(|(i, _)| i % step == 0).map(|(_, o)| o).collect()
 }
 
 /// Thins `obs` evenly (deterministic) down to at most `max` entries.
@@ -345,15 +394,7 @@ pub fn compute_gain_maps(photos: &[RenderPhoto], view: &PanoView, cfg: &GainMapC
     if n < 2 || !cfg.enabled {
         return none();
     }
-    let aspect = view.aspect().clamp(0.05, 50.0);
-    let w = cfg.preview_width.max(16);
-    let h = ((w as f64 / aspect).round() as usize).clamp(8, 1600);
-    let m = Mapper::new(view, view.bounds, w, h);
-    let lims = clip_limits_linear();
-    let layers: Vec<Option<Layer>> = photos.par_iter().map(|p| build_layer(p, &m, w, h, cfg, lims)).collect();
-    if crate::engine::cancelled() {
-        return none();
-    }
+    let Some((layers, w, h)) = preview_layers(photos, view, cfg) else { return none() };
     if std::env::var("PW_GM_DEBUG").is_ok() {
         let ok: Vec<usize> = layers.iter().map(|l| l.as_ref().map_or(0, |l| l.ok.iter().filter(|&&v| v).count())).collect();
         eprintln!("gain maps: flat usable pixels per photo {ok:?}");
@@ -443,6 +484,8 @@ fn report_pairs(obs: &[RawObs], first: &[usize], x: [&Vec<f64>; 3], n: usize) {
     // (count, sum of d, sum of d - prediction) per pair and channel
     let mut pairs: BTreeMap<(usize, usize), (usize, [f64; 3], [f64; 3])> = BTreeMap::new();
     let mut per_photo = vec![0usize; n];
+    // squared differences of the single comparisons before / after
+    let mut sq = [0.0f64; 2];
     for o in obs {
         let e = pairs.entry((o.a.min(o.b), o.a.max(o.b))).or_default();
         let sign = if o.a < o.b { 1.0 } else { -1.0 };
@@ -453,11 +496,24 @@ fn report_pairs(obs: &[RawObs], first: &[usize], x: [&Vec<f64>; 3], n: usize) {
             let pred: f64 = (0..4).map(|j| o.wa[j] as f64 * x[c][first[o.a] + o.ca[j]] - o.wb[j] as f64 * x[c][first[o.b] + o.cb[j]]).sum();
             e.1[c] += sign * o.d[c] as f64;
             e.2[c] += sign * (o.d[c] as f64 - pred);
+            sq[0] += (o.d[c] as f64).powi(2);
+            sq[1] += (o.d[c] as f64 - pred).powi(2);
         }
     }
     let mut rows: Vec<_> = pairs.iter().map(|(k, v)| (*k, v.0, v.1.map(|s| s / v.0 as f64), v.2.map(|s| s / v.0 as f64))).collect();
     rows.sort_by(|a, b| b.3.iter().map(|v| v.abs()).fold(0.0, f64::max).partial_cmp(&a.3.iter().map(|v| v.abs()).fold(0.0, f64::max)).unwrap_or(std::cmp::Ordering::Equal));
     eprintln!("gain maps: comparisons per photo {per_photo:?}");
+    let worst = |v: &[f64; 3]| v.iter().map(|v| v.abs()).fold(0.0, f64::max);
+    let np = rows.len().max(1) as f64;
+    let m = (obs.len() * 3).max(1) as f64;
+    eprintln!(
+        "gain maps: all {} pairs: mean of the worst channel |mean ln(Ib/Ia)| before {:.4} after {:.4}; rms of single comparisons before {:.4} after {:.4}",
+        rows.len(),
+        rows.iter().map(|r| worst(&r.2)).sum::<f64>() / np,
+        rows.iter().map(|r| worst(&r.3)).sum::<f64>() / np,
+        (sq[0] / m).sqrt(),
+        (sq[1] / m).sqrt()
+    );
     eprintln!("gain maps: pair (a,b) n | mean ln(Ib/Ia) before RGB | after RGB   (worst first)");
     for ((a, b), cnt, before, after) in rows.iter().take(12) {
         eprintln!("  ({a:2},{b:2}) {cnt:5} | {:+.3} {:+.3} {:+.3} | {:+.3} {:+.3} {:+.3}", before[0], before[1], before[2], after[0], after[1], after[2]);

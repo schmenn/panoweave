@@ -436,6 +436,7 @@ impl PanoApp {
                             lens: self.lenses[self.photos[i].lens],
                             gain: if self.match_brightness { self.gains.get(i).copied().unwrap_or([1.0; 3]) } else { [1.0; 3] },
                             gain_map: self.gain_map_of(i),
+                            photometry: self.photometry_of(i),
                             field: self.fields.get(i).cloned().flatten(),
                             full_long: self.photos[i].long(),
                             trusted: true,

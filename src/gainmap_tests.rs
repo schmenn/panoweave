@@ -31,6 +31,7 @@ fn scene(yaws: &[f64], changes: Vec<Change>, blob: bool) -> (Vec<RenderPhoto>, P
             field: None,
             gain: [1.0; 3],
             gain_map: None,
+            photometry: None,
             full_long: PW as f64,
             trusted: true,
             mask: None,

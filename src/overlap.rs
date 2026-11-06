@@ -86,8 +86,7 @@ impl Prepared {
     pub fn sample(&self, d: [f64; 3]) -> Option<[f32; 3]> {
         let (px, py, _) = self.photo.lookup(d)?;
         let c = imgutil::sample_rgb_linear(&self.photo.img, (px + 0.5) * self.sx - 0.5, (py + 0.5) * self.sy - 0.5);
-        let g = self.photo.gain_at(px, py);
-        Some([c[0] * g[0], c[1] * g[1], c[2] * g[2]])
+        Some(self.photo.shade(c, px, py))
     }
 }
 
@@ -361,7 +360,7 @@ mod tests {
                 img.put_pixel(x, y, image::Rgb([v, v, v]));
             }
         }
-        RenderPhoto { img: Arc::new(img), w: l, h: l, rot: ID, lens, field: None, gain: [1.0; 3], gain_map: None, full_long: l, trusted: true, mask: None }
+        RenderPhoto { img: Arc::new(img), w: l, h: l, rot: ID, lens, field: None, gain: [1.0; 3], gain_map: None, photometry: None, full_long: l, trusted: true, mask: None }
     }
 
     /// Two photos of the same scene, exactly fitting, one with 4 times the pixels per angle.
