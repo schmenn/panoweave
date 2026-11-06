@@ -120,6 +120,9 @@ impl PanoApp {
             {
                 self.run_pair_points();
             }
+        });
+        // Row 2: tools and history. Every row below holds only normal-height widgets, so wrapped lines keep one height.
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add(egui::Button::selectable(self.pe.tool == PointTool::Edit, "↖ Select / edit"))
                 .on_hover_text("Click a point to select it, drag it to move it, Delete removes it. Dragging empty space moves the photo, the wheel zooms.")
@@ -158,13 +161,18 @@ impl PanoApp {
             if ui.button("🕸 Connections").on_hover_text("Which photos are joined by points, which overlapping pairs have too few").clicked() {
                 self.show_graph = !self.show_graph;
             }
-            ui.separator();
+        });
+        // Row 3: matching parameters.
+        ui.horizontal_wrapped(|ui| {
             ui.label("Match window").on_hover_text("Size of the patch around a point that is compared between the two photos (red frame).");
             if ui.add(egui::DragValue::new(&mut self.tpl_size).range(7..=81).speed(0.5).suffix(" px")).changed() {
                 self.tpl_size |= 1;
             }
             ui.label("Search area").on_hover_text("How far around a clicked spot the matching spot is searched (dashed frame), in % of the photo width, at most 500 px.");
             ui.add(egui::DragValue::new(&mut self.search_pct).range(1.0..=50.0).speed(0.2).suffix(" %"));
+        });
+        // Row 4: actions on points and views.
+        ui.horizontal_wrapped(|ui| {
             if ui.add_enabled(self.pe.selected.is_some(), egui::Button::new("🗑 Delete point")).clicked() {
                 self.delete_selected();
             }
@@ -199,7 +207,9 @@ impl PanoApp {
                 self.pe.views.swap(0, 1);
                 self.pe.pending = None;
             }
-            ui.separator();
+        });
+        // Row 5: clean up by alignment error.
+        ui.horizontal_wrapped(|ui| {
             {
                 let on = self.aligned;
                 ui.add_enabled(on, egui::Label::new("Remove points worse than"));
