@@ -771,7 +771,7 @@ impl PanoApp {
             ui.label("2. Matching points – spots that appear in two photos. Found automatically; you can add, move or delete them. Clicking a spot in the left photo finds the partner spot for you.");
             ui.label("3. Align – works out where each photo was pointing, the lens field of view and distortion. Wrong matches are removed automatically.");
             ui.label("4. Frame & crop – choose the projection, drag to move the view, scroll to zoom, drag the white frame to crop.");
-            ui.label("5. Save – choose size and file type. Smooth seams blend every detail level separately so seams disappear.");
+            ui.label("5. Export – choose size and file type. Smooth seams blend every detail level separately so seams disappear.");
             ui.add_space(6.0);
             ui.label(RichText::new("Exposure blend").strong());
             ui.label("Merge photos of the same view taken at different exposures into one evenly lit picture.");
