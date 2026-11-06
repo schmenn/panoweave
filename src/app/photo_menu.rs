@@ -113,7 +113,7 @@ impl PanoApp {
             PhotoAction::EditMasks => {
                 self.open_masks_for(i);
                 if self.blend != Blend::Smooth {
-                    self.set_status("Masks only steer Smooth seams: choose them in the Save step.", WARN);
+                    self.set_status("Masks only steer Smooth seams: choose them in the Export step.", WARN);
                 }
             }
             PhotoAction::ClearMasks => {

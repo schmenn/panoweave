@@ -17,7 +17,7 @@ impl Step {
             Step::Points => "Matching points",
             Step::Align => "Align",
             Step::Frame => "Frame & crop",
-            Step::Export => "Save",
+            Step::Export => "Export",
         }
     }
 }

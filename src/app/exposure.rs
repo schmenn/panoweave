@@ -185,7 +185,7 @@ impl PanoApp {
                         self.fusion_out_path = p.to_string_lossy().to_string();
                     }
                 }
-                if primary_button(ui, "💾  Save blended picture", !self.busy() && self.brackets.len() >= 2).clicked() {
+                if primary_button(ui, "Export blended picture", !self.busy() && self.brackets.len() >= 2).clicked() {
                     self.run_fusion_export();
                 }
                 if self.fusion_rx.is_some() {

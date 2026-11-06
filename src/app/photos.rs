@@ -444,7 +444,7 @@ impl PanoApp {
                     for (t, d) in [
                         ("1 · Add photos", "Shoot from one spot, turning the camera."),
                         ("2 · Create panorama", "One click finds points, aligns and frames."),
-                        ("3 · Fine-tune & save", "Adjust the frame, fix points if needed."),
+                        ("3 · Fine-tune & export", "Adjust the frame, fix points if needed."),
                     ] {
                         egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(RADIUS_CARD)).inner_margin(egui::Margin::same(CARD_MARGIN)).show(ui, |ui| {
                             ui.set_width(230.0 - 2.0 * CARD_MARGIN as f32);

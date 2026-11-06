@@ -25,7 +25,7 @@ impl PanoApp {
                     JobMsg::Aligned(a) => self.on_aligned(a),
                     JobMsg::Rendered(r) => match r {
                         Ok((p, ms, w, h)) => {
-                            self.set_status(format!("Panorama saved ({w} × {h} px) in {}: {}", fmt_ms(ms), p.display()), GOOD);
+                            self.set_status(format!("Panorama exported ({w} × {h} px) in {}: {}", fmt_ms(ms), p.display()), GOOD);
                             self.last_output = Some(p);
                             // the patch comparison data are released after the export
                             crate::patch_store::STORE.free_after_export();
@@ -61,7 +61,7 @@ impl PanoApp {
                     JobMsg::ClickMatched(r) => self.on_click_matched(*r),
                     JobMsg::FusedSaved(r) => match r {
                         Ok((p, ms)) => {
-                            self.set_status(format!("Blended picture saved in {}: {}", fmt_ms(ms), p.display()), GOOD);
+                            self.set_status(format!("Blended picture exported in {}: {}", fmt_ms(ms), p.display()), GOOD);
                             self.last_output = Some(p);
                         }
                         Err(e) => self.set_status(format!("Blending stopped: {e}"), BAD),

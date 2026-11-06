@@ -470,7 +470,7 @@ impl PanoApp {
                     self.mask_button(ui);
                 });
                 ui.add_space(10.0);
-                if primary_button(ui, "💾  Create panorama file", !self.busy()).clicked() {
+                if primary_button(ui, "Export panorama", !self.busy()).clicked() {
                     self.run_render();
                 }
                 if let Some(p) = self.last_output.clone() {
