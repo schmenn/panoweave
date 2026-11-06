@@ -19,6 +19,16 @@ PanoWeave (crate `panoweave`, Rust 2024 + egui/eframe) is a from-scratch alterna
 
 Keep notes for later sessions in these files, not only in the conversation. See `local/README.md`.
 
+### Nothing survives a session unless it is written down
+
+Everything not saved in a file of this project is lost when the session ends. A promise like "I will pay attention from now on" is worthless unless it is written down. Claude's own memory is not used for this project; use `local/` (private) or this file (for rules that apply to every contributor). Write at once, not at the end:
+
+- decisions and wishes of the contributor (date, short wording), corrections of Claude's behaviour or language, why something was dropped or parked;
+- state of PRs, branches and worktrees, and what the contributor has or has not tested;
+- commands, paths and pitfalls that cost time.
+
+At session start read `local/HANDOVER.md`, `PLAN.md`, `WORKFLOW.md` and compare them with `git log` and `gh pr list`; at session end bring `HANDOVER.md` up to date. Details: `local/WORKFLOW.md`, section "Wissen sichern".
+
 ## Working rules
 
 - Work on a feature branch (`feature/…`, `fix/…`, `docs/…`, `chore/…`), open a PR, merge (squash) after the CI is green and the contributor agrees. Never commit to `main` directly, no `--force`, no `--no-verify`.
