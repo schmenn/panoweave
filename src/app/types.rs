@@ -325,6 +325,8 @@ pub struct PanoApp {
     /// marking of control points that lie on top of each other (list window)
     pub(super) dup_cfg: crate::duplicate_points::DupConfig,
     pub(super) cp_only_dups: bool,
+    /// list filter: only protected points
+    pub(super) cp_only_locked: bool,
     /// result of the duplicate check with a fingerprint of the points it was made for
     pub(super) dup_cache: Option<(u64, Vec<crate::duplicate_points::Duplicate>)>,
     /// sorted rows of the control point list and the number within each pair (cached)

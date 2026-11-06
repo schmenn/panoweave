@@ -180,7 +180,8 @@ impl PanoApp {
                     painter.line_segment([s - d * (r + 6.0), s - d * 3.0], Stroke::new(1.4, Color32::WHITE));
                     painter.line_segment([s + d * 3.0, s + d * (r + 6.0)], Stroke::new(1.4, Color32::WHITE));
                 }
-                let info = if self.aligned { format!("#{} · {:.2} px", num + 1, c.err) } else { format!("#{}", num + 1) };
+                let lock = if c.locked { "🔒 " } else { "" };
+                let info = if self.aligned { format!("{lock}#{} · {:.2} px", num + 1, c.err) } else { format!("{lock}#{}", num + 1) };
                 painter.text(s + Vec2::new(14.0, -14.0), Align2::LEFT_BOTTOM, info, FontId::proportional(12.5), Color32::WHITE);
             } else {
                 painter.circle_stroke(s, 6.0, Stroke::new(1.5, Color32::BLACK));
@@ -189,6 +190,9 @@ impl PanoApp {
                 } else {
                     // control area: small square
                     painter.rect_stroke(Rect::from_center_size(s, Vec2::splat(8.0)), 0.0, Stroke::new(1.4, col), StrokeKind::Middle);
+                }
+                if c.locked {
+                    painter.text(s + Vec2::new(7.0, 7.0), Align2::LEFT_TOP, "🔒", FontId::proportional(11.0), Color32::WHITE);
                 }
                 if v.zoom > 2.5 {
                     painter.text(s + Vec2::new(7.0, -7.0), Align2::LEFT_BOTTOM, format!("{}", num + 1), FontId::proportional(11.0), col);

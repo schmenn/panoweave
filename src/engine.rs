@@ -277,7 +277,7 @@ pub fn find_points(
             (i, j, cps)
         })
         .collect();
-    let mut cps: Vec<ControlPoint> = keep_manual.iter().filter(|c| c.manual).copied().collect();
+    let mut cps: Vec<ControlPoint> = keep_manual.iter().filter(|c| c.manual || c.locked).copied().collect();
     let mut stats = Vec::new();
     for (a, b, c) in results {
         if !c.is_empty() {
@@ -319,7 +319,7 @@ pub fn statistical_outliers(cps: &[ControlPoint]) -> Vec<bool> {
         let (m, sd) = mean_sd(&errs);
         let lim = m + OUTLIER_SIGMA * sd;
         for &k in idx {
-            if cps[k].err > lim && !cps[k].manual {
+            if cps[k].err > lim && !cps[k].manual && !cps[k].locked {
                 rm[k] = true;
             }
         }
@@ -328,7 +328,7 @@ pub fn statistical_outliers(cps: &[ControlPoint]) -> Vec<bool> {
     let (m, sd) = mean_sd(&rest);
     let lim = m + OUTLIER_SIGMA * sd;
     for k in 0..n {
-        if !rm[k] && cps[k].err > lim && !cps[k].manual {
+        if !rm[k] && cps[k].err > lim && !cps[k].manual && !cps[k].locked {
             rm[k] = true;
         }
     }
@@ -530,6 +530,15 @@ mod tests {
     fn manual_points_are_never_removed() {
         let mut cps: Vec<ControlPoint> = (0..10).map(|_| err_cp(0, 1, 1.0, false)).collect();
         cps.push(err_cp(0, 1, 50.0, true));
+        assert!(statistical_outliers(&cps).iter().all(|r| !r));
+    }
+
+    #[test]
+    fn protected_points_are_never_flagged_as_outliers() {
+        let mut cps: Vec<ControlPoint> = (0..10).map(|_| err_cp(0, 1, 1.0, false)).collect();
+        let mut bad = err_cp(0, 1, 50.0, false);
+        bad.locked = true;
+        cps.push(bad);
         assert!(statistical_outliers(&cps).iter().all(|r| !r));
     }
 

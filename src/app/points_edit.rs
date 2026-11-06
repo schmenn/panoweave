@@ -97,6 +97,12 @@ impl PanoApp {
     }
 
     pub(super) fn delete_selected(&mut self) {
+        if let Some(k) = self.pe.selected {
+            if self.cps.get(k).is_some_and(|c| c.locked) {
+                self.set_status("This point is protected: press L (or the lock button) to unlock it first.", WARN);
+                return;
+            }
+        }
         if let Some(k) = self.pe.selected.take() {
             if k < self.cps.len() {
                 self.edit_cps("deleting a point", |s| {
@@ -106,13 +112,15 @@ impl PanoApp {
         }
     }
 
-    /// Removes the points at `idx` (any order, duplicates allowed) as one undo step.
-    pub(super) fn delete_points(&mut self, mut idx: Vec<usize>, what: &str) {
+    /// Removes the points at `idx` (any order, duplicates allowed) as one undo step. Protected
+    /// points are never removed; returns how many of them were kept.
+    pub(super) fn delete_points(&mut self, mut idx: Vec<usize>, what: &str) -> usize {
         idx.sort_unstable();
         idx.dedup();
         idx.retain(|&k| k < self.cps.len());
+        let (idx, kept) = crate::align::split_protected(&self.cps, idx);
         if idx.is_empty() {
-            return;
+            return kept;
         }
         self.edit_cps(what, |s| {
             for k in idx.into_iter().rev() {
@@ -120,6 +128,15 @@ impl PanoApp {
             }
         });
         self.pe.selected = None;
+        kept
+    }
+
+    /// Locks or unlocks the selected point (one undo step).
+    pub(super) fn toggle_lock_selected(&mut self) {
+        let Some(k) = self.pe.selected.filter(|&k| k < self.cps.len()) else { return };
+        let lock = !self.cps[k].locked;
+        self.edit_cps(if lock { "protecting a point" } else { "unlocking a point" }, |s| s.cps[k].locked = lock);
+        self.set_status(if lock { "Point protected: no bulk action touches it, and it can't be deleted or moved until unlocked." } else { "Point unlocked." }, MUTED);
     }
 
     pub(super) fn add_point_click(&mut self, pane: Pane, p: P2) {
@@ -301,6 +318,11 @@ impl PanoApp {
                     if primary {
                         if let Some(k) = nearest(pane, pos) {
                             self.pe.selected = Some(k);
+                            if self.cps[k].locked {
+                                self.set_status("This point is protected: press L (or the lock button) to unlock it before moving it.", WARN);
+                                self.pe.panning = Some(pane);
+                                continue;
+                            }
                             self.pe.dragging = Some((k, pane));
                             self.pe.drag_before = Some(self.cp_snapshot());
                             self.pe.moving = Some(pane);
@@ -349,7 +371,7 @@ impl PanoApp {
 /// Same points in the same order (position, photos, kind, weight, hand-placed). The alignment
 /// error and the patch-match results are derived values and do not count as a change.
 pub(super) fn same_points(a: &[ControlPoint], b: &[ControlPoint]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.a == y.a && x.b == y.b && x.pa == y.pa && x.pb == y.pb && x.manual == y.manual && x.weight == y.weight && x.kind == y.kind)
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.a == y.a && x.b == y.b && x.pa == y.pa && x.pb == y.pb && x.manual == y.manual && x.locked == y.locked && x.weight == y.weight && x.kind == y.kind)
 }
 
 #[cfg(test)]
@@ -392,6 +414,31 @@ mod undo_tests {
         app.redo_last();
         assert_eq!(app.cps.len(), 5);
         assert_eq!(app.cps[1].pa, orig[2].pa);
+    }
+
+    #[test]
+    fn protected_points_survive_list_delete_and_locking_is_one_undo_step() {
+        let mut app = setup();
+        app.cps[2].locked = true;
+        let kept = app.delete_points(vec![1, 2, 3], "deleting 3 points");
+        assert_eq!(kept, 1);
+        assert_eq!(app.cps.len(), 6);
+        assert!(app.cps.iter().any(|c| c.locked));
+        // single delete of a protected point is refused
+        let k = app.cps.iter().position(|c| c.locked).unwrap();
+        app.pe.selected = Some(k);
+        app.delete_selected();
+        assert_eq!(app.cps.len(), 6);
+        // unlock = one undo step, undo protects again
+        app.toggle_lock_selected();
+        assert!(!app.cps[k].locked);
+        app.undo_last();
+        assert!(app.cps[k].locked);
+        app.redo_last();
+        assert!(!app.cps[k].locked);
+        app.pe.selected = Some(k);
+        app.delete_selected();
+        assert_eq!(app.cps.len(), 5);
     }
 
     #[test]

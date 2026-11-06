@@ -8,7 +8,7 @@ impl PanoApp {
         self.auto_chain = chain;
         let grays: Vec<Arc<Gray>> = self.photos.iter().map(|p| p.gray.clone()).collect();
         let works: Vec<Arc<RgbImage>> = self.photos.iter().map(|p| p.work.clone()).collect();
-        let manual: Vec<ControlPoint> = self.cps.iter().filter(|c| c.manual).copied().collect();
+        let manual: Vec<ControlPoint> = self.cps.iter().filter(|c| c.manual || c.locked).copied().collect();
         let settings = self.match_settings;
         self.start_job("Finding matching points", move |report, _| {
             JobMsg::Matched(engine::find_points(&works, &grays, &manual, settings, report))
@@ -161,7 +161,7 @@ impl PanoApp {
         }
         let sel = self.pe.selected.and_then(|k| self.cps.get(k).copied());
         self.push_undo(&format!("finding points for photos {}/{}", a + 1, b + 1));
-        self.cps.retain(|c| c.manual || !((c.a == a && c.b == b) || (c.a == b && c.b == a)));
+        self.cps.retain(|c| c.manual || c.locked || !((c.a == a && c.b == b) || (c.a == b && c.b == a)));
         let n = cps.len();
         self.cps.extend(cps);
         self.matched = true;

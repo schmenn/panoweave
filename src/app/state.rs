@@ -90,6 +90,7 @@ impl PanoApp {
             cp_min_err: 0.0,
             dup_cfg: crate::duplicate_points::DupConfig::default(),
             cp_only_dups: false,
+            cp_only_locked: false,
             dup_cache: None,
             cp_rows_cache: None,
             render_started: false,
