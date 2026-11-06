@@ -125,6 +125,7 @@ impl PanoApp {
                         });
                     });
                 });
+                ui.checkbox(&mut self.cp_only_locked, "only protected (🔒)").on_hover_text("Protected points (key L in the point editor) are not touched by any bulk action.");
                 // points on top of each other (recomputed only when the points or the settings changed)
                 let dups = self.duplicates();
                 let dup_of: HashMap<usize, crate::duplicate_points::Duplicate> = dups.iter().map(|d| (d.point, *d)).collect();
@@ -152,7 +153,7 @@ impl PanoApp {
                     });
                 }
                 let cache_key = format!(
-                    "{}-{}-{}-{}-{}-{}-{}-{}-{}-{}",
+                    "{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}",
                     self.cps.len(),
                     self.align_version,
                     self.cp_sort.0 as u8,
@@ -162,6 +163,8 @@ impl PanoApp {
                     pb,
                     self.cp_min_err,
                     self.cp_only_dups && self.dup_cfg.enabled,
+                    self.cp_only_locked,
+                    self.cps.iter().filter(|c| c.locked).count(),
                     self.dup_cache.as_ref().map_or(0, |c| c.0)
                 );
                 let cached = self.cp_rows_cache.as_ref().filter(|c| c.0 == cache_key).map(|c| (c.1.clone(), c.2.clone()));
@@ -172,7 +175,8 @@ impl PanoApp {
                         let pair_ok = !self.cp_only_pair || (c.a == pa && c.b == pb) || (c.a == pb && c.b == pa);
                         let err_ok = !self.aligned || c.err >= self.cp_min_err;
                         let dup_ok = !(self.cp_only_dups && self.dup_cfg.enabled) || dup_of.contains_key(&k);
-                        pair_ok && err_ok && dup_ok
+                        let lock_ok = !self.cp_only_locked || c.locked;
+                        pair_ok && err_ok && dup_ok && lock_ok
                     })
                     .collect();
                 // number of each point within its photo pair (the original's "P CP#" column)
@@ -289,12 +293,16 @@ impl PanoApp {
                                 if c.score <= 0.0 { MUTED } else if c.score >= 0.8 { GOOD } else { WARN },
                             ),
                             (
-                                match (c.kind, c.manual) {
-                                    (CpKind::Area, _) => "area".into(),
-                                    (CpKind::AreaManual, _) => "area (hand)".into(),
-                                    (_, true) => "by hand".into(),
-                                    _ => "auto".into(),
-                                },
+                                format!(
+                                    "{}{}",
+                                    match (c.kind, c.manual) {
+                                        (CpKind::Area, _) => "area",
+                                        (CpKind::AreaManual, _) => "area (hand)",
+                                        (_, true) => "by hand",
+                                        _ => "auto",
+                                    },
+                                    if c.locked { " 🔒" } else { "" }
+                                ),
                                 if c.manual { ACCENT } else { MUTED },
                             ),
                             (format!("{:.1}, {:.1} → {:.1}, {:.1}", fa.0, fa.1, fb.0, fb.1), MUTED),
@@ -328,8 +336,8 @@ impl PanoApp {
             delete.dedup();
             let n = delete.len();
             let what = if removing_dups { format!("removing {n} duplicates") } else if n == 1 { "deleting a control point".to_string() } else { format!("deleting {n} points") };
-            self.delete_points(delete, &what);
-            self.set_status(format!("Done: {what}. Ctrl+Z brings the points back. Align again (step 3) to update."), MUTED);
+            let kept = self.delete_points(delete, &what);
+            self.set_status(format!("Done: {what}.{} Ctrl+Z brings the points back. Align again (step 3) to update.", crate::align::protected_note(kept)), MUTED);
         }
     }
 

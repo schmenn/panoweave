@@ -70,6 +70,9 @@ impl PanoApp {
         if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
             self.delete_selected();
         }
+        if ui.input(|i| i.key_pressed(egui::Key::L) && !i.modifiers.any()) && !ui.ctx().egui_wants_keyboard_input() {
+            self.toggle_lock_selected();
+        }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc cancels a half-placed point first, otherwise it leaves the tool
             if self.pe.pending.take().is_none() {
@@ -165,10 +168,24 @@ impl PanoApp {
             if ui.add_enabled(self.pe.selected.is_some(), egui::Button::new("🗑 Delete point")).clicked() {
                 self.delete_selected();
             }
+            let sel_locked = self.pe.selected.and_then(|k| self.cps.get(k)).map(|c| c.locked);
+            if ui
+                .add_enabled(sel_locked.is_some(), egui::Button::selectable(sel_locked == Some(true), "🔒 Protect"))
+                .on_hover_text("Protect the selected point (L): no bulk action deletes or changes it, and it can't be deleted or moved until unlocked.")
+                .clicked()
+            {
+                self.toggle_lock_selected();
+            }
             if ui.button("Delete all in this pair").clicked() {
-                let n = self.cps.iter().filter(|c| (c.a == a && c.b == b) || (c.a == b && c.b == a)).count();
-                self.edit_cps(&format!("deleting {n} points of photos {}/{}", a + 1, b + 1), |s| s.cps.retain(|c| !((c.a == a && c.b == b) || (c.a == b && c.b == a))));
+                let n = self.cps.iter().filter(|c| !c.locked && ((c.a == a && c.b == b) || (c.a == b && c.b == a))).count();
+                let mut kept = 0;
+                self.edit_cps(&format!("deleting {n} points of photos {}/{}", a + 1, b + 1), |s| {
+                    kept = crate::align::remove_unprotected(&mut s.cps, |c| (c.a == a && c.b == b) || (c.a == b && c.b == a));
+                });
                 self.pe.selected = None;
+                if kept > 0 {
+                    self.set_status(format!("Deleted {n} points.{}", crate::align::protected_note(kept)), MUTED);
+                }
             }
             if ui.button("🔍 Check overlap").on_hover_text("Lay the two photos over each other: blend, difference, checkerboard, shift arrows").clicked() {
                 self.show_overlap = !self.show_overlap;
@@ -190,11 +207,12 @@ impl PanoApp {
                 if ui.add_enabled(on, egui::Button::new("Clean up")).clicked() {
                     let before = self.cps.len();
                     let t = self.err_threshold;
-                    let n = self.cps.iter().filter(|c| c.err > t).count();
-                    self.edit_cps(&format!("cleaning up {n} points"), |s| s.cps.retain(|c| c.err <= t));
+                    let n = self.cps.iter().filter(|c| c.err > t && !c.locked).count();
+                    let mut kept = 0;
+                    self.edit_cps(&format!("cleaning up {n} points"), |s| kept = crate::align::remove_unprotected(&mut s.cps, |c| c.err > t));
                     self.pe.selected = None;
                     let removed = before - self.cps.len();
-                    self.set_status(format!("Removed {removed} points. Re-align in step 3 to update."), MUTED);
+                    self.set_status(format!("Removed {removed} points.{} Re-align in step 3 to update.", crate::align::protected_note(kept)), MUTED);
                 }
             }
         });

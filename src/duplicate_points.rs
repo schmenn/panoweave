@@ -110,10 +110,10 @@ pub fn find(cps: &[ControlPoint], cfg: &DupConfig) -> Vec<Duplicate> {
     out
 }
 
-/// The points that can be removed without losing information: exact duplicates that were not placed by hand.
+/// The points that can be removed without losing information: exact duplicates that were neither placed by hand nor protected.
 /// Sorted, without repeats.
 pub fn removable(cps: &[ControlPoint], dups: &[Duplicate]) -> Vec<usize> {
-    let mut v: Vec<usize> = dups.iter().filter(|d| d.kind == DupKind::Same && !cps[d.point].manual).map(|d| d.point).collect();
+    let mut v: Vec<usize> = dups.iter().filter(|d| d.kind == DupKind::Same && !cps[d.point].manual && !cps[d.point].locked).map(|d| d.point).collect();
     v.sort_unstable();
     v.dedup();
     v
@@ -174,6 +174,19 @@ mod tests {
         let d = find(&cps, &DupConfig::default());
         assert_eq!(d.len(), 1);
         assert!(removable(&cps, &d).is_empty());
+    }
+
+    #[test]
+    fn a_protected_point_is_never_offered_for_removal() {
+        let mut locked = pt(0, 1, [0.1, 0.1], [-0.3, 0.1], false);
+        locked.locked = true;
+        let cps = [pt(0, 1, [0.1, 0.1], [-0.3, 0.1], false), locked];
+        let d = find(&cps, &DupConfig::default());
+        assert_eq!(d.len(), 1);
+        assert!(removable(&cps, &d).is_empty() || !removable(&cps, &d).contains(&1));
+        let cps = [locked, pt(0, 1, [0.1, 0.1], [-0.3, 0.1], false)];
+        let d = find(&cps, &DupConfig::default());
+        assert!(removable(&cps, &d).iter().all(|&k| !cps[k].locked));
     }
 
     #[test]

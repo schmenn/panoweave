@@ -52,6 +52,10 @@ pub struct ControlPoint {
     /// correlation of the last fine-tuning (0 = not fine-tuned), as the original keeps it
     #[serde(default)]
     pub score: f32,
+    /// protected: no bulk action (clean-up, outlier or duplicate removal, delete all, new search)
+    /// removes or changes it; deleting or dragging it one by one needs unlocking first
+    #[serde(default)]
+    pub locked: bool,
 }
 
 fn one() -> f64 {
@@ -72,7 +76,32 @@ pub enum CpKind {
 
 impl ControlPoint {
     pub fn new(a: usize, b: usize, pa: [f64; 2], pb: [f64; 2], manual: bool) -> Self {
-        ControlPoint { a, b, pa, pb, err: 0.0, manual, weight: 1.0, kind: CpKind::Point, conf: 0.0, shift: [0.0; 2], score: 0.0 }
+        ControlPoint { a, b, pa, pb, err: 0.0, manual, weight: 1.0, kind: CpKind::Point, conf: 0.0, shift: [0.0; 2], score: 0.0, locked: false }
+    }
+}
+
+/// Bulk removal that spares protected points: removes every point for which `remove` is true
+/// unless it is locked. Returns how many protected points were kept although `remove` hit them.
+pub fn remove_unprotected(cps: &mut Vec<ControlPoint>, remove: impl Fn(&ControlPoint) -> bool) -> usize {
+    let kept = cps.iter().filter(|c| c.locked && remove(c)).count();
+    cps.retain(|c| c.locked || !remove(c));
+    kept
+}
+
+/// Takes the protected points out of an index list; returns the rest and how many were dropped.
+pub fn split_protected(cps: &[ControlPoint], idx: Vec<usize>) -> (Vec<usize>, usize) {
+    let n = idx.len();
+    let rest: Vec<usize> = idx.into_iter().filter(|&k| !cps.get(k).is_some_and(|c| c.locked)).collect();
+    let dropped = n - rest.len();
+    (rest, dropped)
+}
+
+/// Status text for bulk actions that left protected points alone ("" when there were none).
+pub fn protected_note(n: usize) -> String {
+    match n {
+        0 => String::new(),
+        1 => " 1 protected point kept.".into(),
+        n => format!(" {n} protected points kept."),
     }
 }
 
@@ -511,6 +540,33 @@ pub fn straighten(rots: &mut [M3], use_mask: &[bool]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn old_project_points_load_unprotected() {
+        let old = r#"{"a":0,"b":1,"pa":[0.1,0.2],"pb":[0.3,0.4]}"#;
+        let c: ControlPoint = serde_json::from_str(old).unwrap();
+        assert!(!c.locked);
+        let mut c2 = c;
+        c2.locked = true;
+        let back: ControlPoint = serde_json::from_str(&serde_json::to_string(&c2).unwrap()).unwrap();
+        assert!(back.locked);
+    }
+
+    #[test]
+    fn bulk_removal_and_index_lists_spare_protected_points() {
+        let mut cps: Vec<ControlPoint> = (0..6).map(|i| ControlPoint::new(0, 1, [i as f64 * 0.1, 0.0], [0.0; 2], false)).collect();
+        cps[1].locked = true;
+        cps[4].locked = true;
+        let (rest, dropped) = split_protected(&cps, vec![0, 1, 2, 4]);
+        assert_eq!((rest, dropped), (vec![0, 2], 2));
+        // "delete all in pair" / clean up: everything matches, only the locked two stay
+        let kept = remove_unprotected(&mut cps, |_| true);
+        assert_eq!(kept, 2);
+        assert_eq!(cps.len(), 2);
+        assert!(cps.iter().all(|c| c.locked));
+        assert_eq!(protected_note(0), "");
+        assert_eq!(protected_note(2), " 2 protected points kept.");
+    }
+
     use super::*;
 
     fn m_dist(a: &M3, b: &M3) -> f64 {
