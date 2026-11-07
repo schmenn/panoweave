@@ -42,6 +42,7 @@ impl PanoApp {
                 (k, self.to_px(a, pa), self.to_px(b, pb))
             })
             .collect();
+        self.sync_selection();
         let frame = self.selection_frame();
         let mut new_a = a;
         let mut new_b = b;
@@ -63,6 +64,7 @@ impl PanoApp {
             self.pe.a = new_a;
             self.pe.b = new_b;
             self.pe.selected = None;
+            self.pe.sel.clear();
             self.pe.pending = None;
             return;
         }
@@ -173,7 +175,13 @@ impl PanoApp {
         });
         // Row 4: actions on points and views.
         ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(self.pe.selected.is_some(), egui::Button::new("🗑 Delete point")).clicked() {
+            let n_sel = self.selection_indices().len();
+            let del_txt = if n_sel > 1 { format!("🗑 Delete selected ({n_sel})") } else { "🗑 Delete point".to_string() };
+            if ui
+                .add_enabled(n_sel > 0, egui::Button::new(del_txt))
+                .on_hover_text("Shift/Ctrl+click adds points to the selection. Protected points are never deleted.")
+                .clicked()
+            {
                 self.delete_selected();
             }
             let sel_locked = self.pe.selected.and_then(|k| self.cps.get(k)).map(|c| c.locked);

@@ -28,6 +28,7 @@ mod points_edit;
 mod points_find;
 mod points_panes;
 mod points_predict;
+mod points_select;
 mod state;
 mod types;
 mod ui_helpers;
