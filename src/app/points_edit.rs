@@ -38,6 +38,7 @@ impl PanoApp {
         self.cps = s.cps;
         self.click.result = s.result;
         self.pe.selected = None;
+        self.pe.sel.clear();
         self.pe.pending = None;
         self.pe.dragging = None;
         self.pe.drag_before = None;
@@ -97,6 +98,10 @@ impl PanoApp {
     }
 
     pub(super) fn delete_selected(&mut self) {
+        if self.selection_indices().len() > 1 {
+            self.delete_selection();
+            return;
+        }
         if let Some(k) = self.pe.selected {
             if self.cps.get(k).is_some_and(|c| c.locked) {
                 self.set_status("This point is protected: press L (or the lock button) to unlock it first.", WARN);
@@ -128,6 +133,7 @@ impl PanoApp {
             }
         });
         self.pe.selected = None;
+        self.pe.sel.clear();
         kept
     }
 
@@ -271,7 +277,7 @@ impl PanoApp {
                     v.center.x = v.center.x.clamp(0.0, g.w);
                     v.center.y = v.center.y.clamp(0.0, g.h);
                 }
-                PaneEvent::Click(pane, pos) => {
+                PaneEvent::Click(pane, pos, mods) => {
                     if self.pe.tool == PointTool::PatchClick {
                         let p = px_of(pane, pos);
                         let (w, h) = (geo[pane.i()].w as f64, geo[pane.i()].h as f64);
@@ -294,7 +300,13 @@ impl PanoApp {
                         if p.0 >= -0.5 && p.1 >= -0.5 && p.0 <= w - 0.5 && p.1 <= h - 0.5 {
                             self.add_point_click(pane, p);
                         }
+                    } else if mods.shift || mods.command {
+                        // Shift/Ctrl+click: add the point to the selection or take it out again
+                        if let Some(k) = nearest(pane, pos) {
+                            self.toggle_in_selection(k);
+                        }
                     } else {
+                        self.pe.sel.clear();
                         self.pe.selected = nearest(pane, pos);
                         if self.pe.selected.is_some() {
                             self.pe.moving = Some(pane);
@@ -318,6 +330,9 @@ impl PanoApp {
                     if primary {
                         if let Some(k) = nearest(pane, pos) {
                             self.pe.selected = Some(k);
+                            if !self.pe.sel.contains(&k) {
+                                self.pe.sel.clear();
+                            }
                             if self.cps[k].locked {
                                 self.set_status("This point is protected: press L (or the lock button) to unlock it before moving it.", WARN);
                                 self.pe.panning = Some(pane);

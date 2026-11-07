@@ -158,7 +158,8 @@ impl Default for PaneGeo {
 pub(super) enum PaneEvent {
     Fit(Pane),
     Zoom(Pane, Pos2, f32),
-    Click(Pane, Pos2),
+    /// pane, position, modifier keys held during the click (Shift/Ctrl = multiple selection)
+    Click(Pane, Pos2, egui::Modifiers),
     DragStart(Pane, Pos2, bool),
     Drag(Pane, Pos2, Vec2),
     DragEnd,
@@ -189,6 +190,10 @@ pub(super) struct PointEditor {
     pub(super) a: usize,
     pub(super) b: usize,
     pub(super) selected: Option<usize>,
+    /// Further selected points (Shift/Ctrl+click); indices into the point list, see `points_select.rs`.
+    pub(super) sel: std::collections::HashSet<usize>,
+    /// order fingerprint of the points when `sel` was last checked
+    pub(super) sel_fp: u64,
     /// What a click into a photo does (radio-button style, see `PointTool::toggle`).
     pub(super) tool: PointTool,
     pub(super) pending: Option<(Pane, [f64; 2])>,

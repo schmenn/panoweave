@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Point editor: multiple selection. Shift or Ctrl+click on a point in either photo adds it to the selection or takes it out again (extra ring around selected points); in the point list (F3) Ctrl+click toggles a row and Shift+click selects the range up to it. "Delete selected (n)" (button and Delete key) removes the whole selection as one undo step. Protected points are never deleted; the message names them. The selection is dropped when the points change in a way that moves their numbers (undo, find, clean up, other photo pair), so it never points at other points. Without Shift/Ctrl everything works as before. Unit-tested; not tried by clicking through the GUI.
+
 ## [0.2.0] - 2026-11-07
 
 ### Changed

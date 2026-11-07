@@ -172,6 +172,10 @@ impl PanoApp {
             let c = &self.cps[*k];
             let col = if self.aligned { err_color(c.err) } else { point_color(num) };
             let sel = self.pe.selected == Some(*k);
+            if self.pe.sel.contains(k) && !sel {
+                painter.circle_stroke(s, 10.0, Stroke::new(3.0, Color32::BLACK));
+                painter.circle_stroke(s, 10.0, Stroke::new(1.6, ACCENT));
+            }
             if sel {
                 let r = 11.0;
                 painter.circle_stroke(s, r, Stroke::new(3.0, Color32::BLACK));
@@ -321,7 +325,8 @@ impl PanoApp {
             events.push(PaneEvent::Fit(pane));
         } else if resp.clicked() {
             if let Some(p) = resp.interact_pointer_pos() {
-                events.push(PaneEvent::Click(pane, p));
+                let mods = ui.input(|i| i.modifiers);
+                events.push(PaneEvent::Click(pane, p, mods));
             }
         }
         if resp.drag_started() {
