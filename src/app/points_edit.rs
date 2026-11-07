@@ -192,6 +192,36 @@ impl PanoApp {
         }
     }
 
+    /// Brush radius in screen pixels.
+    pub(super) fn brush_radius(&self) -> f32 {
+        if self.pe.brush_px < 1.0 { select_shapes::BRUSH_PX_DEFAULT } else { self.pe.brush_px }
+    }
+
+    /// Applies the selection shape being dragged to the selection. The brush acts on every step
+    /// (only the newest piece of the stroke), rectangle and lasso when the drag ends (`finish`).
+    /// `pts` are the points of the dragged pane in its photo pixels.
+    pub(super) fn apply_select(&mut self, pts: &[(usize, P2)], r_px: f64, finish: bool) {
+        use select_shapes::{points_in, SelOp, Shape};
+        let Some(sd) = self.pe.sel_drag.as_ref() else { return };
+        let tool = self.pe.tool;
+        let hits = match tool {
+            PointTool::SelectBrush => points_in(&Shape::Brush(&sd.path[sd.path.len().saturating_sub(2)..], r_px), pts),
+            PointTool::SelectRect if finish => match (sd.path.first(), sd.path.last()) {
+                (Some(a), Some(b)) => points_in(&Shape::Rect(*a, *b), pts),
+                _ => return,
+            },
+            PointTool::SelectLasso if finish => points_in(&Shape::Lasso(&sd.path), pts),
+            _ => return,
+        };
+        let op = SelOp::for_tool(tool, sd.mods.shift, sd.mods.command);
+        if op != SelOp::Replace && self.pe.sel.is_empty() {
+            self.pe.sel.extend(self.pe.selected.filter(|&s| s < self.cps.len()));
+        }
+        op.apply(&mut self.pe.sel, &hits);
+        // the multiple selection is the truth while a shape tool is used
+        self.pe.selected = None;
+    }
+
     /// Store a hand-placed pair; `n1` belongs to pane `p1`, `n2` to the other pane.
     pub(super) fn push_manual(&mut self, p1: Pane, n1: [f64; 2], n2: [f64; 2]) {
         let (a, b) = (self.pe.a, self.pe.b);
@@ -260,6 +290,9 @@ impl PanoApp {
                 .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
                 .map(|(k, _)| k)
         };
+        let pane_pts = |pane: Pane| -> Vec<(usize, P2)> { pts.iter().map(|(k, pa, pb)| (*k, if pane == Pane::A { *pa } else { *pb })).collect() };
+        let brush_screen = self.brush_radius();
+        let brush_r = |pane: Pane| -> f64 { (brush_screen / geo[pane.i()].scale) as f64 };
         for ev in events {
             match ev {
                 PaneEvent::Fit(pane) => {
@@ -323,7 +356,16 @@ impl PanoApp {
                         }
                     }
                 }
-                PaneEvent::DragStart(pane, pos, primary) => {
+                PaneEvent::DragStart(pane, pos, primary, mods) => {
+                    if primary && self.pe.tool.is_select() {
+                        // a selection shape starts here (the secondary button still moves the photo)
+                        self.pe.dragging = None;
+                        self.pe.drag_before = None;
+                        self.pe.panning = None;
+                        self.pe.sel_drag = Some(SelDrag { pane, path: vec![px_of(pane, pos)], mods });
+                        self.apply_select(&pane_pts(pane), brush_r(pane), false);
+                        continue;
+                    }
                     self.pe.dragging = None;
                     self.pe.drag_before = None;
                     self.pe.panning = None;
@@ -347,7 +389,15 @@ impl PanoApp {
                     self.pe.panning = Some(pane);
                 }
                 PaneEvent::Drag(pane, pos, delta) => {
-                    if let Some((k, dp)) = self.pe.dragging {
+                    if self.pe.sel_drag.is_some() {
+                        let same = self.pe.sel_drag.as_ref().is_some_and(|s| s.pane == pane);
+                        if same {
+                            if let Some(sd) = self.pe.sel_drag.as_mut() {
+                                sd.path.push(px_of(pane, pos));
+                            }
+                            self.apply_select(&pane_pts(pane), brush_r(pane), false);
+                        }
+                    } else if let Some((k, dp)) = self.pe.dragging {
                         if dp == pane && k < self.cps.len() {
                             let idx = if pane == Pane::A { a } else { b };
                             let n = self.to_norm(idx, px_of(pane, pos));
@@ -369,6 +419,14 @@ impl PanoApp {
                     }
                 }
                 PaneEvent::DragEnd => {
+                    if let Some(pane) = self.pe.sel_drag.as_ref().map(|s| s.pane) {
+                        self.apply_select(&pane_pts(pane), brush_r(pane), true);
+                        self.pe.sel_drag = None;
+                        self.pe.panning = None;
+                        let n = self.pe.sel.len();
+                        self.set_status(format!("{n} point{} selected.", if n == 1 { "" } else { "s" }), MUTED);
+                        continue;
+                    }
                     if let Some((k, pane)) = self.pe.dragging.take() {
                         self.snap_point(k, pane);
                     }
