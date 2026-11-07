@@ -225,6 +225,8 @@ impl PanoApp {
                     self.set_status(format!("Removed {removed} points.{} Re-align in step 3 to update.", crate::align::protected_note(kept)), MUTED);
                 }
             }
+            ui.separator();
+            self.sky_ui(ui, false);
         });
     }
 
