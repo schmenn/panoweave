@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
+
 ### Changed
 - Naming: step 5 is now called "Export" everywhere (it was "Save" in the step bar and help, "Create panorama file" on the button, "saved" in messages), so it no longer clashes with "Save project" at the top, which keeps its 💾 icon. The buttons read "Export panorama" and "Export blended picture". Text only, no change in function.
 - GUI: one set of style values (`RADIUS` 3 for buttons/fields, `RADIUS_CARD` 6 for cards, tiles, menus and windows, `GAP`, `ROW_H`, `BIG_H` in `consts.rs`) replaces the scattered corner radii (4 to 10), margins and button heights. Rows with many controls (align, frame, export, masks, exposure, start page) now wrap instead of widening the window. No functional change.
