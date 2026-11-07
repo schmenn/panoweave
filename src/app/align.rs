@@ -401,6 +401,10 @@ impl PanoApp {
                             ui.label("Points that fail the check");
                             ui.checkbox(&mut f.drop_invalid_points, "remove (otherwise keep with low weight)");
                             ui.end_row();
+                            ui.label("Patch comparison window");
+                            ui.checkbox(&mut f.record_patches, "Record patches for this window")
+                                .on_hover_text("Off: faster and less memory, the alignment is the same, the window stays empty");
+                            ui.end_row();
                             let p = &mut self.parallax_cfg;
                             ui.label("Parallax: largest correction");
                             ui.add(egui::DragValue::new(&mut p.max_shift).range(1.0..=30.0).speed(0.1).suffix(" px"));

@@ -644,4 +644,51 @@ mod tests {
         assert!((a01 - a12).abs() < 0.25 * a01.max(a12), "{a01} vs {a12}");
         assert!((a02 - (a01 + a12)).abs() < 0.15 * a02, "{a02} vs {}", a01 + a12);
     }
+
+    /// `FineConfig::record_patches` only decides whether the patch window gets data: with it off
+    /// the fine alignment must give exactly the same rotations, lenses and points.
+    #[test]
+    fn fine_alignment_is_the_same_without_patch_recording() {
+        use crate::fine_align::{self, FaPhoto, FineConfig};
+        let big = texture(520, 260, 91);
+        let views: Vec<RgbImage> = (0..3).map(|i| crop(&big, i * 100, 0, 320, 260)).collect();
+        let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
+        let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false }, &|_, _| {});
+        let lens_of = [0usize; 3];
+        let long = [320.0; 3];
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false };
+        let r = align_all(&lens_of, &[Lens::from_hfov_deg(50.0)], &long, &mr.cps, &s, &|_, _| {});
+        let fa: Vec<FaPhoto> = views.iter().zip(&grays).map(|(v, g)| FaPhoto { gray: g.clone(), rgb: Arc::new(v.clone()) }).collect();
+        let run = |record: bool| {
+            let cfg = FineConfig { record_patches: record, ..FineConfig::default() };
+            fine_align::run(&fa, &lens_of, &long, &r.lenses, &r.rots, &r.cps, false, false, &cfg, &|_, _| {})
+        };
+        let (rots_on, lenses_on, cps_on, st_on) = run(true);
+        let (rots_off, lenses_off, cps_off, st_off) = run(false);
+        assert!(st_on.patches_total > 0, "the test must measure patches");
+        assert_eq!(st_on.patches_total, st_off.patches_total);
+        assert_eq!(st_on.patches_valid, st_off.patches_valid);
+        // parallel sums may round differently in the last bits, so compare with a tolerance
+        let close = |x: f64, y: f64| (x - y).abs() < 1e-9;
+        for (a, b) in rots_on.iter().zip(&rots_off) {
+            assert!((0..3).all(|i| (0..3).all(|j| close(a[i][j], b[i][j]))), "{a:?} vs {b:?}");
+        }
+        assert_eq!(lenses_on.len(), lenses_off.len());
+        for (a, b) in lenses_on.iter().zip(&lenses_off) {
+            assert!(close(a.f, b.f) && close(a.k1, b.k1));
+        }
+        // the area selection walks a HashMap, so the order of the points may differ: compare sorted
+        let sorted = |v: &[ControlPoint]| {
+            let mut v = v.to_vec();
+            v.sort_by(|x, y| (x.a, x.b, x.pa[0], x.pa[1]).partial_cmp(&(y.a, y.b, y.pa[0], y.pa[1])).unwrap());
+            v
+        };
+        let (cps_on, cps_off) = (sorted(&cps_on), sorted(&cps_off));
+        assert_eq!(cps_on.len(), cps_off.len());
+        for (a, b) in cps_on.iter().zip(&cps_off) {
+            assert_eq!((a.a, a.b), (b.a, b.b));
+            assert!((0..2).all(|i| close(a.pa[i], b.pa[i]) && close(a.pb[i], b.pb[i])), "{:?} vs {:?}", (a.pa, a.pb), (b.pa, b.pb));
+        }
+    }
 }

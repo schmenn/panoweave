@@ -62,7 +62,7 @@ No lint/format config; use plain `cargo clippy` / `cargo fmt` if needed. The CI 
 - No window: `--selftest <photos>` (whole pipeline), `--loadtest`, `--kpdebug`, `--pairtest`, `--paircheck <photos>`, `--imgdiff <a> <b> [diff.png] [sheet.png]` (compare two pictures pixel by pixel).
 - GUI helpers: `--screenshot <path>`, `--demo <name>` (photos, points, pointsel, pointdrag, overlap, cplist, align, export, render, exposure, patches, patchdetail, patchclick, connections). `--demo render <photos|.pwproj>` runs a real export without a window.
 - Experiment environment variables (grep `PW_` for the meaning):
-  - matching/alignment: `PW_FINE`, `PW_SHARP`, `PW_PARALLAX`, `PW_SKY`, `PW_PPP`, `PW_DEBUG`, `PW_CANCEL_TEST`, `PW_SCROLL`
+  - matching/alignment: `PW_FINE`, `PW_SHARP`, `PW_PARALLAX`, `PW_SKY`, `PW_PPP`, `PW_DEBUG`, `PW_CANCEL_TEST`, `PW_SCROLL`, `PW_RECORD`
   - render demo: `PW_SCALE` (percent), `PW_OUT` / `PW_OUT2`, `PW_SAVE_PROJECT=<file.pwproj>`, `PW_EXPORT_MB` / `PW_EXPORT_MB2` (memory budget, the picture must not depend on it), `PW_OLD_EXPORT=1` (whole picture in memory, for comparing)
   - seams, brightness, blending: `PW_SEAMS`, `PW_SEAM_*`, `PW_SEAM_DEBUG=<file.png>`, `PW_FLAT_LO/HI`, `PW_GAINS`, `PW_GAINMAP`, `PW_GM_*`, `PW_LEVELS`
 - Rust 2024 detail: `gen` is a keyword.

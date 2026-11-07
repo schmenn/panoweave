@@ -236,6 +236,8 @@ struct Round {
     elapsed_ms: u128,
     label: String,
     number: u64,
+    /// patches of this round are kept for the window (`FineConfig::record_patches`)
+    recording: bool,
 }
 
 /// One frame of the live preview: patch A at one tested offset over the search area.
@@ -277,6 +279,8 @@ pub struct RoundInfo {
     pub elapsed_ms: u128,
     pub label: String,
     pub number: u64,
+    /// false: the round ran with patch recording switched off, the window has nothing to show
+    pub recording: bool,
 }
 
 /// Kept for a patch when the optimisation is restarted from the window.
@@ -353,6 +357,7 @@ impl Store {
             elapsed_ms,
             label: r.label.clone(),
             number: r.number,
+            recording: r.recording,
         }
     }
     /// All finished records of the current round (data shared, state copied).
@@ -444,8 +449,9 @@ impl Store {
             }
         }
     }
-    /// A new matching round starts: the previous list is replaced.
-    pub fn begin_round(&self, total: usize, label: &str) {
+    /// A new matching round starts: the previous list is replaced. With `recording` off no patch
+    /// is stored (the matching itself is the same), the window then says why it is empty.
+    pub fn begin_round(&self, total: usize, label: &str, recording: bool) {
         {
             let mut r = self.round.write().unwrap();
             let number = self.rounds.fetch_add(1, Ordering::AcqRel) + 1;
@@ -456,6 +462,7 @@ impl Store {
                 started: Some(Instant::now()),
                 label: label.to_string(),
                 number,
+                recording,
                 ..Default::default()
             };
         }
@@ -519,9 +526,12 @@ impl Store {
         self.emit(Event::PatchFinished);
     }
     /// After the selection step of a round: which control pair a patch became.
+    /// Id 0 means the patch was not recorded: nothing to do.
     pub fn finalize(&self, id: u32, cp: Option<ControlPoint>, rejected_reason: Option<&'static str>) {
+        let Some(i) = (id as usize).checked_sub(1) else {
+            return;
+        };
         let mut r = self.round.write().unwrap();
-        let i = id as usize - 1;
         let mut delta = (0isize, 0isize);
         if let Some(Some((_, st))) = r.slots.get_mut(i) {
             st.cp = cp;
@@ -777,5 +787,11 @@ mod tests {
         assert!(m && (v - 0.5).abs() < 0.01);
         let (v, _) = dec(enc(0.0, true));
         assert!(v.abs() < 1e-6);
+    }
+
+    /// With recording off every patch has id 0; finishing it must be a no-op, not an underflow.
+    #[test]
+    fn finalize_of_an_unrecorded_patch_does_nothing() {
+        STORE.finalize(0, None, Some(REASON_AREA_LIMIT));
     }
 }

@@ -35,6 +35,10 @@ pub enum RobustLoss {
 pub struct FineConfig {
     /// master switch (patch_match_enabled)
     pub enabled: bool,
+    /// keep every measured patch (pixels, score field) for the "Patch comparison" window; off = faster, less memory,
+    /// the window then shows nothing for that round
+    #[serde(default = "record_patches_default")]
+    pub record_patches: bool,
     pub matcher: MatchConfig,
     /// refine existing control points
     pub refine_points: bool,
@@ -80,11 +84,16 @@ fn point_search_default() -> f32 {
 fn point_min_score_default() -> f32 {
     0.8
 }
+/// Environment `PW_RECORD=0` switches the recording off (experiments); on by default.
+fn record_patches_default() -> bool {
+    std::env::var("PW_RECORD").map(|v| v != "0").unwrap_or(true)
+}
 
 impl Default for FineConfig {
     fn default() -> Self {
         FineConfig {
             enabled: true,
+            record_patches: record_patches_default(),
             matcher: MatchConfig::default(),
             refine_points: true,
             drop_invalid_points: false,
@@ -540,7 +549,7 @@ fn measure_round(
         Vec::new()
     };
     let n_points = cps.iter().filter(|c| point_measured(c)).count();
-    STORE.begin_round(n_points + cand_lists.iter().map(|v| v.len()).sum::<usize>(), label);
+    STORE.begin_round(n_points + cand_lists.iter().map(|v| v.len()).sum::<usize>(), label, cfg.record_patches);
     // 1) points and hand-drawn areas
     let refined: Vec<(ControlPoint, Option<PatchMeasure>, bool)> = cps
         .par_iter()
@@ -569,7 +578,7 @@ fn measure_round(
                 mcfg
             };
             let rc = RecCtx { a: c.a, b: c.b, pa: c.pa, kind: c.kind, hand_point: c.manual, disabled: is_disabled(&key) };
-            let m = measure_ex(ga, gb, imgs.get(c.a, geos, c.b), imgs.get(c.b, geos, c.a), d, use_cfg, Some(&rc));
+            let m = measure_ex(ga, gb, imgs.get(c.a, geos, c.b), imgs.get(c.b, geos, c.a), d, use_cfg, cfg.record_patches.then_some(&rc));
             (*c, m, false)
         })
         .collect();
@@ -641,7 +650,7 @@ fn measure_round(
                         let d = ga.px_to_dir(p);
                         let pa = norm(ga, p);
                         let rc = RecCtx { a, b, pa, kind: CpKind::Area, hand_point: false, disabled: is_disabled(&patch_store::key_of(a, b, pa)) };
-                        let m = measure_ex(ga, gb, imgs.get(a, geos, b), imgs.get(b, geos, a), d, mcfg, Some(&rc));
+                        let m = measure_ex(ga, gb, imgs.get(a, geos, b), imgs.get(b, geos, a), d, mcfg, cfg.record_patches.then_some(&rc));
                         (p, in_band, cell, m)
                     })
                     .collect::<Vec<_>>()
