@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Points on sky or cloud: new switch "Find points on sky or cloud" (off by default; in the point editor next to "Clean up" and in the list of all points). The sky mask of the photos is made on a worker thread (button "Check N photos", cancelable, kept in memory only, not saved in the project). Every point is checked in both photos with the same cloud score the point finder uses; it counts when the share of sky around it is above the threshold (0.3 to 0.8, default 0.5) in either photo. The list marks these rows blue and has the filter "only those"; "Remove N" removes the automatic ones as one undo step. Points placed by hand and protected points are only marked and never removed; the status line says how many stayed. Control areas are not judged. Switched off, nothing is computed and nothing is shown. Not tried by clicking through the running program.
+
 ## [0.2.0] - 2026-11-07
 
 ### Changed

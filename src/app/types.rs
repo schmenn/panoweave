@@ -82,6 +82,8 @@ pub(super) enum JobMsg {
     Rendered(Result<(PathBuf, u128, usize, usize), String>),
     BracketLoaded(Vec<Result<(String, Source, Arc<RgbImage>, RgbImage, PhotoInfo), String>>),
     FusedSaved(Result<(PathBuf, u128), String>),
+    /// sky masks of the photos that had none: (key of the working image, the image, its mask)
+    SkyMasks(Vec<(usize, Arc<RgbImage>, Arc<crate::features::SkyMask>)>),
     PairPoints { a: usize, b: usize, cps: Vec<ControlPoint>, ms: u128, mode: &'static str },
     /// "Search again" for one pair from the connection view
     PairChecked { a: usize, b: usize, cps: Vec<ControlPoint>, reports: Vec<crate::pair_check::PairReport> },
@@ -332,6 +334,13 @@ pub struct PanoApp {
     pub(super) cp_only_locked: bool,
     /// result of the duplicate check with a fingerprint of the points it was made for
     pub(super) dup_cache: Option<(u64, Vec<crate::duplicate_points::Duplicate>)>,
+    /// points on sky or cloud: settings, list filter, sky masks per photo (made on a worker thread, not saved
+    /// in the project; keyed by the working image they belong to) and the last result with its fingerprint
+    pub(super) sky_cfg: crate::sky_points::SkyConfig,
+    pub(super) cp_only_sky: bool,
+    pub(super) sky_masks: HashMap<usize, (Arc<RgbImage>, Arc<crate::features::SkyMask>)>,
+    pub(super) sky_version: u64,
+    pub(super) sky_cache: Option<(u64, Vec<crate::sky_points::SkyPoint>)>,
     /// sorted rows of the control point list and the number within each pair (cached)
     pub(super) cp_rows_cache: Option<(String, Vec<usize>, Vec<usize>)>,
     pub(super) render_started: bool,

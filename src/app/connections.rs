@@ -126,6 +126,10 @@ impl PanoApp {
                     });
                 });
                 ui.checkbox(&mut self.cp_only_locked, "only protected (🔒)").on_hover_text("Protected points (key L in the point editor) are not touched by any bulk action.");
+                // points on sky or cloud (masks are made on a worker thread; nothing is removed without the button)
+                ui.horizontal_wrapped(|ui| self.sky_ui(ui, true));
+                let sky_on = self.sky_cfg.enabled;
+                let sky_of: HashMap<usize, f32> = self.sky_points().iter().map(|s| (s.point, s.score)).collect();
                 // points on top of each other (recomputed only when the points or the settings changed)
                 let dups = self.duplicates();
                 let dup_of: HashMap<usize, crate::duplicate_points::Duplicate> = dups.iter().map(|d| (d.point, *d)).collect();
@@ -153,7 +157,7 @@ impl PanoApp {
                     });
                 }
                 let cache_key = format!(
-                    "{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}",
+                    "{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}",
                     self.cps.len(),
                     self.align_version,
                     self.cp_sort.0 as u8,
@@ -165,7 +169,10 @@ impl PanoApp {
                     self.cp_only_dups && self.dup_cfg.enabled,
                     self.cp_only_locked,
                     self.cps.iter().filter(|c| c.locked).count(),
-                    self.dup_cache.as_ref().map_or(0, |c| c.0)
+                    self.dup_cache.as_ref().map_or(0, |c| c.0),
+                    self.cp_only_sky && sky_on,
+                    self.sky_version,
+                    self.sky_cfg.threshold.to_bits() as u64 * u64::from(sky_on)
                 );
                 let cached = self.cp_rows_cache.as_ref().filter(|c| c.0 == cache_key).map(|c| (c.1.clone(), c.2.clone()));
                 let (rows, pair_no) = if let Some(c) = cached { c } else {
@@ -176,7 +183,8 @@ impl PanoApp {
                         let err_ok = !self.aligned || c.err >= self.cp_min_err;
                         let dup_ok = !(self.cp_only_dups && self.dup_cfg.enabled) || dup_of.contains_key(&k);
                         let lock_ok = !self.cp_only_locked || c.locked;
-                        pair_ok && err_ok && dup_ok && lock_ok
+                        let sky_ok = !(self.cp_only_sky && sky_on) || sky_of.contains_key(&k);
+                        pair_ok && err_ok && dup_ok && lock_ok && sky_ok
                     })
                     .collect();
                 // number of each point within its photo pair (the original's "P CP#" column)
@@ -275,6 +283,8 @@ impl PanoApp {
                             p.rect_filled(rect, 3.0, Color32::from_rgb(48, 52, 61));
                         } else if dup.is_some() {
                             p.rect_filled(rect, 0.0, Color32::from_rgb(64, 48, 24));
+                        } else if sky_of.contains_key(&k) {
+                            p.rect_filled(rect, 0.0, super::points_sky::SKY_ROW);
                         } else if r % 2 == 1 {
                             p.rect_filled(rect, 0.0, Color32::from_rgb(32, 34, 40));
                         }
@@ -319,6 +329,10 @@ impl PanoApp {
                                 crate::duplicate_points::DupKind::Contradicts => "lies on the same spot in one photo, but not in the other, as",
                             };
                             resp.clone().on_hover_text(format!("Point {} {} point {}", k + 1, what, d.other + 1));
+                        }
+                        if let Some(s) = sky_of.get(&k) {
+                            let stays = if c.locked { " It is protected and stays." } else if c.manual { " It was placed by hand and stays." } else { "" };
+                            resp.clone().on_hover_text(format!("Point {} lies on sky or cloud ({:.0} % of its surroundings).{stays}", k + 1, s * 100.0));
                         }
                         if resp.clicked() {
                             jump = Some(k);
