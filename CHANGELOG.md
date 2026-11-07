@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Fine alignment settings: "Record patches for this window" (on by default). Off, the patch comparison window is not filled, which saves time and memory; the alignment is the same, and the window says why it is empty. `PW_RECORD=0` switches it off for experiments.
+
 ## [0.2.0] - 2026-11-07
 
 ### Changed

@@ -1454,6 +1454,9 @@ impl PatchWindow {
         self.ensure_rows();
         if self.data.is_empty() {
             let t = match self.info.phase {
+                Phase::Running | Phase::Finished | Phase::Cancelled if !self.info.recording => {
+                    "Patch recording is switched off (step 3, fine alignment settings: “Record patches for this window”). The alignment itself is not affected."
+                }
                 Phase::Freed => "Released after the export – start a new matching (step 3, “Align photos” with fine alignment on).",
                 Phase::Running => "Matching is running – the first patches appear here in a moment.",
                 Phase::Finished | Phase::Cancelled => "This round measured no patches.",
