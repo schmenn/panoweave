@@ -77,6 +77,7 @@ impl PanoApp {
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc cancels a half-placed point first, otherwise it leaves the tool
+            self.pe.sel_drag = None;
             if self.pe.pending.take().is_none() {
                 self.pe.tool = PointTool::Edit;
             }
@@ -153,6 +154,23 @@ impl PanoApp {
             {
                 self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::PatchClick);
                 self.pe.pending = None;
+            }
+            for (tool, text, tip) in [
+                (PointTool::SelectRect, "▭ Rectangle", "Drag a rectangle to select the points inside. Shift adds to the selection, Ctrl takes points out."),
+                (PointTool::SelectLasso, "➰ Lasso", "Drag a free outline to select the points inside. Shift adds to the selection, Ctrl takes points out."),
+                (PointTool::SelectBrush, "🖌 Brush", "Paint over points to select them. Ctrl takes points out again."),
+            ] {
+                if ui.add(egui::Button::selectable(self.pe.tool == tool, text)).on_hover_text(tip).clicked() {
+                    self.pe.tool = PointTool::toggle(self.pe.tool, tool);
+                    self.pe.pending = None;
+                    self.pe.sel_drag = None;
+                }
+            }
+            if self.pe.tool == PointTool::SelectBrush {
+                if self.pe.brush_px < 1.0 {
+                    self.pe.brush_px = select_shapes::BRUSH_PX_DEFAULT;
+                }
+                ui.add(egui::DragValue::new(&mut self.pe.brush_px).range(select_shapes::BRUSH_PX_RANGE).speed(0.5).suffix(" px")).on_hover_text("Brush radius");
             }
             if ui.add_enabled(self.undo.can_undo(), egui::Button::new("↶ Undo")).on_hover_text(self.undo.undo_label().map(|w| format!("Undo {w} (Ctrl+Z)")).unwrap_or_default()).clicked() {
                 self.undo_last();
@@ -239,7 +257,9 @@ impl PanoApp {
     /// Hint line under the toolbar (or the strip of the patch click mode).
     fn points_hint(&mut self, ui: &mut egui::Ui) {
         let adding = self.pe.tool == PointTool::Add;
-        let hint = if adding {
+        let hint = if self.pe.tool.is_select() {
+            "Drag in a photo to select points (the right mouse button still moves the photo). Shift adds, Ctrl takes out. Delete removes the selection; protected points stay. Esc leaves the tool."
+        } else if adding {
             match self.pe.pending {
                 Some((Pane::A, _)) => "Now click the same spot in the RIGHT photo – it snaps to the exact spot.",
                 Some((Pane::B, _)) => "Now click the same spot in the LEFT photo – it snaps to the exact spot.",

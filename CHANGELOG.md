@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Point editor: selection tools next to "Select / edit" and "Add point": Rectangle (drag a box), Lasso (drag an outline, point-in-polygon) and Brush (paint over points, radius in the toolbar). Plain drag replaces the selection with the points inside; Shift adds; Ctrl takes points out (with the brush, dragging adds and Ctrl subtracts). The shape acts on the points of the photo half it was dragged in, for the pair on screen; the right mouse button still moves the photo. Unit-tested geometry; not tried by clicking through the GUI.
 - Point editor: multiple selection. Shift or Ctrl+click on a point in either photo adds it to the selection or takes it out again (extra ring around selected points); in the point list (F3) Ctrl+click toggles a row and Shift+click selects the range up to it. "Delete selected (n)" (button and Delete key) removes the whole selection as one undo step. Protected points are never deleted; the message names them. The selection is dropped when the points change in a way that moves their numbers (undo, find, clean up, other photo pair), so it never points at other points. Without Shift/Ctrl everything works as before. Unit-tested; not tried by clicking through the GUI.
 
 ## [0.2.0] - 2026-11-07
