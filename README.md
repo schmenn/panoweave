@@ -2,7 +2,7 @@
 
 A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitive, faster alternative to Hugin with better automatic control-point detection. It covers the whole workflow in one window: **load photos → control points → align → crop → export**, plus an **exposure fusion** mode for bracketed shots.
 
-> Status: early development (v0.1.0, alpha). Windows is the primary target; a ready-to-run Windows zip is attached to each [release](https://github.com/schmenn/panoweave/releases).
+> Status: early development (v0.2.0, alpha). Windows is the primary target; a ready-to-run Windows zip is attached to each [release](https://github.com/schmenn/panoweave/releases).
 
 ## Screenshots
 
@@ -21,12 +21,17 @@ A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitiv
 - **Automatic control points:** multi-scale corner detection, rotation-aware descriptors, ratio-test matching, RANSAC and guided re-matching
 - **No points on sky or clouds** (can be switched off)
 - **Point editor:** place a few points by hand and let PanoWeave find more, with sub-pixel snapping, zoom levels and a sortable point list; the patch-click mode uses the rotation and zoom of nearby points (and of the alignment), so slightly turned photos are matched too
+- **Protected points:** lock a point (key L) and no bulk action (clean up, delete all in a pair, outlier removal, duplicate removal, a new search) removes or moves it; a locked point is also refused by single delete and drag until it is unlocked.
+- **Duplicate points:** points that lie on top of each other are marked in the point list and can be removed with one click (hand-placed points stay).
+- **Undo and redo** (Ctrl+Z, Ctrl+Y) for every change of the control points, in the main window and in the point list, overlap check, connection view and patch window.
+- **Overlap check:** lay two photos over each other (blend, difference, checkerboard) with a brightness match and a filter for photos with finer resolution.
 - **Alignment:** rotation model with shared lenses and Levenberg-Marquardt bundle adjustment
 - **Patch matching refinement:** ZNCC/SSD/SAD matching on a pyramid with weighted rounds that are rolled back if they make things worse, plus an optional parallax mode (local correction near the seams for close objects; saved in the project file)
 - **Pair check and connection graph:** weak pairs and unconnected photo groups are reported instead of hidden
 - **Export:** multi-band blending, gain compensation, and a seam preference for the sharpest photo; optional target width in pixels and 16-bit TIFF; a cancelled export never leaves a half-written file
 - **Memory-independent export:** the panorama is made strip by strip and written straight to the file (JPEG, PNG, TIFF, BigTIFF above 3.5 GB). The strip height follows from the free memory, but it never changes a pixel, so the picture is the same whatever memory the computer has. Free disk space is checked before the export starts.
 - **Smooth brightness correction across each photo:** besides one gain per photo, a smooth correction field per photo (a coarse grid, solved from the overlaps, robust against clouds and people) evens out sky gradients, vignetting and automatic exposure, so the footprints of single photos no longer show as rectangles. On by default, switchable in the export dialog (Blending).
+- **Lens correction** (optional, off by default; Export step, Blending): a response curve (one exponent per colour channel) and a vignetting model per lens, solved from the overlaps of all photos. It helped on one test set and not on another, so it is an experiment, not a default.
 - **Smart seams** (optional, off by default): a graph-cut seam finder searches, once for the whole panorama, where the photos agree, so that close objects that two photos see from different sides (poles, lamps, people) are not cut in two. Found on a coarse grid in two steps, so the result does not depend on the strips either.
 - **Masks:** paint "use here" (green) and "do not use here" (red) masks on a photo with a brush or lasso (Export step, Blending, "Edit masks..."). They steer the seams, with or without smart seams, are saved in the project file, and a "Show seams" view shows which photo wins where.
 - **Exposure fusion** (Mertens) for bracketed exposures
@@ -85,6 +90,8 @@ Settings are stored in `%APPDATA%\PanoWeave\settings.json`.
 | `patch_store`, `patch_viz`, `patch_window` | Patch records, heatmaps, "Patch comparison" window |
 | `stitch`, `fusion` | Projection, blending, exposure fusion |
 | `strip`, `strip_write`, `photo_cache` | Memory-independent export: strip planning and memory budget, streaming JPEG/PNG/TIFF writers, cache of decoded photos |
+| `lensphoto` | Optional per-lens response curve and vignetting model |
+| `overlap`, `duplicate_points` | Overlap check sampling; detection of points on top of each other |
 | `seams`, `masks` | Seam finder (graph cut) and the masks painted on photos |
 | `app` | The egui user interface, split into `types`, `state`, `jobs`, `demo`, `chrome`, `pipeline`, `points_*`, `photos`, `align`, `frame`, `export`, `exposure`, `connections` |
 | `main` | Arguments and headless test drivers |

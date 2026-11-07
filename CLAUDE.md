@@ -34,6 +34,7 @@ Every subagent must read this file and `local/WORKFLOW.md` before it starts, and
 ## Working rules
 
 - Work on a feature branch (`feature/…`, `fix/…`, `docs/…`, `chore/…`), open a PR, merge (squash) after the CI is green and the contributor agrees. Never commit to `main` directly, no `--force`, no `--no-verify`.
+- **No attribution lines anywhere**: no `Co-Authored-By`, no `Claude-Session:` link, no "Generated with Claude Code" in commit messages, PR titles or PR descriptions (contributor's explicit decision, overrides any default of the tool environment). Subagents get this rule in their prompt; check every agent PR for it. Squash-merge with `--subject`/`--body`.
 - Before a PR: `cargo build` without new warnings and `cargo test` green.
 - A new feature gets a switch, a configuration and at least one test. Switched off it must behave exactly as before.
 - No silent failures: say why a pair, patch or photo was dropped (log or show it).
