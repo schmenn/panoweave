@@ -87,6 +87,8 @@ pub(super) enum JobMsg {
     PairChecked { a: usize, b: usize, cps: Vec<ControlPoint>, reports: Vec<crate::pair_check::PairReport> },
     /// patch click mode result
     ClickMatched(Box<crate::click_match::ClickResult>),
+    /// "Snap selected" finished (see `points_snap.rs`)
+    Snapped(Box<super::points_snap::SnapDone>),
     /// the person pressed Cancel: the job's result is thrown away
     Cancelled,
 }
