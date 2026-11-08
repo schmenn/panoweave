@@ -305,6 +305,8 @@ pub struct Store {
     rounds: AtomicU64,
 }
 
+/// The one store. Its locks are taken with `unwrap_or_else(PoisonError::into_inner)`: a panic in one matching
+/// worker must not take the GUI (which reads the store every frame) and every later round down with it.
 pub static STORE: LazyLock<Store> = LazyLock::new(|| Store {
     round: RwLock::new(Round::default()),
     version: AtomicU64::new(1),
@@ -324,14 +326,14 @@ impl Store {
     /// The window opens: events start flowing (thread-safe queue, read in the GUI thread).
     pub fn subscribe(&self) -> Receiver<Event> {
         let (tx, rx) = sync_channel(EVENT_QUEUE);
-        *self.tx.lock().unwrap() = Some(tx);
+        *self.tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tx);
         self.listening.store(true, Ordering::Release);
         rx
     }
     /// The window closes: no more events.
     pub fn unsubscribe(&self) {
         self.listening.store(false, Ordering::Release);
-        *self.tx.lock().unwrap() = None;
+        *self.tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.focus.store(0, Ordering::Release);
     }
     pub fn set_live(&self, animate: bool, sample_every: u32, delay_ms: u32) {
@@ -343,7 +345,7 @@ impl Store {
         self.version.load(Ordering::Acquire)
     }
     pub fn info(&self) -> RoundInfo {
-        let r = self.round.read().unwrap();
+        let r = self.round.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         let elapsed_ms = match (r.phase, r.started) {
             (Phase::Running, Some(t)) => t.elapsed().as_millis(),
             _ => r.elapsed_ms,
@@ -364,7 +366,7 @@ impl Store {
     /// All finished records of the current round (data shared, state copied).
     pub fn snapshot(&self) -> (u64, Vec<Arc<PatchData>>, Vec<PatchState>) {
         let v = self.version();
-        let r = self.round.read().unwrap();
+        let r = self.round.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut d = Vec::with_capacity(r.done);
         let mut s = Vec::with_capacity(r.done);
         for (pd, st) in r.slots.iter().flatten() {
@@ -377,7 +379,7 @@ impl Store {
     pub fn edit(&self, ids: &[u32], f: impl Fn(&PatchData, &mut PatchState)) -> usize {
         let mut n = 0;
         {
-            let mut r = self.round.write().unwrap();
+            let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             for slot in r.slots.iter_mut().flatten() {
                 if ids.contains(&slot.0.id) {
                     f(&slot.0, &mut slot.1);
@@ -389,7 +391,7 @@ impl Store {
         n
     }
     fn recount(&self) {
-        let mut r = self.round.write().unwrap();
+        let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (mut v, mut j) = (0, 0);
         for (_, st) in r.slots.iter().flatten() {
             match st.status {
@@ -406,7 +408,7 @@ impl Store {
     /// Free everything (after a panorama export): lists cleared, arrays dropped.
     pub fn free_after_export(&self) {
         {
-            let mut r = self.round.write().unwrap();
+            let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             let number = r.number;
             *r = Round { phase: Phase::Freed, number, ..Default::default() };
         }
@@ -415,7 +417,7 @@ impl Store {
     }
     /// Disabled / shifted records, to be kept when the optimisation is restarted.
     pub fn overrides(&self) -> HashMap<Key, Override> {
-        let r = self.round.read().unwrap();
+        let r = self.round.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut m = HashMap::new();
         for (d, s) in r.slots.iter().flatten() {
             if s.status == Status::DisabledManual {
@@ -427,7 +429,7 @@ impl Store {
         m
     }
     pub fn pending_changes(&self) -> HashMap<&'static str, usize> {
-        let r = self.round.read().unwrap();
+        let r = self.round.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut m = HashMap::new();
         for (_, s) in r.slots.iter().flatten() {
             if let Some(c) = s.changed {
@@ -443,7 +445,7 @@ impl Store {
         if !self.listening.load(Ordering::Acquire) {
             return;
         }
-        if let Some(tx) = self.tx.lock().unwrap().as_ref() {
+        if let Some(tx) = self.tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
             match tx.try_send(e) {
                 Ok(()) | Err(TrySendError::Full(_)) => {}
                 Err(TrySendError::Disconnected(_)) => {}
@@ -454,7 +456,7 @@ impl Store {
     /// is stored (the matching itself is the same), the window then says why it is empty.
     pub fn begin_round(&self, total: usize, label: &str, recording: bool) {
         {
-            let mut r = self.round.write().unwrap();
+            let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             let number = self.rounds.fetch_add(1, Ordering::AcqRel) + 1;
             *r = Round {
                 slots: Vec::with_capacity(total),
@@ -474,7 +476,7 @@ impl Store {
     }
     pub fn end_round(&self, cancelled: bool) {
         {
-            let mut r = self.round.write().unwrap();
+            let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             if r.phase != Phase::Running {
                 return;
             }
@@ -503,7 +505,7 @@ impl Store {
     pub fn finish_patch(&self, data: PatchData, state: PatchState, focused: bool) {
         let id = data.id;
         {
-            let mut r = self.round.write().unwrap();
+            let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             if r.phase != Phase::Running {
                 return;
             }
@@ -532,7 +534,7 @@ impl Store {
         let Some(i) = (id as usize).checked_sub(1) else {
             return;
         };
-        let mut r = self.round.write().unwrap();
+        let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut delta = (0isize, 0isize);
         if let Some(Some((_, st))) = r.slots.get_mut(i) {
             st.cp = cp;

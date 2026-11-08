@@ -313,6 +313,7 @@ impl PanoApp {
                             ui.label(RichText::new("Drop photos onto the window\nor press ➕ Add").color(MUTED).small());
                         });
                     }
+                    let busy = self.busy();
                     for i in 0..self.photos.len() {
                         let menu_state = self.menu_state(i);
                         let p = &mut self.photos[i];
@@ -351,7 +352,12 @@ impl PanoApp {
                                             ui.label(RichText::new(t).small().color(c));
                                         }
                                         ui.horizontal(|ui| {
-                                            if ui.checkbox(&mut p.enabled, RichText::new("use").small()).changed() {
+                                            // a running job (alignment, point search) works with the photos in use at its start
+                                            if ui
+                                                .add_enabled(!busy, egui::Checkbox::new(&mut p.enabled, RichText::new("use").small()))
+                                                .on_disabled_hover_text("Wait until the running job is finished (or cancel it).")
+                                                .changed()
+                                            {
                                                 toggled = true;
                                             }
                                             if ui.small_button("🗑").on_hover_text("Remove this photo").clicked() {

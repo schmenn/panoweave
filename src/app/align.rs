@@ -170,7 +170,7 @@ impl PanoApp {
             // of groups and open the point editor with the first photo of the first two groups
             self.set_status(
                 format!(
-                    "Warning {} unconnected image groups found: {}. Please create control points between unconnected images in step 2, then press “Align photos” again.",
+                    "Warning {} unconnected image groups found: {}. Please create control points between unconnected images in step 2, then press “Align photos” again.{fine_note}",
                     groups.len(),
                     groups_text(&groups)
                 ),

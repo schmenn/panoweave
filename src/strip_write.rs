@@ -253,7 +253,7 @@ impl jpeg_encoder::ImageBuffer for PullImage {
         self.h
     }
     fn fill_buffers(&self, y: u16, buffers: &mut [Vec<u8>; 4]) {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let y = y as usize;
         while y >= s.y0 + s.rows {
             match s.rx.recv() {

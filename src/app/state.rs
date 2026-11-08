@@ -153,9 +153,33 @@ impl PanoApp {
                     *g = (v, s.to_string());
                 }
             };
-            let msg = f(&report, &c2);
+            // a panic in the job must not leave the program "busy" for ever: it becomes a message
+            let msg = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&report, &c2))) {
+                Ok(m) => m,
+                Err(e) => JobMsg::Failed(panic_text(e.as_ref())),
+            };
             let _ = tx.send(msg);
         });
         self.job = Some(Job { title: title.into(), rx, progress, cancel, started: Instant::now() });
+    }
+}
+
+/// The text of a panic payload (`panic!("...")` gives a `&str` or a `String`).
+pub(super) fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
+    e.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "unknown error".into())
+}
+
+/// What a receiver of a worker has: a result, nothing yet, or nothing ever (the worker ended without sending).
+pub(super) enum Ready<T> {
+    Value(T),
+    Empty,
+    Gone,
+}
+
+pub(super) fn ready<T>(rx: &Receiver<T>) -> Ready<T> {
+    match rx.try_recv() {
+        Ok(v) => Ready::Value(v),
+        Err(std::sync::mpsc::TryRecvError::Empty) => Ready::Empty,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Ready::Gone,
     }
 }
