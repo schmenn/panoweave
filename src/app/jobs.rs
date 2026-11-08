@@ -89,6 +89,11 @@ impl PanoApp {
                 }
                 let _ = elapsed;
             }
+        self.poll_gains();
+        if self.gains_pending() {
+            // nothing else may cause a frame while the worker runs
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         match self.preview_rx.as_ref().map(ready) {
             Some(Ready::Gone) => {
                 // the preview worker ended without a picture: allow a new one instead of waiting for ever
@@ -134,7 +139,8 @@ impl PanoApp {
     }
 
     pub(super) fn request_preview(&mut self, max_w: usize, fast: bool) {
-        if self.preview_rx.is_some() || !self.aligned {
+        // with a brightness update on its way the preview would show the old brightness: wait for it
+        if self.preview_rx.is_some() || !self.aligned || self.gains_pending() {
             return;
         }
         let rp = self.render_photos(true);
@@ -206,5 +212,60 @@ mod tests {
         app.poll(&egui::Context::default());
         assert!(app.preview_rx.is_none(), "a new preview can be requested");
         assert!(app.status.contains("preview could not be made"), "{}", app.status);
+    }
+
+    fn gains_update(n: usize, v: f32) -> super::super::pipeline::GainsUpdate {
+        super::super::pipeline::GainsUpdate { gains: vec![[v; 3]; n], gain_maps: vec![None; n], lens_models: vec![None; n] }
+    }
+
+    /// The brightness update runs on a worker; its result is taken over when it arrives, and the
+    /// export and previews wait for it meanwhile.
+    #[test]
+    fn the_brightness_update_is_taken_over_when_it_arrives() {
+        let mut app = app_with_photos(2);
+        let ctx = egui::Context::default();
+        app.update_gains();
+        assert!(app.gains_pending(), "the export waits");
+        let t0 = Instant::now();
+        while app.gains_pending() {
+            assert!(t0.elapsed().as_secs() < 20, "the update never arrived");
+            app.poll(&ctx);
+            std::thread::yield_now();
+        }
+        assert_eq!(app.gains.len(), 2);
+        assert!(app.preview_dirty, "the preview is made again with the new values");
+    }
+
+    /// A result made for other photos (one added or removed meanwhile, or an older request) is dropped.
+    #[test]
+    fn a_brightness_update_for_other_photos_is_dropped() {
+        let mut app = app_with_photos(2);
+        let ctx = egui::Context::default();
+        // wrong number of photos
+        let (tx, rx) = channel();
+        tx.send((app.gains_gen, gains_update(3, 2.0))).unwrap();
+        app.gains_rx = Some(rx);
+        app.poll(&ctx);
+        assert!(!app.gains_pending() && app.gains.iter().all(|g| *g != [2.0; 3]));
+        // an older request
+        let (tx, rx) = channel();
+        app.gains_gen += 1;
+        tx.send((app.gains_gen - 1, gains_update(2, 2.0))).unwrap();
+        app.gains_rx = Some(rx);
+        app.poll(&ctx);
+        assert!(!app.gains_pending() && app.gains.iter().all(|g| *g != [2.0; 3]));
+        // the right one
+        let (tx, rx) = channel();
+        tx.send((app.gains_gen, gains_update(2, 2.0))).unwrap();
+        app.gains_rx = Some(rx);
+        app.poll(&ctx);
+        assert_eq!(app.gains, vec![[2.0; 3]; 2]);
+        // a worker that ended without a result is reported, the old values stay
+        let (tx, rx) = channel::<(u64, super::super::pipeline::GainsUpdate)>();
+        drop(tx);
+        app.gains_rx = Some(rx);
+        app.poll(&ctx);
+        assert!(!app.gains_pending() && app.status.contains("Brightness matching could not be worked out"), "{}", app.status);
+        assert_eq!(app.gains, vec![[2.0; 3]; 2]);
     }
 }

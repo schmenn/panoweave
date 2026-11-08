@@ -141,6 +141,7 @@ The preview shows the whole panorama.
 - **Match brightness and colour between photos**: one correction per photo.
 - **Smooth brightness correction across each photo**: evens out sky gradients, vignetting and auto exposure inside each photo, so the outlines of single photos do not show as rectangles.
 - **Lens correction (response curve + vignetting per lens)**: an experiment, off by default. It helped on one test set and not on another.
+- The brightness values are worked out in the background (after aligning, opening a project, turning the view in step 4 or changing these switches; up to about a second with the lens correction). Meanwhile the preview keeps the old brightness and **Export panorama** is greyed out for that moment.
 - **Use the sharpest photo where photos overlap**, **Sharper resampling**: detail options, on by default.
 - **Smart seams** (off by default, only with Smooth seams): searches, once for the whole panorama, where the photos agree, so close objects seen from two sides (poles, lamps, people) are not cut in two.
 - **Masks** ("🖌 Edit masks…", only with Smooth seams): paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole. "Show seams" shows which photo wins where. Masks are saved in the project.
@@ -198,7 +199,7 @@ Lays the two photos of the pair on screen over each other (blend, difference, ch
 
 ### Patch comparison
 
-Shows every patch the fine alignment measured: where it was, how well it matched, and why a patch was rejected. You can shift a patch by hand, disable it and restart the optimisation from there. Needs "Record patches for this window" in the fine alignment settings.
+Shows every patch the fine alignment measured: where it was, how well it matched, and why a patch was rejected. You can shift a patch by hand, disable it and restart the optimisation from there. A shift made while the alignment is still running is kept (the running round no longer overwrites it). Needs "Record patches for this window" in the fine alignment settings.
 
 ![Patch comparison](guide/patches.png)
 
@@ -272,6 +273,7 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 | fine alignment changed nothing: no control areas … | "Add control areas" is off, so there was nothing to judge the rounds with. |
 | Project opened with N of M photos – missing: … | Some photo files were not found; the others were opened with their points. |
 | … failed with an internal error … | A program error in a background job; nothing was changed. |
+| Patch N: the shifted spot lies outside photo B (patch list: "shifted by hand outside photo B") | A patch was dragged so far that its spot left photo B; it cannot be used and is marked rejected. Drag it back or reset it. |
 
 ---
 
