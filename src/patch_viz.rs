@@ -164,21 +164,19 @@ pub fn patch_pair(d: &PatchData, shift: (f32, f32), space: DiffSpace, rgb: Optio
                 for x in -h..=h {
                     let i = (y + h) as usize * n + (x + h) as usize;
                     let da = d.plane.dir(x as f64, y as f64);
-                    if let Some(q) = d.geo_a.dir_to_px(da).filter(|q| d.geo_a.inside(*q, 0.0)) {
-                        if let Some(c) = sample_rgb(ia, q.0 * sa.0, q.1 * sa.1, ga) {
+                    if let Some(q) = d.geo_a.dir_to_px(da).filter(|q| d.geo_a.inside(*q, 0.0))
+                        && let Some(c) = sample_rgb(ia, q.0 * sa.0, q.1 * sa.1, ga) {
                             p.a[i] = c;
                             p.va[i] = true;
                             p.fa[i] = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
                         }
-                    }
                     let db = d.plane.dir(x as f64 + shift.0 as f64, y as f64 + shift.1 as f64);
-                    if let Some(q) = d.geo_b.dir_to_px(db).filter(|q| d.geo_b.inside(*q, 0.0)) {
-                        if let Some(c) = sample_rgb(ib, q.0 * sb.0, q.1 * sb.1, gb) {
+                    if let Some(q) = d.geo_b.dir_to_px(db).filter(|q| d.geo_b.inside(*q, 0.0))
+                        && let Some(c) = sample_rgb(ib, q.0 * sb.0, q.1 * sb.1, gb) {
                             p.b[i] = c;
                             p.vb[i] = true;
                             p.fb[i] = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
                         }
-                    }
                 }
             }
             Some(p)

@@ -185,11 +185,10 @@ pub fn similarity_weighted(seeds: &[(P2, P2)], center: Option<P2>, radius: f64) 
         r.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
         let limit = (3.0 * r[r.len() / 2]).max(3.0);
         let keep: Vec<usize> = all.iter().copied().filter(|&i| resid(&j, i) <= limit).collect();
-        if keep.len() >= 2 && keep.len() < all.len() {
-            if let Some(f) = fit(&keep) {
+        if keep.len() >= 2 && keep.len() < all.len()
+            && let Some(f) = fit(&keep) {
                 (j, ma, mb) = f;
             }
-        }
     }
     let _ = (ma, mb);
     Some(j)
@@ -243,11 +242,10 @@ pub fn run(a: usize, b: usize, ga: &Gray, gb: &Gray, click_a: P2, click_b: P2, h
         if let Some(j) = similarity_weighted(&priors.seeds, Some(click_a), cfg.seed_radius) {
             cands.push((j, format!("from the {} points of this pair, weighted near the click", priors.seeds.len())));
         }
-        if let Some(h) = hint.clone() {
-            if cands.iter().all(|c| c.0 != h.0) {
+        if let Some(h) = hint.clone()
+            && cands.iter().all(|c| c.0 != h.0) {
                 cands.push(h);
             }
-        }
         if let Some(j) = priors.align {
             cands.push((j, "from the alignment (lens, zoom, rotation)".to_string()));
         }
@@ -310,12 +308,11 @@ pub fn run(a: usize, b: usize, ga: &Gray, gb: &Gray, click_a: P2, click_b: P2, h
         }
         }
         let best = cands.par_iter().map(|&cj| (cj, try_j(cj))).max_by(|x, y| (x.1.valid, x.1.score).partial_cmp(&(y.1.valid, y.1.score)).unwrap_or(std::cmp::Ordering::Equal));
-        if let Some((bj, bm)) = best {
-            if (bm.valid, bm.score) > (m.valid, m.score) {
+        if let Some((bj, bm)) = best
+            && (bm.valid, bm.score) > (m.valid, m.score) {
                 j = bj;
                 m = bm;
             }
-        }
         if cfg.local_rotation && (m.valid, m.score) > before && !cands.is_empty() {
             src = format!("{src}, rotation and zoom searched around it");
         }

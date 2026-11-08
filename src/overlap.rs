@@ -133,7 +133,7 @@ pub fn render_overlap(photos: [&RenderPhoto; 2], plane: &Plane, rw: usize, rh: u
                         continue;
                     }
                     OverlapMode::Checker => {
-                        if ((x / tile) + (y / tile)) % 2 == 0 { u } else { v }
+                        if ((x / tile) + (y / tile)).is_multiple_of(2) { u } else { v }
                     }
                 },
                 (Some(u), None) | (None, Some(u)) => [u[0] * 0.35, u[1] * 0.35, u[2] * 0.35],

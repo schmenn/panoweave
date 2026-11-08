@@ -35,3 +35,14 @@ opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# `cargo clippy --all-targets -- -D warnings` runs in the CI. Lints switched off on purpose:
+[lints.clippy]
+# Numeric and pipeline functions take many plain parameters; bundling them into structs would not make them clearer.
+too_many_arguments = "allow"
+# Nested result tuples of worker jobs are read in one place each.
+type_complexity = "allow"
+# Index loops over several parallel arrays (matrices, pyramids, rows) are clearer than zipped iterators.
+needless_range_loop = "allow"
+# `!(a >= b)` is used on purpose: a NaN value must make the check fail (stop / undo a round / filter out).
+neg_cmp_op_on_partial_ord = "allow"

@@ -78,8 +78,8 @@ impl PanoApp {
         }
         // PW_OUT2=<file>: after the first export, the same alignment is exported again (with another
         // PW_EXPORT_MB it shows that the memory does not change the picture)
-        if d == "render" && self.render_started && !self.busy() && self.last_output.is_some() && !self.second_render_started {
-            if let Ok(o2) = std::env::var("PW_OUT2") {
+        if d == "render" && self.render_started && !self.busy() && self.last_output.is_some() && !self.second_render_started
+            && let Ok(o2) = std::env::var("PW_OUT2") {
                 self.second_render_started = true;
                 // SAFETY: as below, UI thread only
                 unsafe { std::env::remove_var("PW_OLD_EXPORT") };
@@ -95,7 +95,6 @@ impl PanoApp {
                 self.last_output = None;
                 self.run_render();
             }
-        }
     }
 
     /// `pointsel` / `pointdrag` demos: show a selected point zoomed in.
@@ -129,12 +128,11 @@ impl PanoApp {
                     self.step = Step::Points;
                     // experiments: PW_OV_PAIR=a,b (0-based), PW_OV_MODE=0|1|2, PW_OV_ZOOM, PW_OV_FILTER=0
                     let env = |k: &str| std::env::var(k).ok();
-                    if let Some((a, b)) = env("PW_OV_PAIR").and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<usize>().ok()?, b.trim().parse::<usize>().ok()?)))) {
-                        if a < self.photos.len() && b < self.photos.len() {
+                    if let Some((a, b)) = env("PW_OV_PAIR").and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<usize>().ok()?, b.trim().parse::<usize>().ok()?))))
+                        && a < self.photos.len() && b < self.photos.len() {
                             self.pe.a = a;
                             self.pe.b = b;
                         }
-                    }
                     if let Some(m) = env("PW_OV_MODE").and_then(|v| v.parse().ok()) {
                         self.ov_mode = m;
                     }

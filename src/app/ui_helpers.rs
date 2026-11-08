@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(st.visuals.menu_corner_radius, CornerRadius::same(RADIUS_CARD));
         assert_eq!(st.spacing.item_spacing, Vec2::new(GAP, GAP_Y));
         assert_eq!(st.spacing.interact_size.y, ROW_H);
-        assert!(RADIUS < RADIUS_CARD && BIG_H > ROW_H);
+        const { assert!(RADIUS < RADIUS_CARD && BIG_H > ROW_H) };
     }
 
     /// The arguments of the call that starts at `open` (the index just after its `(`), split at top-level commas.

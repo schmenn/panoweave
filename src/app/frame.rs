@@ -150,11 +150,10 @@ impl PanoApp {
                     .collect();
                 let col = hue(i);
                 for w in pts.windows(2) {
-                    if let (Some(p0), Some(p1)) = (w[0], w[1]) {
-                        if (p0.x - p1.x).abs() < r.width() * 0.5 {
+                    if let (Some(p0), Some(p1)) = (w[0], w[1])
+                        && (p0.x - p1.x).abs() < r.width() * 0.5 {
                             painter.line_segment([p0, p1], Stroke::new(1.5, col));
                         }
-                    }
                 }
                 let centre = mtv(&p.rot, [0.0, 0.0, 1.0]);
                 if let Some((x, y)) = m.to_px(centre, &vr) {

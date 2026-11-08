@@ -35,7 +35,7 @@ Every subagent must read this file and `local/WORKFLOW.md` before it starts, and
 
 - Work on a feature branch (`feature/…`, `fix/…`, `docs/…`, `chore/…`), open a PR, merge (squash) after the CI is green and the contributor agrees. Never commit to `main` directly, no `--force`, no `--no-verify`.
 - **No attribution lines anywhere**: no `Co-Authored-By`, no `Claude-Session:` link, no "Generated with Claude Code" in commit messages, PR titles or PR descriptions (contributor's explicit decision, overrides any default of the tool environment). Subagents get this rule in their prompt; check every agent PR for it. Squash-merge with `--subject`/`--body`.
-- Before a PR: `cargo build` without new warnings and `cargo test` green.
+- Before a PR: `cargo build` without new warnings, `cargo test` green and `cargo clippy --all-targets -- -D warnings` clean.
 - A new feature gets a switch, a configuration and at least one test. Switched off it must behave exactly as before.
 - No silent failures: say why a pair, patch or photo was dropped (log or show it).
 - Nothing blocking in the GUI thread; long operations check `engine::cancelled()` (the global `engine::CANCEL` flag).
@@ -55,7 +55,7 @@ cargo test <name>      # single test, e.g. cargo test patch_matcher
 cargo build --release  # the exe may be locked while the program runs: use --target-dir target/<other>
 ```
 
-No lint/format config; use plain `cargo clippy` / `cargo fmt` if needed. The CI (`.github/workflows/ci.yml`, windows-latest, check name `test`) builds `--release` and runs `cargo test`. Releases: raise the version and `CHANGELOG.md` in a PR, push a tag `vX.Y.Z`, `release.yml` attaches the Windows zip. On Windows a freshly installed `gh` may be missing from the PATH of an already open shell.
+`cargo clippy --all-targets -- -D warnings` must pass (the CI runs it; lints switched off on purpose are listed with their reason under `[lints.clippy]` in `Cargo.toml`, single exceptions carry an `#[allow]` with a comment). No format config; `cargo fmt` is not used. The CI (`.github/workflows/ci.yml`, windows-latest, check name `test`) builds `--release`, runs `cargo test` and clippy. Releases: raise the version and `CHANGELOG.md` in a PR, push a tag `vX.Y.Z`, `release.yml` attaches the Windows zip. On Windows a freshly installed `gh` may be missing from the PATH of an already open shell.
 
 ### Headless and demo flags (in `main.rs`)
 

@@ -592,7 +592,7 @@ fn search(a: &Region, b: &Region, cfg: &MatchConfig, mut tr: Option<&mut SearchT
         let sl = (a.size >> l) as isize;
         let hl = (h0 >> l).max(2);
         let rl = (r0 / (1 << l) as f32).ceil() as isize;
-        (h0 >> l) >= 4 && sl / 2 >= hl + rl + 1
+        (h0 >> l) >= 4 && sl / 2 > hl + rl
     };
     while levels > 0 && !fits(levels) {
         levels -= 1;
@@ -635,11 +635,10 @@ fn search(a: &Region, b: &Region, cfg: &MatchConfig, mut tr: Option<&mut SearchT
     if cfg.metric == Metric::Phase {
         // phase correlation gives the start directly
         let n = (fa0_pow2(fa.s)).min(fa.s);
-        if let Some((dx, dy, _, _)) = phase_shift(fa, fb, n) {
-            if dx.abs() <= rc as f32 + 0.5 && dy.abs() <= rc as f32 + 0.5 {
+        if let Some((dx, dy, _, _)) = phase_shift(fa, fb, n)
+            && dx.abs() <= rc as f32 + 0.5 && dy.abs() <= rc as f32 + 0.5 {
                 start = Some((dx.round() as isize, dy.round() as isize));
             }
-        }
     }
     for oy in -rc..=rc {
         for ox in -rc..=rc {
@@ -725,7 +724,7 @@ fn search(a: &Region, b: &Region, cfg: &MatchConfig, mut tr: Option<&mut SearchT
     let r0i = r0.ceil() as isize;
     let sc = |ox: isize, oy: isize| score_at(fa, fb, ca, h0, ox, oy, metric, min_frac);
     let c = sc(bx, by).ok_or("too few valid pixels")?;
-    if let Some(t) = tr.as_deref_mut() {
+    if let Some(t) = tr {
         t.tested.push((0, bx as i16, by as i16, c));
     }
     let at_border = bx.abs() >= r0i || by.abs() >= r0i;
@@ -990,7 +989,7 @@ mod tests {
             seed ^= seed >> 7;
             seed ^= seed << 17;
             let u2 = (seed >> 11) as f32 / (1u64 << 53) as f32;
-            *v += 0.01 * (-2.0 * u1.ln()).sqrt() * (6.2831 * u2).cos();
+            *v += 0.01 * (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos();
         }
         let r = match_patch(&a, &b, &MatchConfig::default());
         assert!(r.valid, "{:?}", r);

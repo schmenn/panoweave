@@ -374,11 +374,10 @@ impl PanoApp {
                         self.apply_photo_action(i, a);
                     }
                 }
-                if let Some(i) = remove {
-                    if !self.busy() {
+                if let Some(i) = remove
+                    && !self.busy() {
                         self.remove_photo(i);
                     }
-                }
             });
     }
 
@@ -435,11 +434,10 @@ impl PanoApp {
                     if ui.add_enabled(!self.busy(), egui::Button::new(RichText::new("🖼  Try it with sample photos").size(BIG_FONT)).min_size(Vec2::new(230.0, BIG_H))).clicked() {
                         self.load_sample();
                     }
-                    if ui.add_enabled(!self.busy(), egui::Button::new(RichText::new("📂  Open a saved project").size(BIG_FONT)).min_size(Vec2::new(230.0, BIG_H))).clicked() {
-                        if let Some(p) = rfd::FileDialog::new().add_filter("PanoWeave project", &["pwproj"]).pick_file() {
+                    if ui.add_enabled(!self.busy(), egui::Button::new(RichText::new("📂  Open a saved project").size(BIG_FONT)).min_size(Vec2::new(230.0, BIG_H))).clicked()
+                        && let Some(p) = rfd::FileDialog::new().add_filter("PanoWeave project", &["pwproj"]).pick_file() {
                             self.open_project(&p);
                         }
-                    }
                 });
                 ui.add_space(26.0);
                 ui.horizontal_wrapped(|ui| {

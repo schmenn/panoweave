@@ -245,11 +245,10 @@ pub fn best_rotation(c: &Corr, pf: P2, s: f64, guess: P2) -> ([f64; 4], f32) {
         let a = (k as f64 * 15.0).to_radians();
         let (sn, cs) = a.sin_cos();
         let j = [s * cs, -s * sn, s * sn, s * cs];
-        if let Some((_, _, v)) = refine(c, pf, j, guess, 2.0) {
-            if v > best.1 {
+        if let Some((_, _, v)) = refine(c, pf, j, guess, 2.0)
+            && v > best.1 {
                 best = (j, v);
             }
-        }
     }
     // fine angle around the best
     let base = best.0[2].atan2(best.0[0]);
@@ -257,11 +256,10 @@ pub fn best_rotation(c: &Corr, pf: P2, s: f64, guess: P2) -> ([f64; 4], f32) {
         let a = base + d.to_radians();
         let (sn, cs) = a.sin_cos();
         let j = [s * cs, -s * sn, s * sn, s * cs];
-        if let Some((_, _, v)) = refine(c, pf, j, guess, 2.0) {
-            if v > best.1 {
+        if let Some((_, _, v)) = refine(c, pf, j, guess, 2.0)
+            && v > best.1 {
                 best = (j, v);
             }
-        }
     }
     best
 }
@@ -328,11 +326,10 @@ pub fn grow(
     for _round in 0..8 {
         // refresh the model from everything accepted so far
         let pairs: Vec<(P2, P2)> = accepted.iter().map(|a| (a.0, a.1)).collect();
-        if pairs.len() >= 2 {
-            if let Some(m) = estimate(&pairs, s_fm, gf.w.max(gf.h) as f64) {
+        if pairs.len() >= 2
+            && let Some(m) = estimate(&pairs, s_fm, gf.w.max(gf.h) as f64) {
                 t_fm = m;
             }
-        }
         let search = if accepted.len() < 6 { 14.0 } else { 6.0 } * s_fm.max(1.0);
         let near: Vec<P2>;
         (near, cands) = cands.into_iter().partition(|c| accepted.iter().any(|a| (a.0 .0 - c.0).hypot(a.0 .1 - c.1) < radius));

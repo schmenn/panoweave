@@ -49,7 +49,7 @@ fn a_painted_photo_hands_its_mask_to_the_renderer_and_the_export() {
     let rp = app.render_photos(true);
     assert_eq!(rp.len(), 2);
     assert!(rp[0].mask.is_some());
-    assert_eq!(app.export_sources()[0].9.is_some(), true);
+    assert!(app.export_sources()[0].9.is_some());
 }
 
 #[test]

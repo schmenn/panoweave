@@ -237,11 +237,10 @@ impl<'a> Problem<'a> {
             // the masks are ignored where they would leave no photo at all
             mode[b] = if !any || !any_ok { 0 } else if any_pos { 2 } else { 1 };
             for p in photos {
-                if let Some(s) = p.at(bw, bx, by) {
-                    if Self::allowed_in(mode[b], s) && s.score > best[b] {
+                if let Some(s) = p.at(bw, bx, by)
+                    && Self::allowed_in(mode[b], s) && s.score > best[b] {
                         best[b] = s.score;
                     }
-                }
             }
         }
         Problem { bw, bh, photos, cfg, mode, best }
@@ -602,11 +601,10 @@ fn solve(photos: &[PhotoBlocks], bw: usize, bh: usize, cfg: &SeamConfig, init: O
     let best_start = |b: usize| -> u16 {
         let mut best = (NONE, f32::MIN);
         for i in 0..photos.len() {
-            if let Some(s) = pr.sample(i, b) {
-                if s.score > best.1 {
+            if let Some(s) = pr.sample(i, b)
+                && s.score > best.1 {
                     best = (i as u16, s.score);
                 }
-            }
         }
         best.0
     };
@@ -659,14 +657,13 @@ fn solve(photos: &[PhotoBlocks], bw: usize, bh: usize, cfg: &SeamConfig, init: O
                     if o == a {
                         continue;
                     }
-                    if let Some(e) = e {
-                        if blocks.iter().any(|&b| {
+                    if let Some(e) = e
+                        && blocks.iter().any(|&b| {
                             let (bx, by) = (b % bw, b / bw);
                             bx + 1 >= e.0 && bx < e.1 + 1 && by + 1 >= e.2 && by < e.3 + 1
                         }) {
                             dirty[o] = true;
                         }
-                    }
                 }
             }
             pending = rest;
@@ -912,7 +909,7 @@ mod tests {
         let cols: Vec<usize> = (0..20).filter(|&x| m[2 * 20 + x]).collect();
         assert_eq!(cols, vec![7, 8, 9, 10, 11, 12]);
         // a single photo has no seam
-        assert!(band_mask(&vec![0u16; 100], 20, 5, 3).iter().all(|&v| !v));
+        assert!(band_mask(&[0u16; 100], 20, 5, 3).iter().all(|&v| !v));
     }
 
     #[test]

@@ -91,11 +91,10 @@ pub fn write_file(path: &Path, w: usize, h: usize, o: &WriteOptions, produce: im
     if w > u32::MAX as usize || h > u32::MAX as usize {
         return Err("the picture is too large for this file format".into());
     }
-    if let Format::Jpeg { .. } = o.format {
-        if w > JPEG_MAX_SIDE || h > JPEG_MAX_SIDE {
+    if let Format::Jpeg { .. } = o.format
+        && (w > JPEG_MAX_SIDE || h > JPEG_MAX_SIDE) {
             return Err(format!("JPEG files can be at most {JPEG_MAX_SIDE} pixels wide or high (this picture is {w} x {h}) – choose TIFF or a smaller size"));
         }
-    }
     let file = File::create(path).map_err(|e| format!("could not create {}: {e}", path.display()))?;
     let out = BufWriter::with_capacity(FILE_BUFFER, file);
     match o.format {
@@ -115,7 +114,7 @@ pub fn write_file(path: &Path, w: usize, h: usize, o: &WriteOptions, produce: im
 
 /// Checks that strips come in order and have the expected size; returns the number of rows.
 fn check_strip(next_y: usize, y0: usize, w: usize, h: usize, col: &[[f32; 3]], cov: &[f32]) -> Result<usize, String> {
-    if col.len() != cov.len() || w == 0 || col.len() % w != 0 {
+    if col.len() != cov.len() || w == 0 || !col.len().is_multiple_of(w) {
         return Err("a strip of the picture has the wrong size".into());
     }
     let rows = col.len() / w;
@@ -268,7 +267,7 @@ impl jpeg_encoder::ImageBuffer for PullImage {
             }
         }
         let row = &s.rgb[(y - s.y0) * 3 * self.w as usize..][..3 * self.w as usize];
-        for p in row.chunks_exact(3) {
+        for p in row.as_chunks::<3>().0 {
             let (yy, cb, cr) = jpeg_encoder::rgb_to_ycbcr(p[0], p[1], p[2]);
             buffers[0].push(yy);
             buffers[1].push(cb);
@@ -288,7 +287,7 @@ impl RowSink for JpegSink {
     fn push(&mut self, y0: usize, col: &[[f32; 3]], cov: &[f32]) -> Result<(), String> {
         let rows = check_strip(self.next_y, y0, self.w, self.h, col, cov)?;
         let rgba = to_rgba8(col, cov);
-        let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
         drop(rgba);
         self.tx.as_ref().ok_or("the JPEG writer has stopped")?.send((y0, rgb)).map_err(|_| "the JPEG encoder stopped unexpectedly".to_string())?;
         self.next_y += rows;

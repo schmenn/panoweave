@@ -656,11 +656,10 @@ impl PatchWindow {
                         self.s.pos = Some([r.min.x, r.min.y]);
                     }
                 }
-                if let Some(r) = inner {
-                    if r.width() >= 1.0 && r.height() >= 1.0 {
+                if let Some(r) = inner
+                    && r.width() >= 1.0 && r.height() >= 1.0 {
                         self.s.size = [r.width(), r.height()];
                     }
-                }
             }
             self.ui(ui, pc);
             // Ctrl+Z / Ctrl+Y act on the control points; the app performs the step
@@ -688,24 +687,23 @@ impl PatchWindow {
         if let Some(rx) = &self.rx {
             while let Ok(e) = rx.try_recv() {
                 match e {
-                    Event::MatchingStarted { .. } => {
+                    Event::MatchingStarted => {
                         force = true;
                         self.current = None;
                     }
                     Event::PatchStarted { id, levels, image_a, image_b } => self.current = Some((id, levels, image_a, image_b)),
                     Event::PatchProgress(f) => self.live_new = Some(f),
-                    Event::PatchFinished { .. } => {}
-                    Event::MatchingFinished { .. } | Event::MatchingCancelled | Event::Freed => force = true,
+                    Event::PatchFinished => {}
+                    Event::MatchingFinished | Event::MatchingCancelled | Event::Freed => force = true,
                 }
             }
         }
         // live preview: only the newest frame, at most every GUI_REFRESH_MS
-        if !self.paused && self.last_live_draw.elapsed() >= Duration::from_millis(GUI_REFRESH_MS) {
-            if let Some(f) = self.live_new.take() {
+        if !self.paused && self.last_live_draw.elapsed() >= Duration::from_millis(GUI_REFRESH_MS)
+            && let Some(f) = self.live_new.take() {
                 self.live_shown = Some(f);
                 self.last_live_draw = Instant::now();
             }
-        }
         let pk = pc.pano.as_ref().map(|(v, w)| format!("{:?}{:?}{:.0}", v.bounds, v.projection, w)).unwrap_or_default();
         if pk != self.pano_key {
             self.pano_key = pk;
@@ -740,12 +738,11 @@ impl PatchWindow {
                 self.dtex.map_key.clear();
             }
         }
-        if let Some(job) = &self.export {
-            if job.done.load(Ordering::Acquire) {
+        if let Some(job) = &self.export
+            && job.done.load(Ordering::Acquire) {
                 self.msg = job.progress.lock().map(|g| g.2.clone()).unwrap_or_default();
                 self.export = None;
             }
-        }
     }
 
     fn pending_thumb_texture(&mut self, id: u32, sig: String, w: usize, px: Vec<u8>, rejected: bool) {
@@ -791,41 +788,36 @@ impl PatchWindow {
         self.state = state;
         self.info = info;
         self.rows_key.clear();
-        if let Some(w) = self.want_view {
-            if self.by_id.contains_key(&w) {
+        if let Some(w) = self.want_view
+            && self.by_id.contains_key(&w) {
                 self.want_view = None;
                 self.open_detail(w);
             }
-        }
     }
 
     fn passes(&self, i: usize) -> bool {
         let (d, st) = (&self.data[i], &self.state[i]);
         let f = &self.s.filter;
-        if let Some(p) = f.pair {
-            if (d.image_a, d.image_b) != p {
+        if let Some(p) = f.pair
+            && (d.image_a, d.image_b) != p {
                 return false;
             }
-        }
         if !f.show[category(st)] {
             return false;
         }
-        if let Some(r) = &f.reason {
-            if st.reason != r.as_str() {
+        if let Some(r) = &f.reason
+            && st.reason != r.as_str() {
                 return false;
             }
-        }
         let within = |v: f32, lo: &str, hi: &str| {
-            if let Some(l) = parse(lo) {
-                if !(v >= l) {
+            if let Some(l) = parse(lo)
+                && !(v >= l) {
                     return false;
                 }
-            }
-            if let Some(h) = parse(hi) {
-                if !(v <= h) {
+            if let Some(h) = parse(hi)
+                && !(v <= h) {
                     return false;
                 }
-            }
             true
         };
         within(st.score, &f.score_min, &f.score_max) && within(st.confidence, &f.conf_min, &f.conf_max) && within(st.magnitude(), &f.mag_min, &f.mag_max)
@@ -1070,16 +1062,14 @@ impl PatchWindow {
             if down {
                 dy += step;
             }
-            if dx != 0.0 || dy != 0.0 {
-                if let Some(id) = self.detail {
-                    if let Some(&i) = self.by_id.get(&id) {
+            if (dx != 0.0 || dy != 0.0)
+                && let Some(id) = self.detail
+                    && let Some(&i) = self.by_id.get(&id) {
                         let st = &self.state[i];
                         // moving B right means the matching spot in B lies further left
                         let s = (st.dx - dx, st.dy - dy);
                         self.commit_shift(id, s);
                     }
-                }
-            }
         } else {
             if up || left {
                 self.step_detail(-1);
@@ -1104,15 +1094,14 @@ impl PatchWindow {
                         self.paused = !self.paused;
                     }
                     let cur = self.current.map(|c| c.0).or(self.live_shown.as_ref().map(|f| f.id));
-                    if ui.add_enabled(cur.is_some(), egui::Button::new("View current patch")).on_hover_text("Opens the detail view of the patch being matched as soon as it is finished.").clicked() {
-                        if let Some(id) = cur {
+                    if ui.add_enabled(cur.is_some(), egui::Button::new("View current patch")).on_hover_text("Opens the detail view of the patch being matched as soon as it is finished.").clicked()
+                        && let Some(id) = cur {
                             if self.by_id.contains_key(&id) {
                                 self.open_detail(id);
                             } else {
                                 self.want_view = Some(id);
                             }
                         }
-                    }
                 });
                 ui.add_enabled_ui(self.s.live, |ui| {
                     ui.horizontal(|ui| {
@@ -1177,8 +1166,8 @@ impl PatchWindow {
                 } else {
                     ui.label(RichText::new(t).small().weak());
                 }
-                if let Some(st) = pc.stats {
-                    if st.list_total > 0 {
+                if let Some(st) = pc.stats
+                    && st.list_total > 0 {
                         ui.label(
                             RichText::new(format!(
                                 "Optimisation statistics of this round: {} patches measured, {} valid, {} control areas used",
@@ -1188,7 +1177,6 @@ impl PatchWindow {
                             .weak(),
                         );
                     }
-                }
             });
         });
     }
@@ -1838,18 +1826,16 @@ impl PatchWindow {
                         // dragging B to the right: the matching spot in B lies further left
                         self.drag_shift = Some((self.drag_start.0 - total.x, self.drag_start.1 - total.y));
                     }
-                    if resp.drag_stopped() {
-                        if let Some(s) = self.drag_shift.take() {
+                    if resp.drag_stopped()
+                        && let Some(s) = self.drag_shift.take() {
                             self.commit_shift(id, s);
                         }
-                    }
                 } else {
                     let xw = r.min.x + bw * self.s.wipe;
-                    if resp.dragged() {
-                        if let Some(pp) = resp.interact_pointer_pos() {
+                    if resp.dragged()
+                        && let Some(pp) = resp.interact_pointer_pos() {
                             self.s.wipe = ((pp.x - r.min.x) / bw).clamp(0.0, 1.0);
                         }
-                    }
                     if let Some(t) = &self.dtex.b {
                         let clip = Rect::from_min_max(Pos2::new(xw, r.min.y), r.max);
                         ui.painter_at(clip).image(t.id(), ir, uv, Color32::WHITE);

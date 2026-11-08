@@ -61,7 +61,7 @@ pub fn candidate_pairs(feats: &[features::Features]) -> Vec<(usize, usize)> {
         per[j].push((scores[k], i));
     }
     for i in 0..n {
-        per[i].sort_by(|a, b| b.0.cmp(&a.0));
+        per[i].sort_by_key(|a| std::cmp::Reverse(a.0));
         for &(s, j) in per[i].iter().take(PRESELECT_PARTNERS) {
             if s >= PRESELECT_MIN {
                 keep.insert((i.min(j), i.max(j)));
@@ -334,15 +334,12 @@ pub fn statistical_outliers(cps: &[ControlPoint]) -> Vec<bool> {
     }
     // keep at least 3 points per pair
     for idx in pairs.values() {
-        let mut left = idx.iter().filter(|&&k| !rm[k]).count();
+        let left = idx.iter().filter(|&&k| !rm[k]).count();
         let mut back: Vec<usize> = idx.iter().copied().filter(|&k| rm[k]).collect();
         back.sort_by(|&x, &y| cps[x].err.partial_cmp(&cps[y].err).unwrap_or(std::cmp::Ordering::Equal));
-        for k in back {
-            if left >= 3 {
-                break;
-            }
+        // give back the best removed points until the pair has 3 again
+        for k in back.into_iter().take(3usize.saturating_sub(left)) {
             rm[k] = false;
-            left += 1;
         }
     }
     rm

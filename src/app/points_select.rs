@@ -69,11 +69,10 @@ impl PanoApp {
         if k >= self.cps.len() {
             return;
         }
-        if self.pe.sel.is_empty() {
-            if let Some(s) = self.pe.selected.filter(|&s| s < self.cps.len()) {
+        if self.pe.sel.is_empty()
+            && let Some(s) = self.pe.selected.filter(|&s| s < self.cps.len()) {
                 self.pe.sel.insert(s);
             }
-        }
         if !self.pe.sel.remove(&k) {
             self.pe.sel.insert(k);
             self.pe.selected = Some(k);
