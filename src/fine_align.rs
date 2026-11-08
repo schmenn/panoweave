@@ -861,6 +861,102 @@ fn evaluate(geos: &[Geo], imgs: &Images, test: &[(usize, usize, (f64, f64))], mc
     (if ns > 0 { s / ns as f32 } else { f32::NAN }, if nd > 0 { df / nd as f32 } else { 0.0 }, ns)
 }
 
+/// Independent check of an alignment: how far the photos are still apart, measured by patch
+/// matching on spots that are neither control points nor control areas (a grid that is offset
+/// against the area grid). Removing points cannot make this number better, so it is the measure
+/// for comparing alignment methods. Used by the headless `--accuracy` driver.
+#[derive(Clone, Debug, Default)]
+pub struct Quality {
+    /// spots measured / spots with a valid match
+    pub spots: usize,
+    pub valid: usize,
+    /// remaining shift of the valid spots in working-image pixels
+    pub mean: f32,
+    pub median: f32,
+    pub p90: f32,
+    /// mean absolute grey difference before matching (0..255)
+    pub diff: f32,
+    /// (valid spots, median shift) by the larger distance of the spot from the photo centres
+    /// (share of the long side): below 0.25, 0.25..0.4, above 0.4
+    pub by_radius: [(usize, f32); 3],
+}
+
+/// Spots for `quality`: a regular grid in photo a of every pair that falls into photo b, offset
+/// by an odd fraction of a cell so it never lands on the control-area grid, at most `per_pair`
+/// per pair (evenly thinned). Computed once from one alignment and reused for all variants.
+pub fn quality_spots(photos: &[FaPhoto], lens_of: &[usize], lenses: &[Lens], rots: &[M3], pairs: &[(usize, usize)], cell: f64, per_pair: usize) -> Vec<(usize, usize, (f64, f64))> {
+    let geos: Vec<Geo> = (0..photos.len()).map(|i| Geo { lens: lenses[lens_of[i]], rot: rots[i], w: photos[i].gray.w as f64, h: photos[i].gray.h as f64 }).collect();
+    let margin = 40.0;
+    let mut out = Vec::new();
+    for &(a, b) in pairs {
+        let (ga, gb) = (&geos[a], &geos[b]);
+        let mut v = Vec::new();
+        let (nx, ny) = ((ga.w / cell) as usize, (ga.h / cell) as usize);
+        for gy in 0..ny {
+            for gx in 0..nx {
+                let p = ((gx as f64 + 0.37) * cell, (gy as f64 + 0.61) * cell);
+                if !ga.inside(p, margin) {
+                    continue;
+                }
+                if let Some(q) = gb.dir_to_px(ga.px_to_dir(p))
+                    && gb.inside(q, margin) {
+                        v.push((a, b, p));
+                    }
+            }
+        }
+        if v.len() > per_pair {
+            let step = v.len() as f64 / per_pair as f64;
+            v = (0..per_pair).map(|i| v[(i as f64 * step) as usize]).collect();
+        }
+        out.extend(v);
+    }
+    out
+}
+
+/// Measure the remaining shift on fixed spots (see `Quality`).
+pub fn quality(photos: &[FaPhoto], lens_of: &[usize], lenses: &[Lens], rots: &[M3], spots: &[(usize, usize, (f64, f64))], mcfg: &MatchConfig) -> Quality {
+    let geos: Vec<Geo> = (0..photos.len()).map(|i| Geo { lens: lenses[lens_of[i]], rot: rots[i], w: photos[i].gray.w as f64, h: photos[i].gray.h as f64 }).collect();
+    let mut pairs: Vec<(usize, usize)> = spots.iter().map(|s| (s.0, s.1)).collect();
+    pairs.sort();
+    pairs.dedup();
+    let imgs = Images::prepare(photos, &geos, &pairs);
+    let r: Vec<Option<PatchMeasure>> = spots.par_iter().map(|&(a, b, p)| measure(&geos[a], &geos[b], imgs.get(a, &geos, b), imgs.get(b, &geos, a), geos[a].px_to_dir(p), mcfg)).collect();
+    let mut shifts: Vec<f32> = Vec::new();
+    let mut bins: [Vec<f32>; 3] = Default::default();
+    let (mut df, mut nd) = (0.0f32, 0usize);
+    for (m, &(a, b, p)) in r.into_iter().zip(spots) {
+        let Some(m) = m else { continue };
+        if m.diff.is_finite() {
+            df += m.diff;
+            nd += 1;
+        }
+        if m.result.valid {
+            let v = (m.result.dx.powi(2) + m.result.dy.powi(2)).sqrt();
+            shifts.push(v);
+            let rad = |g: &Geo, q: (f64, f64)| ((q.0 + 0.5 - g.w * 0.5).hypot(q.1 + 0.5 - g.h * 0.5)) / g.long();
+            let ra = rad(&geos[a], p);
+            let rb = geos[b].dir_to_px(geos[a].px_to_dir(p)).map(|q| rad(&geos[b], q)).unwrap_or(0.0);
+            let r = ra.max(rb);
+            bins[if r < 0.25 { 0 } else if r < 0.4 { 1 } else { 2 }].push(v);
+        }
+    }
+    shifts.sort_by(f32::total_cmp);
+    let by_radius = bins.map(|mut v| {
+        v.sort_by(f32::total_cmp);
+        (v.len(), v.get(v.len() / 2).copied().unwrap_or(f32::NAN))
+    });
+    let at = |q: f64| shifts.get(((shifts.len() as f64 - 1.0) * q).round().max(0.0) as usize).copied().unwrap_or(f32::NAN);
+    Quality {
+        spots: spots.len(),
+        valid: shifts.len(),
+        mean: if shifts.is_empty() { f32::NAN } else { shifts.iter().sum::<f32>() / shifts.len() as f32 },
+        median: at(0.5),
+        p90: at(0.9),
+        diff: if nd > 0 { df / nd as f32 } else { 0.0 },
+        by_radius,
+    }
+}
+
 /// Largest number of fixed test spots used to judge each round.
 const TEST_SPOTS: usize = 600;
 
@@ -1351,5 +1447,38 @@ mod parallax_tests {
         // outside the grid the nearest value is used
         assert_eq!(f.at(-1.0, 0.5), [0.0, 0.0]);
         assert!((f.at(2.0, 0.5)[0] - 0.01).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod quality_tests {
+    use super::*;
+
+    /// Two copies of the same textured picture: aligned they have no shift; one camera turned by a
+    /// known angle shows that angle as shift (in pixels) on the independent check.
+    #[test]
+    fn the_quality_check_sees_a_known_misalignment() {
+        let (w, h) = (480u32, 360u32);
+        let img = RgbImage::from_fn(w, h, |x, y| {
+            let (x, y) = (x as f32, y as f32);
+            let v = 128.0 + 50.0 * (x * 0.21).sin() * (y * 0.17).cos() + 40.0 * ((x + 2.0 * y) * 0.093).sin() + 30.0 * ((3.0 * x - y) * 0.051).cos();
+            image::Rgb([v as u8; 3])
+        });
+        let gray = Arc::new(crate::imgutil::to_gray(&img));
+        let rgb = Arc::new(img);
+        let photos = vec![FaPhoto { gray: gray.clone(), rgb: rgb.clone() }, FaPhoto { gray, rgb }];
+        let lenses = [Lens::from_hfov_deg(60.0)];
+        let lens_of = [0, 0];
+        let aligned = [IDENTITY, IDENTITY];
+        let spots = quality_spots(&photos, &lens_of, &lenses, &aligned, &[(0, 1)], 40.0, 60);
+        assert!(spots.len() >= 30, "{} spots", spots.len());
+        let mcfg = MatchConfig { search_radius: 6.0, ..MatchConfig::default() };
+        let q = quality(&photos, &lens_of, &lenses, &aligned, &spots, &mcfg);
+        assert!(q.valid * 2 > q.spots && q.median < 0.05, "{q:?}");
+        // turn photo b sideways by 1.5 pixels (at the centre)
+        let g = Geo { lens: lenses[0], rot: IDENTITY, w: w as f64, h: h as f64 };
+        let turned = [IDENTITY, rodrigues([0.0, 1.5 * g.pixel_angle(), 0.0])];
+        let q = quality(&photos, &lens_of, &lenses, &turned, &spots, &mcfg);
+        assert!(q.valid * 2 > q.spots && (q.median - 1.5).abs() < 0.2, "{q:?}");
     }
 }

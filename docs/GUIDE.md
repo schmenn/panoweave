@@ -92,6 +92,7 @@ Matching points (control points) are spots that show the same thing in two photo
 
 - below 1.5 px: excellent; below 3 px: good; above: check the points.
 - "wrong matches removed automatically": points that did not fit were taken out. Undo (Ctrl+Z) brings them back.
+- The average error is measured on the points that are left. Aligning again removes more points each time, so the number keeps dropping even when the panorama does not get any better (measured: 0.60 → 0.54 px after three runs, the real fit unchanged). Judge the result by the seams in **Check overlap** or in the export, not by this number alone. To measure the real fit, see "Measuring the fit" in the pitfalls.
 
 ![Alignment result and options](align.png)
 
@@ -232,6 +233,9 @@ The photos were not taken around the lens. Try the **Parallax mode** in the fine
 
 **A high average error after aligning**
 Look at the worst points: open **All points (F3)**, sort by error, check the top ones in the point editor and delete wrong ones, or use **Clean up**. Then align again.
+
+**Measuring the fit (for testing and comparing settings)**
+`panoweave --accuracy <photos>` (command line, no window) aligns the photos like the **Align** button and then measures how far the photos are still apart in their overlaps, on spots that are neither points nor control areas. Removing points cannot make this number better, so it shows whether a setting really helps. It prints the median and the worst 10 % (in pixels of the 1600 px working image) and, with `PW_ACC_PAIRS=1`, every photo pair, worst first. On the test photos: about 0.3 px for a still scene; pairs with near trees (probably parallax or wind) reach 1.5–2.5 px, which no alignment setting removes (use the Parallax mode, masks and smart seams there).
 
 **Protected point reported "off by more than 3 px"**
 A protected point that the fine alignment finds elsewhere. It is left alone; check it in the point list ("only protected") and move or unprotect it if it is wrong.
