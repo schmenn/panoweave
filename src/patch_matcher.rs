@@ -737,17 +737,18 @@ fn search(a: &Region, b: &Region, cfg: &MatchConfig, mut tr: Option<&mut SearchT
         if let (Some(u), Some(d)) = (sc(bx, by - 1), sc(bx, by + 1)) {
             dy += parabola(u, c, d);
         }
-        // finer parabola fits with fractional shifts
+        // finer parabola fits with fractional shifts; `parabola` gives the peak in units of the
+        // sample spacing, which is `step` here
         let scf = |x: f32, y: f32| score_at_f(fa, fb, ca, h0, x, y, metric, min_frac);
         for step in [0.25f32, 0.1] {
             let Some(cc) = scf(dx, dy) else { break };
             best_score = best_score.max(cc);
             if let (Some(l), Some(r)) = (scf(dx - step, dy), scf(dx + step, dy)) {
-                dx += parabola(l, cc, r) * 2.0 * step;
+                dx += parabola(l, cc, r) * step;
             }
             let Some(cc) = scf(dx, dy) else { break };
             if let (Some(u), Some(d)) = (scf(dx, dy - step), scf(dx, dy + step)) {
-                dy += parabola(u, cc, d) * 2.0 * step;
+                dy += parabola(u, cc, d) * step;
             }
         }
     }
@@ -972,6 +973,37 @@ mod tests {
             let r = match_patch(&a, &b, &cfg);
             assert!(r.valid, "{m:?} {:?}", r);
             assert!((r.dx - 3.4).abs() < 0.15 && (r.dy + 2.7).abs() < 0.15, "{m:?} {:?}", r);
+        }
+    }
+
+    /// Mean and largest error of the found shift over a grid of known fractional shifts.
+    fn subpixel_errors(metric: Metric, fs: FeatureSpace) -> (f32, f32) {
+        let a = region((0.0, 0.0), &texture_value);
+        let cfg = MatchConfig { metric, feature_space: fs, ..Default::default() };
+        let (mut sum, mut max, mut n) = (0.0f32, 0.0f32, 0);
+        for i in 0..10 {
+            for j in 0..10 {
+                let (sx, sy) = (1.0 + i as f32 * 0.1 + 0.03, -2.0 + j as f32 * 0.1 + 0.07);
+                let r = match_patch(&a, &region((sx, sy), &texture_value), &cfg);
+                assert!(r.valid, "{metric:?} {sx} {sy} {r:?}");
+                for e in [(r.dx - sx).abs(), (r.dy - sy).abs()] {
+                    sum += e;
+                    max = max.max(e);
+                    n += 1;
+                }
+            }
+        }
+        (sum / n as f32, max)
+    }
+
+    #[test]
+    fn subpixel_steps_make_the_shift_more_exact() {
+        for (m, fs) in [(Metric::Zncc, FeatureSpace::Intensity), (Metric::Zncc, FeatureSpace::Gradient), (Metric::GradientNcc, FeatureSpace::Gradient), (Metric::Ssd, FeatureSpace::Intensity)] {
+            let (mean, max) = subpixel_errors(m, fs);
+            println!("{m:?} {fs:?}: mean error {mean:.4} px, largest {max:.4} px");
+            // with the correction applied twice (before the fix) the mean was about 0.025 px and
+            // the largest error about 0.065 px: the fine steps only mirrored the error
+            assert!(mean < 0.01 && max < 0.03, "{m:?} {fs:?}: mean {mean} largest {max}");
         }
     }
 
