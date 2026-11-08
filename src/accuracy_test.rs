@@ -12,11 +12,16 @@
 //! - `PW_ACC_NO_OUTLIERS=1` passes after the first keep every point (no outlier removal)
 //! - `PW_ACC_PAIRS=1` also prints the check per photo pair (worst first, with the lens of each photo)
 //! - `PW_ACC_FINE_SIZE` long side of the images the fine alignment works on (default 1600 = the
-//!   working images), `PW_ACC_CHECK_SIZE` the same for the quality check (default 1600). Shifts are
-//!   always printed in pixels of the 1600 px working image.
+//!   working images), `PW_ACC_CHECK_SIZE` the same for the quality check (default 3200: on the
+//!   1600 px images a good part of the result is the inaccuracy of the check itself – Fischerbastei
+//!   0.40 px at 1600 against 0.27 px at 3200 – so small differences between settings would be lost).
+//!   Shifts are always printed in pixels of the 1600 px working image.
 
 use crate::{align, engine, fine_align, pair_check};
 use std::path::PathBuf;
+
+/// Long side of the images the quality check measures on by default (see the module comment).
+const CHECK_SIZE: u32 = 3200;
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
     std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
@@ -73,7 +78,7 @@ pub fn run(files: &[PathBuf]) {
             .collect()
     };
     let fine_size: u32 = env("PW_ACC_FINE_SIZE", engine::WORK_SIZE);
-    let check_size: u32 = env("PW_ACC_CHECK_SIZE", engine::WORK_SIZE);
+    let check_size: u32 = env("PW_ACC_CHECK_SIZE", CHECK_SIZE);
     let fa = fa_at(engine::WORK_SIZE);
     let fa_fine = if fine_size == engine::WORK_SIZE { fa.clone() } else { fa_at(fine_size) };
     let fa_check = if check_size == fine_size { fa_fine.clone() } else if check_size == engine::WORK_SIZE { fa.clone() } else { fa_at(check_size) };

@@ -60,7 +60,7 @@ cargo build --release  # the exe may be locked while the program runs: use --tar
 
 ### Headless and demo flags (in `main.rs`)
 
-- No window: `--selftest <photos>` (whole pipeline), `--accuracy <photos>` (independent fit check after aligning, see `src/accuracy_test.rs` and `fine_align::quality`; use it, not the points' average error, to judge any change to alignment or fine alignment), `--loadtest`, `--kpdebug`, `--pairtest`, `--paircheck <photos>`, `--imgdiff <a> <b> [diff.png] [sheet.png]` (compare two pictures pixel by pixel).
+- No window: `--selftest <photos>` (whole pipeline), `--accuracy <photos>` (independent fit check after aligning, measured on 3200 px copies by default, see `src/accuracy_test.rs` and `fine_align::quality`; use it, not the points' average error, to judge any change to alignment or fine alignment, and keep the default size – at 1600 px small differences drown in measuring noise), `--loadtest`, `--kpdebug`, `--pairtest`, `--paircheck <photos>`, `--imgdiff <a> <b> [diff.png] [sheet.png]` (compare two pictures pixel by pixel).
 - GUI helpers: `--screenshot <path>`, `--demo <name>` (photos, points, pointsel, pointdrag, overlap, cplist, align, export, render, exposure, patches, patchdetail, patchclick, connections). `--demo render <photos|.pwproj>` runs a real export without a window.
 - Experiment environment variables (grep `PW_` for the meaning):
   - matching/alignment: `PW_FINE`, `PW_SHARP`, `PW_PARALLAX`, `PW_SKY`, `PW_PPP`, `PW_DEBUG`, `PW_CANCEL_TEST`, `PW_SCROLL`, `PW_RECORD`
