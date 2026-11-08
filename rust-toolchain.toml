@@ -1,0 +1,5 @@
+# The Rust version used here and in the CI. Raised on purpose in its own PR (with a look at new clippy warnings),
+# so a new Rust release cannot turn the CI red without a change in the code.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy"]
