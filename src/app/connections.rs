@@ -596,165 +596,168 @@ impl PanoApp {
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
-            if !self.aligned {
-                ui.label(RichText::new("Not aligned yet: edges show pairs with points only. After aligning, overlapping pairs without enough points are shown red and dashed.").small().color(WARN));
-            }
-            if groups.len() > 1 {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("⚠ Warning {} unconnected image groups found: {}", groups.len(), groups_text(&groups))).color(BAD).strong());
-                    if ui
-                        .button(format!("Join photos {} and {}", groups[0][0] + 1, groups[1][0] + 1))
-                        .on_hover_text("Opens the first photo of the first two groups in the point editor with the patch click mode (the original opens the same pair)")
-                        .clicked()
-                    {
-                        action = Some((2, groups[0][0], groups[1][0]));
-                    }
-                });
-            }
-            // --- graph ---
-            let size = Vec2::new(ui.available_width(), 330.0);
-            let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-            let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, f32::from(RADIUS_CARD), Color32::from_rgb(24, 26, 31));
-            let inner = rect.shrink(28.0);
-            // positions: from the alignment (direction of each photo's centre), else a circle
-            let main_group: Vec<usize> = groups.iter().max_by_key(|g| g.len()).cloned().unwrap_or_default();
-            let pos: Vec<Pos2> = if self.aligned && main_group.len() >= 2 {
-                // the biggest group where the alignment puts it; all other photos in a row below
-                let row_y = inner.max.y;
-                let graph = Rect::from_min_max(inner.min, Pos2::new(inner.max.x, inner.max.y - 36.0));
-                let dirs: Vec<(f64, f64)> = (0..n)
-                    .map(|i| {
-                        let d = mtv(&self.photos[i].rot, [0.0, 0.0, 1.0]);
-                        (d[0].atan2(d[2]), d[1].clamp(-1.0, 1.0).asin())
-                    })
-                    .collect();
-                let md: Vec<(f64, f64)> = main_group.iter().map(|&i| dirs[i]).collect();
-                let (x0, x1) = md.iter().fold((f64::MAX, f64::MIN), |m, d| (m.0.min(d.0), m.1.max(d.0)));
-                let (y0, y1) = md.iter().fold((f64::MAX, f64::MIN), |m, d| (m.0.min(d.1), m.1.max(d.1)));
-                let sx = (x1 - x0).max(1e-6);
-                let sy = (y1 - y0).max(1e-6);
-                // spread horizontally and vertically on their own (photos of a row would sit on one line)
-                let (kx, ky) = (graph.width() as f64 / sx, graph.height() as f64 / sy.max(sx * 0.15));
-                let others: Vec<usize> = (0..n).filter(|i| !main_group.contains(i)).collect();
-                (0..n)
-                    .map(|i| {
-                        if let Some(k) = others.iter().position(|&o| o == i) {
-                            return Pos2::new(inner.min.x + (k as f32 + 0.5) * inner.width() / others.len().max(1) as f32, row_y);
+            // scrolls when the window is lower than the graph and the lists
+            egui::ScrollArea::vertical().id_salt("graph_scroll").auto_shrink([false, false]).show(ui, |ui| {
+                if !self.aligned {
+                    ui.label(RichText::new("Not aligned yet: edges show pairs with points only. After aligning, overlapping pairs without enough points are shown red and dashed.").small().color(WARN));
+                }
+                if groups.len() > 1 {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(format!("⚠ Warning {} unconnected image groups found: {}", groups.len(), groups_text(&groups))).color(BAD).strong());
+                        if ui
+                            .button(format!("Join photos {} and {}", groups[0][0] + 1, groups[1][0] + 1))
+                            .on_hover_text("Opens the first photo of the first two groups in the point editor with the patch click mode (the original opens the same pair)")
+                            .clicked()
+                        {
+                            action = Some((2, groups[0][0], groups[1][0]));
                         }
-                        let d = dirs[i];
-                        // zig-zag neighbours vertically when the photos lie in one row
-                        let jitter = if sy < sx * 0.15 { if main_group.iter().position(|&m| m == i).unwrap_or(0) % 2 == 0 { -0.25 } else { 0.25 } } else { 0.0 };
-                        graph.center() + Vec2::new(((d.0 - (x0 + x1) * 0.5) * kx) as f32, ((d.1 - (y0 + y1) * 0.5) * ky) as f32 + jitter * graph.height())
-                    })
-                    .collect()
-            } else {
-                (0..n)
-                    .map(|i| {
-                        let t = i as f32 / n.max(1) as f32 * std::f32::consts::TAU;
-                        inner.center() + Vec2::new(t.cos() * inner.width() * 0.45, t.sin() * inner.height() * 0.45)
-                    })
-                    .collect()
-            };
-            for &(a, b, c, ov) in &edges {
-                let (pa, pb) = (pos[a], pos[b]);
-                let weak = ov.map(|o| o >= self.pair_cfg.min_overlap).unwrap_or(false) && c < min_pts;
-                if weak {
-                    painter.extend(egui::Shape::dashed_line(&[pa, pb], Stroke::new(2.0, BAD), 6.0, 4.0));
-                } else {
-                    let col = if c >= enough { GOOD } else { WARN };
-                    painter.line_segment([pa, pb], Stroke::new(if c >= enough { 2.0 } else { 1.5 }, col));
-                }
-                let mid = pa + (pb - pa) * 0.5;
-                if pa.distance(pb) < GRAPH_LABEL_MIN_LEN {
-                    continue;
-                }
-                let label = match ov {
-                    Some(o) => format!("{c} · {:.0}%", o * 100.0),
-                    None => c.to_string(),
-                };
-                painter.text(mid, Align2::CENTER_CENTER, label, FontId::proportional(10.0), Color32::from_gray(220));
-            }
-            for &i in &active {
-                let p = pos[i];
-                let col = if linked[i] { ACCENT_DARK } else { BAD };
-                painter.circle_filled(p, 13.0, col);
-                if !linked[i] {
-                    painter.circle_stroke(p, 17.0, Stroke::new(2.5, BAD));
-                }
-                if self.graph_photo == Some(i) {
-                    painter.circle_stroke(p, 15.0, Stroke::new(2.0, Color32::WHITE));
-                }
-                painter.text(p, Align2::CENTER_CENTER, (i + 1).to_string(), FontId::proportional(12.0), Color32::WHITE);
-            }
-            if resp.clicked()
-                && let Some(hp) = resp.interact_pointer_pos() {
-                    let node = active.iter().copied().filter(|&i| pos[i].distance(hp) < 15.0).min_by(|&x, &y| pos[x].distance(hp).partial_cmp(&pos[y].distance(hp)).unwrap());
-                    if let Some(i) = node {
-                        self.graph_photo = Some(i);
-                    } else {
-                        // nearest edge
-                        let dist = |p: Pos2, a: Pos2, b: Pos2| -> f32 {
-                            let ab = b - a;
-                            let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
-                            (a + ab * t).distance(p)
-                        };
-                        if let Some(e) = edges.iter().filter(|e| dist(hp, pos[e.0], pos[e.1]) < 6.0).min_by(|x, y| dist(hp, pos[x.0], pos[x.1]).partial_cmp(&dist(hp, pos[y.0], pos[y.1])).unwrap()) {
-                            action = Some((0, e.0, e.1));
-                        }
-                    }
-                }
-            ui.label(RichText::new(format!("green: {enough}+ points · yellow: fewer · red dashed: overlap {:.0} %+ but fewer than {min_pts} points · red ring: no points at all. Click a line to open the pair, a photo to see it.", self.pair_cfg.min_overlap * 100.0)).small().color(MUTED));
-            if let Some(i) = self.graph_photo {
-                ui.horizontal(|ui| {
-                    let t = &self.photos[i].thumb;
-                    let s = t.size_vec2();
-                    let k = (120.0 / s.y.max(1.0)).min(220.0 / s.x.max(1.0));
-                    let thumb = ui.add(egui::Image::new((t.id(), s * k)).corner_radius(CornerRadius::same(RADIUS)).sense(Sense::click()));
-                    photo_choice = self.photo_menu(&thumb, i);
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(format!("{}. {}", i + 1, self.photos[i].name)).strong());
-                        let partners: Vec<String> = counts.iter().filter(|(k, _)| k.0 == i || k.1 == i).map(|(k, c)| format!("{} ({c})", if k.0 == i { k.1 + 1 } else { k.0 + 1 })).collect();
-                        ui.label(if partners.is_empty() { "no points to any photo".to_string() } else { format!("points with: {}", partners.join(", ")) });
                     });
-                });
-            }
-            ui.separator();
-            // --- warning list ---
-            ui.label(RichText::new("Warnings").strong());
-            egui::ScrollArea::vertical().id_salt("graph_warn").max_height(200.0).show(ui, |ui| {
-                let mut any = false;
-                for &i in &active {
-                    if !linked[i] {
-                        any = true;
-                        ui.label(RichText::new(format!("Photo {} ({}) has no points to any other photo.", i + 1, self.photos[i].name)).color(BAD));
-                    }
                 }
+                // --- graph ---
+                let size = Vec2::new(ui.available_width(), 330.0);
+                let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+                let painter = ui.painter_at(rect);
+                painter.rect_filled(rect, f32::from(RADIUS_CARD), Color32::from_rgb(24, 26, 31));
+                let inner = rect.shrink(28.0);
+                // positions: from the alignment (direction of each photo's centre), else a circle
+                let main_group: Vec<usize> = groups.iter().max_by_key(|g| g.len()).cloned().unwrap_or_default();
+                let pos: Vec<Pos2> = if self.aligned && main_group.len() >= 2 {
+                    // the biggest group where the alignment puts it; all other photos in a row below
+                    let row_y = inner.max.y;
+                    let graph = Rect::from_min_max(inner.min, Pos2::new(inner.max.x, inner.max.y - 36.0));
+                    let dirs: Vec<(f64, f64)> = (0..n)
+                        .map(|i| {
+                            let d = mtv(&self.photos[i].rot, [0.0, 0.0, 1.0]);
+                            (d[0].atan2(d[2]), d[1].clamp(-1.0, 1.0).asin())
+                        })
+                        .collect();
+                    let md: Vec<(f64, f64)> = main_group.iter().map(|&i| dirs[i]).collect();
+                    let (x0, x1) = md.iter().fold((f64::MAX, f64::MIN), |m, d| (m.0.min(d.0), m.1.max(d.0)));
+                    let (y0, y1) = md.iter().fold((f64::MAX, f64::MIN), |m, d| (m.0.min(d.1), m.1.max(d.1)));
+                    let sx = (x1 - x0).max(1e-6);
+                    let sy = (y1 - y0).max(1e-6);
+                    // spread horizontally and vertically on their own (photos of a row would sit on one line)
+                    let (kx, ky) = (graph.width() as f64 / sx, graph.height() as f64 / sy.max(sx * 0.15));
+                    let others: Vec<usize> = (0..n).filter(|i| !main_group.contains(i)).collect();
+                    (0..n)
+                        .map(|i| {
+                            if let Some(k) = others.iter().position(|&o| o == i) {
+                                return Pos2::new(inner.min.x + (k as f32 + 0.5) * inner.width() / others.len().max(1) as f32, row_y);
+                            }
+                            let d = dirs[i];
+                            // zig-zag neighbours vertically when the photos lie in one row
+                            let jitter = if sy < sx * 0.15 { if main_group.iter().position(|&m| m == i).unwrap_or(0) % 2 == 0 { -0.25 } else { 0.25 } } else { 0.0 };
+                            graph.center() + Vec2::new(((d.0 - (x0 + x1) * 0.5) * kx) as f32, ((d.1 - (y0 + y1) * 0.5) * ky) as f32 + jitter * graph.height())
+                        })
+                        .collect()
+                } else {
+                    (0..n)
+                        .map(|i| {
+                            let t = i as f32 / n.max(1) as f32 * std::f32::consts::TAU;
+                            inner.center() + Vec2::new(t.cos() * inner.width() * 0.45, t.sin() * inner.height() * 0.45)
+                        })
+                        .collect()
+                };
                 for &(a, b, c, ov) in &edges {
-                    let Some(o) = ov else { continue };
-                    if o < self.pair_cfg.min_overlap || c >= min_pts {
+                    let (pa, pb) = (pos[a], pos[b]);
+                    let weak = ov.map(|o| o >= self.pair_cfg.min_overlap).unwrap_or(false) && c < min_pts;
+                    if weak {
+                        painter.extend(egui::Shape::dashed_line(&[pa, pb], Stroke::new(2.0, BAD), 6.0, 4.0));
+                    } else {
+                        let col = if c >= enough { GOOD } else { WARN };
+                        painter.line_segment([pa, pb], Stroke::new(if c >= enough { 2.0 } else { 1.5 }, col));
+                    }
+                    let mid = pa + (pb - pa) * 0.5;
+                    if pa.distance(pb) < GRAPH_LABEL_MIN_LEN {
                         continue;
                     }
-                    any = true;
-                    let tried = self
-                        .pair_summary
-                        .as_ref()
-                        .and_then(|s| s.reports.iter().find(|r| r.a == a && r.b == b))
-                        .map(|r| if r.steps.is_empty() { "nothing tried yet".to_string() } else { r.steps.iter().map(|s| format!("{} → {}", s.step, s.points)).collect::<Vec<_>>().join(", ") })
-                        .unwrap_or_else(|| "nothing tried yet".into());
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(format!("Photos {} – {}: overlap {:.0} %, {c} points · tried: {tried}", a + 1, b + 1, o * 100.0));
-                        if ui.add_enabled(!self.busy(), egui::Button::new("Search again")).clicked() {
-                            action = Some((1, a, b));
+                    let label = match ov {
+                        Some(o) => format!("{c} · {:.0}%", o * 100.0),
+                        None => c.to_string(),
+                    };
+                    painter.text(mid, Align2::CENTER_CENTER, label, FontId::proportional(10.0), Color32::from_gray(220));
+                }
+                for &i in &active {
+                    let p = pos[i];
+                    let col = if linked[i] { ACCENT_DARK } else { BAD };
+                    painter.circle_filled(p, 13.0, col);
+                    if !linked[i] {
+                        painter.circle_stroke(p, 17.0, Stroke::new(2.5, BAD));
+                    }
+                    if self.graph_photo == Some(i) {
+                        painter.circle_stroke(p, 15.0, Stroke::new(2.0, Color32::WHITE));
+                    }
+                    painter.text(p, Align2::CENTER_CENTER, (i + 1).to_string(), FontId::proportional(12.0), Color32::WHITE);
+                }
+                if resp.clicked()
+                    && let Some(hp) = resp.interact_pointer_pos() {
+                        let node = active.iter().copied().filter(|&i| pos[i].distance(hp) < 15.0).min_by(|&x, &y| pos[x].distance(hp).partial_cmp(&pos[y].distance(hp)).unwrap());
+                        if let Some(i) = node {
+                            self.graph_photo = Some(i);
+                        } else {
+                            // nearest edge
+                            let dist = |p: Pos2, a: Pos2, b: Pos2| -> f32 {
+                                let ab = b - a;
+                                let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                                (a + ab * t).distance(p)
+                            };
+                            if let Some(e) = edges.iter().filter(|e| dist(hp, pos[e.0], pos[e.1]) < 6.0).min_by(|x, y| dist(hp, pos[x.0], pos[x.1]).partial_cmp(&dist(hp, pos[y.0], pos[y.1])).unwrap()) {
+                                action = Some((0, e.0, e.1));
+                            }
                         }
-                        if ui.button("Manual").on_hover_text("Opens the pair with the patch click mode").clicked() {
-                            action = Some((2, a, b));
-                        }
+                    }
+                ui.label(RichText::new(format!("green: {enough}+ points · yellow: fewer · red dashed: overlap {:.0} %+ but fewer than {min_pts} points · red ring: no points at all. Click a line to open the pair, a photo to see it.", self.pair_cfg.min_overlap * 100.0)).small().color(MUTED));
+                if let Some(i) = self.graph_photo {
+                    ui.horizontal(|ui| {
+                        let t = &self.photos[i].thumb;
+                        let s = t.size_vec2();
+                        let k = (120.0 / s.y.max(1.0)).min(220.0 / s.x.max(1.0));
+                        let thumb = ui.add(egui::Image::new((t.id(), s * k)).corner_radius(CornerRadius::same(RADIUS)).sense(Sense::click()));
+                        photo_choice = self.photo_menu(&thumb, i);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(format!("{}. {}", i + 1, self.photos[i].name)).strong());
+                            let partners: Vec<String> = counts.iter().filter(|(k, _)| k.0 == i || k.1 == i).map(|(k, c)| format!("{} ({c})", if k.0 == i { k.1 + 1 } else { k.0 + 1 })).collect();
+                            ui.label(if partners.is_empty() { "no points to any photo".to_string() } else { format!("points with: {}", partners.join(", ")) });
+                        });
                     });
                 }
-                if !any {
-                    ui.label(RichText::new("No warnings: every photo has points, and every overlapping pair has enough.").color(GOOD));
-                }
+                ui.separator();
+                // --- warning list ---
+                ui.label(RichText::new("Warnings").strong());
+                egui::ScrollArea::vertical().id_salt("graph_warn").max_height(200.0).show(ui, |ui| {
+                    let mut any = false;
+                    for &i in &active {
+                        if !linked[i] {
+                            any = true;
+                            ui.label(RichText::new(format!("Photo {} ({}) has no points to any other photo.", i + 1, self.photos[i].name)).color(BAD));
+                        }
+                    }
+                    for &(a, b, c, ov) in &edges {
+                        let Some(o) = ov else { continue };
+                        if o < self.pair_cfg.min_overlap || c >= min_pts {
+                            continue;
+                        }
+                        any = true;
+                        let tried = self
+                            .pair_summary
+                            .as_ref()
+                            .and_then(|s| s.reports.iter().find(|r| r.a == a && r.b == b))
+                            .map(|r| if r.steps.is_empty() { "nothing tried yet".to_string() } else { r.steps.iter().map(|s| format!("{} → {}", s.step, s.points)).collect::<Vec<_>>().join(", ") })
+                            .unwrap_or_else(|| "nothing tried yet".into());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!("Photos {} – {}: overlap {:.0} %, {c} points · tried: {tried}", a + 1, b + 1, o * 100.0));
+                            if ui.add_enabled(!self.busy(), egui::Button::new("Search again")).clicked() {
+                                action = Some((1, a, b));
+                            }
+                            if ui.button("Manual").on_hover_text("Opens the pair with the patch click mode").clicked() {
+                                action = Some((2, a, b));
+                            }
+                        });
+                    }
+                    if !any {
+                        ui.label(RichText::new("No warnings: every photo has points, and every overlapping pair has enough.").color(GOOD));
+                    }
+                });
             });
         });
         self.vp = vp;
@@ -790,17 +793,19 @@ impl PanoApp {
         let mut vp = std::mem::take(&mut self.vp);
         let force = self.demo.is_some();
         vp.show(ctx, &spec, &mut open, force, |ui| {
-            ui.label(RichText::new("Panorama").strong());
-            ui.label("1. Photos – add overlapping photos taken from one spot (JPEG, PNG, TIFF, camera RAW).");
-            ui.label("2. Matching points – spots that appear in two photos. Found automatically; you can add, move or delete them. Clicking a spot in the left photo finds the partner spot for you.");
-            ui.label("3. Align – works out where each photo was pointing, the lens field of view and distortion. Wrong matches are removed automatically.");
-            ui.label("4. Frame & crop – choose the projection, drag to move the view, scroll to zoom, drag the white frame to crop.");
-            ui.label("5. Export – choose size and file type. Smooth seams blend every detail level separately so seams disappear.");
-            ui.add_space(6.0);
-            ui.label(RichText::new("Exposure blend").strong());
-            ui.label("Merge photos of the same view taken at different exposures into one evenly lit picture.");
-            ui.add_space(6.0);
-            ui.label(RichText::new("Projects (.pwproj) keep your photos, points, alignment and framing.").small().color(MUTED));
+            egui::ScrollArea::vertical().id_salt("help_scroll").auto_shrink([false, false]).show(ui, |ui| {
+                ui.label(RichText::new("Panorama").strong());
+                ui.label("1. Photos – add overlapping photos taken from one spot (JPEG, PNG, TIFF, camera RAW).");
+                ui.label("2. Matching points – spots that appear in two photos. Found automatically; you can add, move or delete them. Clicking a spot in the left photo finds the partner spot for you.");
+                ui.label("3. Align – works out where each photo was pointing, the lens field of view and distortion. Wrong matches are removed automatically.");
+                ui.label("4. Frame & crop – choose the projection, drag to move the view, scroll to zoom, drag the white frame to crop.");
+                ui.label("5. Export – choose size and file type. Smooth seams blend every detail level separately so seams disappear.");
+                ui.add_space(6.0);
+                ui.label(RichText::new("Exposure blend").strong());
+                ui.label("Merge photos of the same view taken at different exposures into one evenly lit picture.");
+                ui.add_space(6.0);
+                ui.label(RichText::new("Projects (.pwproj) keep your photos, points, alignment and framing.").small().color(MUTED));
+            });
         });
         self.vp = vp;
         self.show_help = open;

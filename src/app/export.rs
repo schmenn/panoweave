@@ -318,6 +318,11 @@ impl PanoApp {
         if self.out_path.is_empty() {
             self.out_path = self.default_out_path("panorama", self.out_format.ext());
         }
+        // scrolls when the window is too low for the settings
+        egui::ScrollArea::vertical().id_salt("export_scroll").auto_shrink([false, false]).show(ui, |ui| self.ui_export_body(ui));
+    }
+
+    fn ui_export_body(&mut self, ui: &mut egui::Ui) {
         let avail_w = ui.available_width();
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {

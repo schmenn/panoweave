@@ -52,6 +52,8 @@ pub(super) const BIG_FONT: f32 = 15.0;
 pub(super) const CARD_MARGIN: i8 = 14;
 /// Inner margin of small tiles (photo thumbnails, hints inside panels).
 pub(super) const TILE_MARGIN: i8 = 8;
+/// Width of a photo tile in the overview of step 1 (thumbnail width; the grid makes as many columns as fit).
+pub(super) const PHOTO_TILE_W: f32 = 200.0;
 pub(super) const ACCENT: Color32 = Color32::from_rgb(70, 160, 255);
 pub(super) const ACCENT_DARK: Color32 = Color32::from_rgb(34, 92, 160);
 pub(super) const GOOD: Color32 = Color32::from_rgb(90, 200, 120);
