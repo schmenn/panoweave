@@ -29,6 +29,11 @@ impl PanoApp {
         out
     }
 
+    /// Number of loaded photos that already have a sky mask.
+    pub(super) fn sky_checked_photos(&self) -> usize {
+        (0..self.photos.len()).filter(|&i| self.sky_masks.contains_key(&self.sky_key(i))).count()
+    }
+
     /// Computes the missing sky masks on a worker thread (one pass over each working image).
     pub(super) fn start_sky_check(&mut self) {
         if self.busy() {
@@ -136,6 +141,9 @@ impl PanoApp {
             }
             return;
         }
+        let checked = self.sky_checked_photos();
+        ui.label(RichText::new(format!("sky checked in {checked} photo{}", if checked == 1 { "" } else { "s" })).small().color(MUTED))
+            .on_hover_text("Sky masks are kept until the program closes; new points are checked at once. Photos added later get a \"Check\" button again.");
         let found = self.sky_points();
         let r = sky_points::removable(&self.cps, &found, self.sky_cfg.include_manual);
         ui.label(RichText::new(format!("{} points on sky or cloud", found.len())).small().color(if found.is_empty() { MUTED } else { WARN }));
@@ -242,7 +250,9 @@ mod tests {
     fn photos_without_mask_are_reported_missing_and_not_judged() {
         let mut app = setup();
         assert!(app.sky_missing().is_empty());
+        assert_eq!(app.sky_checked_photos(), 2);
         app.sky_masks.clear();
+        assert_eq!(app.sky_checked_photos(), 0);
         assert_eq!(app.sky_missing().len(), 2);
         assert!(app.sky_points().is_empty());
         app.cps.clear();
