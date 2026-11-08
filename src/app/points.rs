@@ -126,14 +126,38 @@ impl PanoApp {
         });
         // Row 2: tools and history. Every row below holds only normal-height widgets, so wrapped lines keep one height.
         ui.horizontal_wrapped(|ui| {
+            let selecting = self.pe.tool == PointTool::Edit || self.pe.tool.is_select();
             if ui
-                .add(egui::Button::selectable(self.pe.tool == PointTool::Edit, "↖ Select / edit"))
+                .add(egui::Button::selectable(selecting, "↖ Select / edit"))
                 .on_hover_text("Click a point to select it, drag it to move it, Delete removes it. Dragging empty space moves the photo, the wheel zooms.")
                 .clicked()
             {
                 self.pe.tool = PointTool::Edit;
                 self.pe.pending = None;
+                self.pe.sel_drag = None;
             }
+            // the selection shapes belong to Select / edit: shown right after it, only while it is on
+            if selecting {
+                for (tool, text, tip) in [
+                    (PointTool::Edit, "Click", "Click a point to select it (Shift/Ctrl+click adds or takes it out), drag it to move it."),
+                    (PointTool::SelectRect, "▭ Rectangle", "Drag a rectangle on empty space to select the points inside. Shift adds to the selection, Ctrl takes points out. Points can still be dragged."),
+                    (PointTool::SelectLasso, "➰ Lasso", "Drag a free outline on empty space to select the points inside. Shift adds to the selection, Ctrl takes points out. Points can still be dragged."),
+                    (PointTool::SelectBrush, "🖌 Brush", "Click or paint over points to select them. Ctrl takes points out again."),
+                ] {
+                    if ui.add(egui::Button::selectable(self.pe.tool == tool, text)).on_hover_text(tip).clicked() {
+                        self.pe.tool = tool;
+                        self.pe.pending = None;
+                        self.pe.sel_drag = None;
+                    }
+                }
+                if self.pe.tool == PointTool::SelectBrush {
+                    if self.pe.brush_px < 1.0 {
+                        self.pe.brush_px = select_shapes::BRUSH_PX_DEFAULT;
+                    }
+                    ui.add(egui::DragValue::new(&mut self.pe.brush_px).range(select_shapes::BRUSH_PX_RANGE).speed(0.5).suffix(" px")).on_hover_text("Brush radius");
+                }
+            }
+            ui.separator();
             let adding = self.pe.tool == PointTool::Add;
             let add_txt = if adding { "✔ Done adding" } else { "➕ Add point" };
             if ui
@@ -154,23 +178,6 @@ impl PanoApp {
             {
                 self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::PatchClick);
                 self.pe.pending = None;
-            }
-            for (tool, text, tip) in [
-                (PointTool::SelectRect, "▭ Rectangle", "Drag a rectangle to select the points inside. Shift adds to the selection, Ctrl takes points out."),
-                (PointTool::SelectLasso, "➰ Lasso", "Drag a free outline to select the points inside. Shift adds to the selection, Ctrl takes points out."),
-                (PointTool::SelectBrush, "🖌 Brush", "Paint over points to select them. Ctrl takes points out again."),
-            ] {
-                if ui.add(egui::Button::selectable(self.pe.tool == tool, text)).on_hover_text(tip).clicked() {
-                    self.pe.tool = PointTool::toggle(self.pe.tool, tool);
-                    self.pe.pending = None;
-                    self.pe.sel_drag = None;
-                }
-            }
-            if self.pe.tool == PointTool::SelectBrush {
-                if self.pe.brush_px < 1.0 {
-                    self.pe.brush_px = select_shapes::BRUSH_PX_DEFAULT;
-                }
-                ui.add(egui::DragValue::new(&mut self.pe.brush_px).range(select_shapes::BRUSH_PX_RANGE).speed(0.5).suffix(" px")).on_hover_text("Brush radius");
             }
             if ui.add_enabled(self.undo.can_undo(), egui::Button::new("↶ Undo")).on_hover_text(self.undo.undo_label().map(|w| format!("Undo {w} (Ctrl+Z)")).unwrap_or_default()).clicked() {
                 self.undo_last();

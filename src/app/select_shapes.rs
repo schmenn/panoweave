@@ -188,6 +188,41 @@ mod tests {
         assert_eq!(app.pe.sel.len(), 3);
     }
 
+    fn pane_setup() -> (PanoApp, [PaneGeo; 2], Vec<(usize, P2, P2)>) {
+        let mut app = super::super::masks_tests::app_with_photos(2);
+        app.pe.a = 0;
+        app.pe.b = 1;
+        let px = [(10.0, 10.0), (30.0, 10.0), (90.0, 90.0)];
+        app.cps = px.iter().map(|_| ControlPoint::new(0, 1, [0.0; 2], [0.0; 2], false)).collect();
+        let pts: Vec<(usize, P2, P2)> = px.iter().enumerate().map(|(k, p)| (k, *p, *p)).collect();
+        let g = PaneGeo { rect: Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0)), origin: Pos2::ZERO, scale: 1.0, fit: 1.0, w: 200.0, h: 200.0 };
+        (app, [g, g], pts)
+    }
+
+    #[test]
+    fn a_single_brush_click_selects_the_points_under_it() {
+        let (mut app, geo, pts) = pane_setup();
+        app.pe.tool = PointTool::SelectBrush;
+        app.pe.brush_px = 25.0;
+        app.handle_pane_events(vec![PaneEvent::Click(Pane::A, Pos2::new(10.5, 10.5), Default::default())], &geo, &pts);
+        let mut got: Vec<usize> = app.pe.sel.iter().copied().collect();
+        got.sort_unstable();
+        assert_eq!(got, vec![0, 1]);
+        assert!(app.pe.sel_drag.is_none());
+    }
+
+    #[test]
+    fn rectangle_drag_on_a_point_moves_the_point_and_on_empty_space_draws() {
+        let (mut app, geo, pts) = pane_setup();
+        app.pe.tool = PointTool::SelectRect;
+        app.handle_pane_events(vec![PaneEvent::DragStart(Pane::A, Pos2::new(90.5, 90.5), true, Default::default())], &geo, &pts);
+        assert_eq!(app.pe.dragging, Some((2, Pane::A)));
+        assert!(app.pe.sel_drag.is_none());
+        app.handle_pane_events(vec![PaneEvent::DragEnd], &geo, &pts);
+        app.handle_pane_events(vec![PaneEvent::DragStart(Pane::A, Pos2::new(150.0, 150.0), true, Default::default())], &geo, &pts);
+        assert!(app.pe.sel_drag.is_some() && app.pe.dragging.is_none());
+    }
+
     #[test]
     fn modifiers_choose_the_operation() {
         use PointTool::*;
