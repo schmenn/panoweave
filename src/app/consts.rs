@@ -32,9 +32,12 @@ pub(super) const IMAGE_CACHE_UPPER_BOUND: u64 = 268435456; // 0x10000000
 pub(super) const FALLBACK_EXPORT_BUDGET: u64 = 2 << 30;
 // ---- Central style values (used by `setup_style`, `card`, `primary_button` and every hand-made frame) ----
 /// Corner radius of buttons, fields, combo boxes, checkboxes and thumbnails (small, so controls look flat and tidy).
-pub(super) const RADIUS: u8 = 3;
+pub(crate) const RADIUS: u8 = 3;
 /// Corner radius of cards, tiles and windows.
-pub(super) const RADIUS_CARD: u8 = 6;
+pub(crate) const RADIUS_CARD: u8 = 6;
+/// Corner radius of the big image surfaces (point editor panes, preview, mask canvas): square, so a zoomed
+/// photo that fills the surface does not poke its square corners over a rounded edge.
+pub(crate) const RADIUS_CANVAS: u8 = 0;
 /// Gap between neighbouring elements (`item_spacing.x`); also the unit for padding inside tiles.
 pub(super) const GAP: f32 = 8.0;
 /// Vertical gap between rows (`item_spacing.y`).

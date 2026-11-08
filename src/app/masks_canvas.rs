@@ -40,7 +40,7 @@ impl PanoApp {
         let origin = rect.center() - self.mk.view.center * scale;
         self.mk.geo = PaneGeo { rect, origin, scale, fit, w: w as f32, h: h as f32 };
         let geo = self.mk.geo;
-        painter.rect_filled(rect, 8.0, BG);
+        painter.rect_filled(rect, f32::from(RADIUS_CANVAS), BG);
         let img_rect = Rect::from_min_size(origin, Vec2::new(w as f32 * scale, h as f32 * scale));
         let full = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         if let Some(t) = self.photos[sel].tex.as_ref() {

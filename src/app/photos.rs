@@ -401,14 +401,14 @@ impl PanoApp {
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail.x.min(720.0), 300.0), Sense::click());
                 let p = ui.painter();
                 let hovered = resp.hovered() || ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
-                p.rect_filled(rect, 18.0, if hovered { Color32::from_rgb(34, 44, 60) } else { Color32::from_rgb(30, 33, 40) });
+                p.rect_filled(rect, f32::from(RADIUS_CARD), if hovered { Color32::from_rgb(34, 44, 60) } else { Color32::from_rgb(30, 33, 40) });
                 dashed_rect(p, rect.shrink(6.0), if hovered { ACCENT } else { Color32::from_rgb(80, 86, 100) });
                 // illustration: three overlapping frames
                 let c = rect.center() - Vec2::new(0.0, 60.0);
                 for (k, dx) in [-46.0f32, 0.0, 46.0].iter().enumerate() {
                     let r = Rect::from_center_size(c + Vec2::new(*dx, (k as f32 - 1.0).abs() * 4.0), Vec2::new(70.0, 50.0));
-                    p.rect_filled(r, 6.0, [Color32::from_rgb(52, 92, 140), Color32::from_rgb(64, 120, 180), Color32::from_rgb(52, 92, 140)][k]);
-                    p.rect_stroke(r, 6.0, Stroke::new(2.0, Color32::from_rgb(170, 205, 255)), StrokeKind::Inside);
+                    p.rect_filled(r, f32::from(RADIUS), [Color32::from_rgb(52, 92, 140), Color32::from_rgb(64, 120, 180), Color32::from_rgb(52, 92, 140)][k]);
+                    p.rect_stroke(r, f32::from(RADIUS), Stroke::new(2.0, Color32::from_rgb(170, 205, 255)), StrokeKind::Inside);
                 }
                 p.text(rect.center() + Vec2::new(0.0, 10.0), Align2::CENTER_CENTER, "Drop your photos here", FontId::proportional(24.0), Color32::WHITE);
                 p.text(

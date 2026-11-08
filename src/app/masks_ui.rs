@@ -134,14 +134,17 @@ impl PanoApp {
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 56.0), Sense::click());
                 let sel = i == self.mk.sel;
                 let fill = if sel { Color32::from_rgb(38, 50, 68) } else if resp.hovered() { Color32::from_rgb(44, 48, 57) } else { PANEL };
-                ui.painter().rect_filled(rect, 6.0, fill);
+                ui.painter().rect_filled(rect, f32::from(RADIUS_CARD), fill);
                 if sel {
-                    ui.painter().rect_stroke(rect, 6.0, Stroke::new(1.5, ACCENT), StrokeKind::Inside);
+                    ui.painter().rect_stroke(rect, f32::from(RADIUS_CARD), Stroke::new(1.5, ACCENT), StrokeKind::Inside);
                 }
                 let ts = p.thumb.size_vec2();
                 let tw = 64.0f32.min(50.0 * ts.x / ts.y);
                 let tr = Rect::from_min_size(rect.min + Vec2::new(4.0, 3.0), Vec2::new(tw, tw * ts.y / ts.x));
-                ui.painter().image(p.thumb.id(), tr, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), if p.enabled { Color32::WHITE } else { Color32::from_gray(90) });
+                egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), tr.size()))
+                    .corner_radius(CornerRadius::same(RADIUS))
+                    .tint(if p.enabled { Color32::WHITE } else { Color32::from_gray(90) })
+                    .paint_at(ui, tr);
                 let tx = rect.min.x + 72.0;
                 ui.painter().text(Pos2::new(tx, rect.min.y + 8.0), Align2::LEFT_TOP, format!("{}. {}", i + 1, p.name), FontId::proportional(12.5), Color32::WHITE);
                 let (t, c) = if p.mask.any() { ("● has a mask", MASK_GREEN) } else { ("no mask", MUTED) };

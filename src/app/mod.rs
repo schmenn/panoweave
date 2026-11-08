@@ -38,6 +38,7 @@ mod ui_helpers;
 mod viewport_window;
 
 pub use self::types::PanoApp;
+pub(crate) use self::consts::RADIUS;
 use self::{connections::*, consts::*, export::*, points_panes::*, types::*, ui_helpers::*};
 
 use crate::align::{ControlPoint, Lens};

@@ -63,7 +63,7 @@ impl PanoApp {
         let scale = fit * v.zoom;
         let origin = rect.center() - v.center * scale;
         geo[pane.i()] = PaneGeo { rect, origin, scale, fit, w: w as f32, h: h as f32 };
-        painter.rect_filled(rect, 8.0, BG);
+        painter.rect_filled(rect, f32::from(RADIUS_CANVAS), BG);
         let img_rect = Rect::from_min_size(origin, Vec2::new(w as f32 * scale, h as f32 * scale));
         let tex_id = self.full_tex.get(&idx).map(|t| t.id()).or_else(|| self.photos[idx].tex.as_ref().map(|t| t.id()));
         let d = PaneDraw { pane, idx, rect, origin, scale, v, tex_id, img_rect };
@@ -339,7 +339,7 @@ impl PanoApp {
                     let full_h = self.photos[idx].h as f32;
                     let hx = 0.5 * MAGNIFIER_WIDTH / full_w;
                     let hy = 0.5 * MAGNIFIER_WIDTH / full_h;
-                    painter.rect_filled(lr.expand(3.0), 6.0, Color32::BLACK);
+                    painter.rect_filled(lr.expand(3.0), f32::from(RADIUS_CARD), Color32::BLACK);
                     painter.image(t, lr, Rect::from_min_max(Pos2::new(u.x - hx, u.y - hy), Pos2::new(u.x + hx, u.y + hy)), Color32::WHITE);
                     painter.line_segment([lr.center() - Vec2::new(10.0, 0.0), lr.center() + Vec2::new(10.0, 0.0)], Stroke::new(1.0, Color32::from_rgb(255, 80, 80)));
                     painter.line_segment([lr.center() - Vec2::new(0.0, 10.0), lr.center() + Vec2::new(0.0, 10.0)], Stroke::new(1.0, Color32::from_rgb(255, 80, 80)));

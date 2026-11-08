@@ -81,7 +81,7 @@ impl PanoApp {
                         } else {
                             CARD
                         };
-                        p.rect_filled(rect, 8.0, fill);
+                        p.rect_filled(rect, f32::from(RADIUS_CARD), fill);
                         let cc = rect.left_center() + Vec2::new(20.0, 0.0);
                         p.circle_filled(cc, 11.0, if done { GOOD } else if sel { ACCENT } else { Color32::from_rgb(70, 75, 88) });
                         p.text(cc, Align2::CENTER_CENTER, if done { "✔".to_string() } else { format!("{}", k + 1) }, FontId::proportional(13.0), Color32::WHITE);

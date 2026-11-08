@@ -104,7 +104,7 @@ impl PanoApp {
         );
         let avail = ui.available_size() - Vec2::new(0.0, 4.0);
         let (resp, painter) = ui.allocate_painter(avail, Sense::click_and_drag());
-        painter.rect_filled(resp.rect, 8.0, BG);
+        painter.rect_filled(resp.rect, f32::from(RADIUS_CANVAS), BG);
         let aspect = self.view.aspect() as f32;
         let mut r = resp.rect.shrink(10.0);
         if r.width() / r.height() > aspect {

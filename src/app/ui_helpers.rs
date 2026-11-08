@@ -190,4 +190,61 @@ mod tests {
         assert_eq!(st.spacing.interact_size.y, ROW_H);
         assert!(RADIUS < RADIUS_CARD && BIG_H > ROW_H);
     }
+
+    /// The arguments of the call that starts at `open` (the index just after its `(`), split at top-level commas.
+    fn call_args(src: &str, open: usize) -> Vec<String> {
+        let (mut depth, mut cur, mut out) = (0i32, String::new(), Vec::new());
+        for ch in src[open..].chars() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' if depth == 0 => break,
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    out.push(std::mem::take(&mut cur).trim().to_string());
+                    continue;
+                }
+                _ => {}
+            }
+            cur.push(ch);
+        }
+        out.push(cur.trim().to_string());
+        out
+    }
+
+    /// Every corner radius in the UI code comes from `RADIUS`, `RADIUS_CARD` or `RADIUS_CANVAS`; a number written
+    /// into a painter call (other than 0) is what made the corners uneven before.
+    #[test]
+    fn no_hand_written_corner_radius_in_the_ui() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<_> = std::fs::read_dir(root.join("app")).unwrap().map(|e| e.unwrap().path()).collect();
+        files.extend(["patch_window.rs", "patch_viz.rs"].map(|f| root.join(f)));
+        // (call, index of the radius argument)
+        let calls = [("rect_filled(", 1), ("rect_stroke(", 1), ("CornerRadius::same(", 0), (".corner_radius(", 0)];
+        let mut bad = Vec::new();
+        for f in files.iter().filter(|f| f.extension().is_some_and(|e| e == "rs")) {
+            let all = std::fs::read_to_string(f).unwrap();
+            // test code draws nothing
+            let src = all.split("#[cfg(test)]").next().unwrap_or_default();
+            for (call, arg) in calls {
+                for (at, _) in src.match_indices(call) {
+                    let Some(a) = call_args(src, at + call.len()).into_iter().nth(arg) else { continue };
+                    let num = a.trim_end_matches("f32").trim_end_matches("u8").trim_end_matches('_');
+                    if num.parse::<f32>().is_ok_and(|v| v != 0.0) {
+                        let line = src[..at].lines().count();
+                        bad.push(format!("{}:{line}: {call}… {a}", f.file_name().unwrap().to_string_lossy()));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "use RADIUS / RADIUS_CARD / RADIUS_CANVAS instead of:
+{}", bad.join("
+"));
+    }
+
+    #[test]
+    fn the_radius_check_finds_a_written_number() {
+        let src = "p.rect_filled(Rect::from_min_max(a, b), 8.0, fill);";
+        let at = src.find("rect_filled(").unwrap() + "rect_filled(".len();
+        assert_eq!(call_args(src, at), ["Rect::from_min_max(a, b)", "8.0", "fill"]);
+    }
 }

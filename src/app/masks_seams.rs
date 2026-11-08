@@ -82,7 +82,7 @@ impl PanoApp {
         if let Some(t) = &self.mk.seam_tex {
             let s = t.size_vec2();
             let w = ui.available_width().min(420.0);
-            ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), Vec2::new(w, w * s.y / s.x))));
+            ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(CornerRadius::same(RADIUS)));
         }
         if self.mk.seam_rx.is_some() {
             ui.horizontal(|ui| {
