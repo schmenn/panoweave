@@ -59,6 +59,7 @@ impl PanoApp {
                     JobMsg::PairPoints { a, b, cps, ms, mode } => self.on_pair_points(a, b, cps, ms, mode),
                     JobMsg::PairChecked { a, b, cps, reports } => self.on_pair_checked(a, b, cps, reports),
                     JobMsg::ClickMatched(r) => self.on_click_matched(*r),
+                    JobMsg::Snapped(r) => self.on_snapped(*r),
                     JobMsg::FusedSaved(r) => match r {
                         Ok((p, ms)) => {
                             self.set_status(format!("Blended picture exported in {}: {}", fmt_ms(ms), p.display()), GOOD);
