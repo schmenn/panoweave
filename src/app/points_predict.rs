@@ -160,15 +160,7 @@ impl PanoApp {
         let fs = (s < 1.0 / 1.5).then(|| imgutil::blur(gf, guided::soft_sigma(1.0 / s)));
         let ms = (s > 1.5).then(|| imgutil::blur(gm, guided::soft_sigma(s)));
         let c = guided::Corr { fixed: gf, fixed_soft: fs.as_ref(), moving: gm, moving_soft: ms.as_ref(), tpl_r: self.tpl_size / 2 };
-        // the click can be a few pixels off: look around it
-        let mut best = ([s, 0.0, 0.0, s], -2.0f32);
-        for (dx, dy) in [(0.0, 0.0), (-4.0, 0.0), (4.0, 0.0), (0.0, -4.0), (0.0, 4.0)] {
-            let r = guided::best_rotation(&c, pf, s, (guess.0 + dx, guess.1 + dy));
-            if r.1 > best.1 {
-                best = r;
-            }
-        }
-        best.0
+        rotation_guess_with(&c, s, pf, guess)
     }
 
     /// Correlation search for the spot in `moving` that matches `pf` in `fixed`.
@@ -181,4 +173,18 @@ impl PanoApp {
         let c = guided::Corr { fixed: gf, fixed_soft: fs.as_ref(), moving: gm, moving_soft: ms.as_ref(), tpl_r: self.tpl_size / 2 };
         guided::refine(&c, pf, j, guess, search).map(|(x, y, v)| ((x, y), v))
     }
+}
+
+/// The rotation part of `PanoApp::rotation_guess` for ready-made correlation images (also used by
+/// the worker thread of "Snap selected"): zoom `s` plus the best rotation found around `guess`.
+pub(super) fn rotation_guess_with(c: &guided::Corr, s: f64, pf: P2, guess: P2) -> [f64; 4] {
+    // the click can be a few pixels off: look around it
+    let mut best = ([s, 0.0, 0.0, s], -2.0f32);
+    for (dx, dy) in [(0.0, 0.0), (-4.0, 0.0), (4.0, 0.0), (0.0, -4.0), (0.0, 4.0)] {
+        let r = guided::best_rotation(c, pf, s, (guess.0 + dx, guess.1 + dy));
+        if r.1 > best.1 {
+            best = r;
+        }
+    }
+    best.0
 }

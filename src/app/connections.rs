@@ -71,6 +71,7 @@ impl PanoApp {
     /// Show a point in the editor: open its pair, select it and zoom in on it.
     pub(super) fn jump_to_point(&mut self, k: usize) {
         let c = self.cps[k];
+        self.pe.sel.clear();
         self.step = Step::Points;
         self.pe.a = c.a;
         self.pe.b = c.b;
@@ -109,6 +110,11 @@ impl PanoApp {
         let mut open = self.show_cp_list;
         let mut jump: Option<usize> = None;
         let mut delete: Vec<usize> = Vec::new();
+        let mut sel_delete = false;
+        let mut shown_rows: Vec<usize> = Vec::new();
+        let mut shift_row: Option<usize> = None;
+        let mut ctrl_row: Option<usize> = None;
+        self.sync_selection();
         let mut removing_dups = false;
         let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None, undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
@@ -214,6 +220,7 @@ impl PanoApp {
                 self.cp_rows_cache = Some((cache_key, rows.clone(), pair_no.clone()));
                 (rows, pair_no)
                 };
+                shown_rows = rows.clone();
                 let shown_err: Vec<f64> = rows.iter().map(|&k| self.cps[k].err).collect();
                 let mean = if shown_err.is_empty() { 0.0 } else { shown_err.iter().sum::<f64>() / shown_err.len() as f64 };
                 ui.label(
@@ -226,10 +233,13 @@ impl PanoApp {
                     .color(MUTED),
                 );
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(self.pe.selected.is_some(), egui::Button::new("🗑 Delete selected")).clicked() {
-                        if let Some(k) = self.pe.selected {
-                            delete.push(k);
-                        }
+                    let n_sel = self.selection_indices().len();
+                    if ui
+                        .add_enabled(n_sel > 0, egui::Button::new(format!("🗑 Delete selected ({n_sel})")))
+                        .on_hover_text("Shift+click selects a range of rows, Ctrl+click adds or removes one. Protected points are never deleted.")
+                        .clicked()
+                    {
+                        sel_delete = true;
                     }
                     if ui.add_enabled(!rows.is_empty(), egui::Button::new(format!("🗑 Delete all {} listed", rows.len()))).clicked() {
                         delete.extend(rows.iter().copied());
@@ -274,7 +284,7 @@ impl PanoApp {
                         let k = rows[r];
                         let c = self.cps[k];
                         let (rect, resp) = ui.allocate_exact_size(Vec2::new(total_w, row_h), Sense::click());
-                        let sel = self.pe.selected == Some(k);
+                        let sel = self.pe.selected == Some(k) || self.pe.sel.contains(&k);
                         let p = ui.painter();
                         let dup = dup_of.get(&k);
                         if sel {
@@ -335,15 +345,31 @@ impl PanoApp {
                             resp.clone().on_hover_text(format!("Point {} lies on sky or cloud ({:.0} % of its surroundings).{stays}", k + 1, s * 100.0));
                         }
                         if resp.clicked() {
-                            jump = Some(k);
+                            let m = ui.input(|i| i.modifiers);
+                            if m.shift {
+                                shift_row = Some(k);
+                            } else if m.command {
+                                ctrl_row = Some(k);
+                            } else {
+                                jump = Some(k);
+                            }
                         }
                     }
                 });
             });
         self.vp = vp;
         self.show_cp_list = open;
+        if let Some(k) = shift_row {
+            self.select_rows_between(&shown_rows, k);
+        }
+        if let Some(k) = ctrl_row {
+            self.toggle_in_selection(k);
+        }
         if let Some(k) = jump {
             self.jump_to_point(k);
+        }
+        if sel_delete {
+            self.delete_selection();
         }
         if !delete.is_empty() {
             delete.sort_unstable();

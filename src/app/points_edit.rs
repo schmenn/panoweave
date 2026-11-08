@@ -38,6 +38,7 @@ impl PanoApp {
         self.cps = s.cps;
         self.click.result = s.result;
         self.pe.selected = None;
+        self.pe.sel.clear();
         self.pe.pending = None;
         self.pe.dragging = None;
         self.pe.drag_before = None;
@@ -97,6 +98,10 @@ impl PanoApp {
     }
 
     pub(super) fn delete_selected(&mut self) {
+        if self.selection_indices().len() > 1 {
+            self.delete_selection();
+            return;
+        }
         if let Some(k) = self.pe.selected {
             if self.cps.get(k).is_some_and(|c| c.locked) {
                 self.set_status("This point is protected: press L (or the lock button) to unlock it first.", WARN);
@@ -128,6 +133,7 @@ impl PanoApp {
             }
         });
         self.pe.selected = None;
+        self.pe.sel.clear();
         kept
     }
 
@@ -184,6 +190,36 @@ impl PanoApp {
                 self.pe.pending = Some((pane, pn));
             }
         }
+    }
+
+    /// Brush radius in screen pixels.
+    pub(super) fn brush_radius(&self) -> f32 {
+        if self.pe.brush_px < 1.0 { select_shapes::BRUSH_PX_DEFAULT } else { self.pe.brush_px }
+    }
+
+    /// Applies the selection shape being dragged to the selection. The brush acts on every step
+    /// (only the newest piece of the stroke), rectangle and lasso when the drag ends (`finish`).
+    /// `pts` are the points of the dragged pane in its photo pixels.
+    pub(super) fn apply_select(&mut self, pts: &[(usize, P2)], r_px: f64, finish: bool) {
+        use select_shapes::{points_in, SelOp, Shape};
+        let Some(sd) = self.pe.sel_drag.as_ref() else { return };
+        let tool = self.pe.tool;
+        let hits = match tool {
+            PointTool::SelectBrush => points_in(&Shape::Brush(&sd.path[sd.path.len().saturating_sub(2)..], r_px), pts),
+            PointTool::SelectRect if finish => match (sd.path.first(), sd.path.last()) {
+                (Some(a), Some(b)) => points_in(&Shape::Rect(*a, *b), pts),
+                _ => return,
+            },
+            PointTool::SelectLasso if finish => points_in(&Shape::Lasso(&sd.path), pts),
+            _ => return,
+        };
+        let op = SelOp::for_tool(tool, sd.mods.shift, sd.mods.command);
+        if op != SelOp::Replace && self.pe.sel.is_empty() {
+            self.pe.sel.extend(self.pe.selected.filter(|&s| s < self.cps.len()));
+        }
+        op.apply(&mut self.pe.sel, &hits);
+        // the multiple selection is the truth while a shape tool is used
+        self.pe.selected = None;
     }
 
     /// Store a hand-placed pair; `n1` belongs to pane `p1`, `n2` to the other pane.
@@ -254,6 +290,9 @@ impl PanoApp {
                 .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap())
                 .map(|(k, _)| k)
         };
+        let pane_pts = |pane: Pane| -> Vec<(usize, P2)> { pts.iter().map(|(k, pa, pb)| (*k, if pane == Pane::A { *pa } else { *pb })).collect() };
+        let brush_screen = self.brush_radius();
+        let brush_r = |pane: Pane| -> f64 { (brush_screen / geo[pane.i()].scale) as f64 };
         for ev in events {
             match ev {
                 PaneEvent::Fit(pane) => {
@@ -271,7 +310,7 @@ impl PanoApp {
                     v.center.x = v.center.x.clamp(0.0, g.w);
                     v.center.y = v.center.y.clamp(0.0, g.h);
                 }
-                PaneEvent::Click(pane, pos) => {
+                PaneEvent::Click(pane, pos, mods) => {
                     if self.pe.tool == PointTool::PatchClick {
                         let p = px_of(pane, pos);
                         let (w, h) = (geo[pane.i()].w as f64, geo[pane.i()].h as f64);
@@ -294,7 +333,20 @@ impl PanoApp {
                         if p.0 >= -0.5 && p.1 >= -0.5 && p.0 <= w - 0.5 && p.1 <= h - 0.5 {
                             self.add_point_click(pane, p);
                         }
+                    } else if self.pe.tool == PointTool::SelectBrush {
+                        // a single click with the brush already selects the points under it
+                        self.pe.sel_drag = Some(SelDrag { pane, path: vec![px_of(pane, pos)], mods });
+                        self.apply_select(&pane_pts(pane), brush_r(pane), true);
+                        self.pe.sel_drag = None;
+                        let n = self.pe.sel.len();
+                        self.set_status(format!("{n} point{} selected.", if n == 1 { "" } else { "s" }), MUTED);
+                    } else if mods.shift || mods.command {
+                        // Shift/Ctrl+click: add the point to the selection or take it out again
+                        if let Some(k) = nearest(pane, pos) {
+                            self.toggle_in_selection(k);
+                        }
                     } else {
+                        self.pe.sel.clear();
                         self.pe.selected = nearest(pane, pos);
                         if self.pe.selected.is_some() {
                             self.pe.moving = Some(pane);
@@ -311,13 +363,27 @@ impl PanoApp {
                         }
                     }
                 }
-                PaneEvent::DragStart(pane, pos, primary) => {
+                PaneEvent::DragStart(pane, pos, primary, mods) => {
+                    // rectangle and lasso start on empty space; on a point the point is dragged as usual
+                    let on_point = self.pe.tool != PointTool::SelectBrush && !mods.shift && !mods.command && nearest(pane, pos).is_some();
+                    if primary && self.pe.tool.is_select() && !on_point {
+                        // a selection shape starts here (the secondary button still moves the photo)
+                        self.pe.dragging = None;
+                        self.pe.drag_before = None;
+                        self.pe.panning = None;
+                        self.pe.sel_drag = Some(SelDrag { pane, path: vec![px_of(pane, pos)], mods });
+                        self.apply_select(&pane_pts(pane), brush_r(pane), false);
+                        continue;
+                    }
                     self.pe.dragging = None;
                     self.pe.drag_before = None;
                     self.pe.panning = None;
                     if primary {
                         if let Some(k) = nearest(pane, pos) {
                             self.pe.selected = Some(k);
+                            if !self.pe.sel.contains(&k) {
+                                self.pe.sel.clear();
+                            }
                             if self.cps[k].locked {
                                 self.set_status("This point is protected: press L (or the lock button) to unlock it before moving it.", WARN);
                                 self.pe.panning = Some(pane);
@@ -332,7 +398,15 @@ impl PanoApp {
                     self.pe.panning = Some(pane);
                 }
                 PaneEvent::Drag(pane, pos, delta) => {
-                    if let Some((k, dp)) = self.pe.dragging {
+                    if self.pe.sel_drag.is_some() {
+                        let same = self.pe.sel_drag.as_ref().is_some_and(|s| s.pane == pane);
+                        if same {
+                            if let Some(sd) = self.pe.sel_drag.as_mut() {
+                                sd.path.push(px_of(pane, pos));
+                            }
+                            self.apply_select(&pane_pts(pane), brush_r(pane), false);
+                        }
+                    } else if let Some((k, dp)) = self.pe.dragging {
                         if dp == pane && k < self.cps.len() {
                             let idx = if pane == Pane::A { a } else { b };
                             let n = self.to_norm(idx, px_of(pane, pos));
@@ -354,6 +428,14 @@ impl PanoApp {
                     }
                 }
                 PaneEvent::DragEnd => {
+                    if let Some(pane) = self.pe.sel_drag.as_ref().map(|s| s.pane) {
+                        self.apply_select(&pane_pts(pane), brush_r(pane), true);
+                        self.pe.sel_drag = None;
+                        self.pe.panning = None;
+                        let n = self.pe.sel.len();
+                        self.set_status(format!("{n} point{} selected.", if n == 1 { "" } else { "s" }), MUTED);
+                        continue;
+                    }
                     if let Some((k, pane)) = self.pe.dragging.take() {
                         self.snap_point(k, pane);
                     }

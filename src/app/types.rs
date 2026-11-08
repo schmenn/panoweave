@@ -89,6 +89,8 @@ pub(super) enum JobMsg {
     PairChecked { a: usize, b: usize, cps: Vec<ControlPoint>, reports: Vec<crate::pair_check::PairReport> },
     /// patch click mode result
     ClickMatched(Box<crate::click_match::ClickResult>),
+    /// "Snap selected" finished (see `points_snap.rs`)
+    Snapped(Box<super::points_snap::SnapDone>),
     /// the person pressed Cancel: the job's result is thrown away
     Cancelled,
 }
@@ -160,8 +162,10 @@ impl Default for PaneGeo {
 pub(super) enum PaneEvent {
     Fit(Pane),
     Zoom(Pane, Pos2, f32),
-    Click(Pane, Pos2),
-    DragStart(Pane, Pos2, bool),
+    /// pane, position, modifier keys held during the click (Shift/Ctrl = multiple selection)
+    Click(Pane, Pos2, egui::Modifiers),
+    /// pane, position, primary button, modifier keys
+    DragStart(Pane, Pos2, bool, egui::Modifiers),
     Drag(Pane, Pos2, Vec2),
     DragEnd,
 }
@@ -176,6 +180,12 @@ pub(super) enum PointTool {
     Add,
     /// Rough click pair refined by patch matching.
     PatchClick,
+    /// Drag a rectangle: selects the points inside.
+    SelectRect,
+    /// Drag a free outline: selects the points inside.
+    SelectLasso,
+    /// Paint over points to select them (Ctrl = take them out again).
+    SelectBrush,
 }
 
 impl PointTool {
@@ -184,6 +194,19 @@ impl PointTool {
     pub(super) fn toggle(current: PointTool, pressed: PointTool) -> PointTool {
         if current == pressed { PointTool::Edit } else { pressed }
     }
+
+    /// Tools that draw a selection shape with the mouse.
+    pub(super) fn is_select(self) -> bool {
+        matches!(self, PointTool::SelectRect | PointTool::SelectLasso | PointTool::SelectBrush)
+    }
+}
+
+/// A selection shape that is being dragged (photo pixels of the pane it started in).
+pub(super) struct SelDrag {
+    pub(super) pane: Pane,
+    pub(super) path: Vec<P2>,
+    /// keys held when the drag started
+    pub(super) mods: egui::Modifiers,
 }
 
 #[derive(Default)]
@@ -191,6 +214,14 @@ pub(super) struct PointEditor {
     pub(super) a: usize,
     pub(super) b: usize,
     pub(super) selected: Option<usize>,
+    /// Further selected points (Shift/Ctrl+click); indices into the point list, see `points_select.rs`.
+    pub(super) sel: std::collections::HashSet<usize>,
+    /// order fingerprint of the points when `sel` was last checked
+    pub(super) sel_fp: u64,
+    /// selection shape being dragged (rectangle, lasso, brush)
+    pub(super) sel_drag: Option<SelDrag>,
+    /// brush radius in screen pixels (0 = `select_shapes::BRUSH_PX_DEFAULT`)
+    pub(super) brush_px: f32,
     /// What a click into a photo does (radio-button style, see `PointTool::toggle`).
     pub(super) tool: PointTool,
     pub(super) pending: Option<(Pane, [f64; 2])>,
