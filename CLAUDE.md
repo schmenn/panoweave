@@ -42,6 +42,7 @@ Every subagent must read this file and `local/WORKFLOW.md` before it starts, and
 - Constants go into a configuration or a documented `const`. Change existing files instead of adding parallel copies; delete test files you created (`shots/*.png`, `target/test`, …).
 - Coordinates are normalised by the long image side: `u = (x+0.5−w/2)/L`, so results do not depend on the resolution. Detection, matching and fine alignment run on the ~1600 px working images.
 - Suggestions (points, fixes) are never applied without the person accepting them; hand-placed points are never moved.
+- A change that users see (a step, a setting, a message, a pitfall) also updates the user guide `docs/GUIDE.md` in the same PR (screenshots in `docs/guide/` via `--screenshot … --demo …`).
 - Report honestly what was not checked (CI, clicking through the GUI, a code path that was not run).
 - Do not start development servers or watchers. Do not copy logos or brand names.
 

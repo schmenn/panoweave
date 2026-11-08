@@ -4,6 +4,8 @@ A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitiv
 
 > Status: early development (v0.2.0, alpha). Windows is the primary target; a ready-to-run Windows zip is attached to each [release](https://github.com/schmenn/panoweave/releases).
 
+**New here? Read the [user guide](docs/GUIDE.md)**: every step and setting explained, how to take photos that stitch well, and what to do when something goes wrong.
+
 ## Screenshots
 
 | Photos and lenses | Control points |

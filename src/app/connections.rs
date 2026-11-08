@@ -805,6 +805,8 @@ impl PanoApp {
                 ui.label("Merge photos of the same view taken at different exposures into one evenly lit picture.");
                 ui.add_space(6.0);
                 ui.label(RichText::new("Projects (.pwproj) keep your photos, points, alignment and framing.").small().color(MUTED));
+                ui.add_space(6.0);
+                ui.hyperlink_to("📖 Full user guide: every step, the settings and what to do when something goes wrong", GUIDE_URL);
             });
         });
         self.vp = vp;

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- User guide (`docs/GUIDE.md`): quick start, how to take photos that stitch well, every step and its settings, the point editor, the extra windows, exposure blend, projects, pitfalls with solutions, what the messages mean, keys and mouse. With screenshots; linked from the README and the help window.
+
 ### Fixed
 - A job that failed with an internal error (a panic in the worker) left the program "busy" for ever with no message. Now the status line says which job failed and why, names the crash log, and nothing is changed; the next job works. A preview or blended preview whose worker ended without a picture no longer blocks every later preview.
 - The locks of the patch store, the export photo cache, the sky cache of the pair check and the JPEG writer keep working after a panic in another thread (before, one failure made every later access fail too).
