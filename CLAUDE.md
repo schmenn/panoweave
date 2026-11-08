@@ -55,7 +55,7 @@ cargo test <name>      # single test, e.g. cargo test patch_matcher
 cargo build --release  # the exe may be locked while the program runs: use --target-dir target/<other>
 ```
 
-`cargo clippy --all-targets -- -D warnings` must pass (the CI runs it; lints switched off on purpose are listed with their reason under `[lints.clippy]` in `Cargo.toml`, single exceptions carry an `#[allow]` with a comment). No format config; `cargo fmt` is not used. The CI (`.github/workflows/ci.yml`, windows-latest, check name `test`) builds `--release`, runs `cargo test` and clippy. Releases: raise the version and `CHANGELOG.md` in a PR, push a tag `vX.Y.Z`, `release.yml` attaches the Windows zip. On Windows a freshly installed `gh` may be missing from the PATH of an already open shell.
+`cargo clippy --all-targets -- -D warnings` must pass (the CI runs it; lints switched off on purpose are listed with their reason under `[lints.clippy]` in `Cargo.toml`, single exceptions carry an `#[allow]` with a comment). No format config; `cargo fmt` is not used. The Rust version is fixed in `rust-toolchain.toml` (local builds and CI use the same one); raise it in its own PR and fix new clippy warnings there. The CI (`.github/workflows/ci.yml`, windows-latest, check name `test`) builds `--release`, runs `cargo test` and clippy. Releases: raise the version and `CHANGELOG.md` in a PR, push a tag `vX.Y.Z`, `release.yml` attaches the Windows zip. On Windows a freshly installed `gh` may be missing from the PATH of an already open shell.
 
 ### Headless and demo flags (in `main.rs`)
 

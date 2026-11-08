@@ -688,4 +688,56 @@ mod tests {
             assert!((0..2).all(|i| close(a.pa[i], b.pa[i]) && close(a.pb[i], b.pb[i])), "{:?} vs {:?}", (a.pa, a.pb), (b.pa, b.pb));
         }
     }
+
+    #[test]
+    fn fine_alignment_leaves_protected_points_alone_and_reports_far_ones() {
+        use crate::align::CpKind;
+        use crate::fine_align::{self, FaPhoto, FineConfig};
+        let big = texture(520, 260, 91);
+        let views: Vec<RgbImage> = (0..3).map(|i| crop(&big, i * 100, 0, 320, 260)).collect();
+        let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
+        let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false }, &|_, _| {});
+        let lens_of = [0usize; 3];
+        let long = [320.0; 3];
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false };
+        let r = align_all(&lens_of, &[Lens::from_hfov_deg(50.0)], &long, &mr.cps, &s, &|_, _| {});
+        let fa: Vec<FaPhoto> = views.iter().zip(&grays).map(|(v, g)| FaPhoto { gray: g.clone(), rgb: Arc::new(v.clone()) }).collect();
+        let cfg = FineConfig { drop_invalid_points: true, ..FineConfig::default() };
+        let run = |cps: &[ControlPoint]| fine_align::run(&fa, &lens_of, &long, &r.lenses, &r.rots, cps, false, false, &cfg, &|_, _| {});
+        // all points protected and where they belong: none moved, dropped or reported
+        let mut all = r.cps.clone();
+        for c in all.iter_mut() {
+            c.locked = true;
+        }
+        let (_, _, out, st) = run(&all);
+        for p in all.iter().filter(|c| c.kind == CpKind::Point) {
+            let q = out.iter().find(|c| c.locked && (c.a, c.b, c.pa) == (p.a, p.b, p.pa)).expect("a protected point is never dropped");
+            assert_eq!((q.a, q.b, q.pb, q.weight), (p.a, p.b, p.pb, p.weight), "a protected point is never moved or re-weighted");
+        }
+        assert_eq!(st.locked_far, 0, "points in place are not reported: {:?}", st.log);
+        // two of the measured ones put 5 px and 15 px off in photo B: both reported, both left as they are
+        let measured: Vec<usize> = (0..r.cps.len()).filter(|&k| r.cps[k].kind == CpKind::Point && out.iter().any(|c| (c.a, c.b, c.pa) == (r.cps[k].a, r.cps[k].b, r.cps[k].pa) && c.conf > 0.5)).collect();
+        assert!(measured.len() >= 2);
+        let mut cps = r.cps.clone();
+        let (k5, k15) = (measured[0], measured[measured.len() - 1]);
+        cps[k5].pb[0] += 5.0 / 320.0;
+        cps[k15].pb[0] += 15.0 / 320.0;
+        cps[k5].locked = true;
+        cps[k15].locked = true;
+        let (_, _, out, st) = run(&cps);
+        for k in [k5, k15] {
+            let q = out.iter().find(|c| c.locked && (c.a, c.b, c.pa) == (cps[k].a, cps[k].b, cps[k].pa)).expect("kept");
+            assert_eq!(q.pb, cps[k].pb, "left where it is");
+        }
+        assert_eq!(st.locked_far, 2, "{:?}", st.log);
+        assert!((st.locked_far_max - 15.0).abs() < 1.5, "the largest is about 15 px: {}", st.locked_far_max);
+
+        // without control areas no round can be judged: nothing changes, and it is said
+        let cfg = FineConfig { areas: false, ..FineConfig::default() };
+        let (rots, _, _, st) = fine_align::run(&fa, &lens_of, &long, &r.lenses, &r.rots, &r.cps, false, false, &cfg, &|_, _| {});
+        assert!(st.no_test_spots, "{:?}", st.log);
+        assert_eq!(rots, r.rots);
+        assert!(!st.log.iter().any(|l| l.contains("below the threshold")), "{:?}", st.log);
+    }
 }

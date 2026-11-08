@@ -73,6 +73,10 @@ pub struct FineConfig {
     pub point_search: f32,
     #[serde(default = "point_min_score_default")]
     pub point_min_score: f32,
+    /// Protected points are never moved, re-weighted or dropped; when the measured shift of one is larger than this
+    /// (pixels of the working image) it is counted and reported, so the person can look at it.
+    #[serde(default = "locked_warn_default")]
+    pub locked_warn_px: f32,
 }
 
 fn point_template_default() -> usize {
@@ -80,6 +84,9 @@ fn point_template_default() -> usize {
 }
 fn point_search_default() -> f32 {
     7.0
+}
+fn locked_warn_default() -> f32 {
+    3.0
 }
 fn point_min_score_default() -> f32 {
     0.8
@@ -94,6 +101,7 @@ impl Default for FineConfig {
         FineConfig {
             enabled: true,
             record_patches: record_patches_default(),
+            locked_warn_px: locked_warn_default(),
             matcher: MatchConfig::default(),
             refine_points: true,
             drop_invalid_points: false,
@@ -142,6 +150,15 @@ pub struct FineStats {
     pub points_refined: usize,
     /// points whose fine-tuning failed (correlation too low or no clear peak)
     pub points_not_updated: usize,
+    /// protected points whose measured shift is above `locked_warn_px` (left as they are), and the largest shift
+    pub locked_far: usize,
+    pub locked_far_max: f32,
+    /// the limit used for `locked_far` (from the configuration)
+    pub locked_warn_px: f32,
+    /// protected points without a usable match (further off than the search radius, or too little texture)
+    pub locked_unmatched: usize,
+    /// no control area could be measured, so no round could be judged and nothing was changed
+    pub no_test_spots: bool,
     /// the last measuring round (the list shown in the patch comparison window):
     /// patches measured, valid matches, control areas kept
     pub list_total: usize,
@@ -455,6 +472,9 @@ struct RoundOutcome {
     areas: usize,
     refined: usize,
     failed: usize,
+    locked_far: usize,
+    locked_far_max: f32,
+    locked_unmatched: usize,
 }
 
 /// One measuring round: refine points, re-measure manual areas, rebuild automatic areas.
@@ -584,8 +604,12 @@ fn measure_round(
     let mut out: Vec<ControlPoint> = Vec::with_capacity(cps.len());
     let mut n_refined = 0;
     let mut n_failed = 0;
+    let (mut locked_far, mut locked_far_max, mut locked_unmatched) = (0usize, 0.0f32, 0usize);
     for (mut c, m, kept_manual) in refined {
         if c.kind == CpKind::Area {
+            if c.locked {
+                out.push(c); // a protected area stays, even though the others are rebuilt
+            }
             continue; // automatic areas are rebuilt below
         }
         if kept_manual {
@@ -610,16 +634,31 @@ fn measure_round(
                     diffs.push(m.diff);
                 }
                 c.shift = [m.result.dx, m.result.dy];
-                // points placed by hand stay where the person put them
-                if (!c.manual || c.kind == CpKind::AreaManual)
-                    && let Some(p) = geos[c.b].dir_to_px(m.dir_b) {
-                        c.pb = norm(&geos[c.b], p);
-                        n_refined += 1;
+                if c.locked {
+                    // protected: only measured. How far the spot found in photo B is from where the point is
+                    // (pixels of the working image); a large distance is reported, the point stays as it is.
+                    if let Some(p) = geos[c.b].dir_to_px(m.dir_b) {
+                        let (x, y) = denorm(&geos[c.b], c.pb);
+                        let s = ((p.0 - x).hypot(p.1 - y)) as f32;
+                        if s > cfg.locked_warn_px {
+                            locked_far += 1;
+                            locked_far_max = locked_far_max.max(s);
+                        }
                     }
-                c.weight = match c.kind {
-                    CpKind::AreaManual => cfg.manual_area_weight * c.conf.max(0.05) as f64,
-                    _ => 1.0,
-                };
+                } else {
+                    // points placed by hand stay where the person put them
+                    if (!c.manual || c.kind == CpKind::AreaManual)
+                        && let Some(p) = geos[c.b].dir_to_px(m.dir_b) {
+                            c.pb = norm(&geos[c.b], p);
+                            n_refined += 1;
+                        }
+                    c.weight = match c.kind {
+                        CpKind::AreaManual => cfg.manual_area_weight * c.conf.max(0.05) as f64,
+                        _ => 1.0,
+                    };
+                }
+            } else if c.locked {
+                locked_unmatched += 1;
             } else if c.kind == CpKind::Point && !c.manual {
                 if cfg.drop_invalid_points {
                     STORE.finalize(m.id, None, None);
@@ -770,6 +809,9 @@ fn measure_round(
         areas: n_areas,
         refined: n_refined,
         failed: n_failed,
+        locked_far,
+        locked_far_max,
+        locked_unmatched,
     }
 }
 
@@ -878,6 +920,16 @@ pub fn run(
     rs.sort_by_key(|a| std::cmp::Reverse(a.1));
     stats.reasons = rs;
     stats.log.push(format!("measured {} patches, {} valid, {} control areas kept", o.total, o.valid, o.areas));
+    stats.locked_far = o.locked_far;
+    stats.locked_far_max = o.locked_far_max;
+    stats.locked_warn_px = cfg.locked_warn_px;
+    stats.locked_unmatched = o.locked_unmatched;
+    if o.locked_far > 0 {
+        stats.log.push(format!("{} protected points are off by more than {:.1} px (up to {:.1} px) - left as they are", o.locked_far, cfg.locked_warn_px, o.locked_far_max));
+    }
+    if o.locked_unmatched > 0 {
+        stats.log.push(format!("{} protected points could not be confirmed (no match within the search radius) - left as they are", o.locked_unmatched));
+    }
     if o.valid == 0 {
         stats.log.push("no valid patches - keeping the alignment as it is (texture-poor overlaps?)".into());
         stats.err_after = stats.err_before;
@@ -889,6 +941,14 @@ pub fn run(
     let step = (all_test.len() as f64 / TEST_SPOTS as f64).max(1.0);
     let test: Vec<(usize, usize, (f64, f64))> = (0..all_test.len().min(TEST_SPOTS)).map(|i| all_test[(i as f64 * step) as usize]).collect();
     let eval_cfg = MatchConfig { search_radius: (cfg.matcher.search_radius * 0.5).max(cfg.min_search_radius * 2.0), ..cfg.matcher.clone() };
+    if test.is_empty() {
+        // the rounds are judged on the control areas; without any there is nothing to tell better from worse
+        stats.log.push("no control areas to judge the rounds with - alignment kept as it is (switch on \"Add control areas\" to fine-align)".into());
+        stats.no_test_spots = true;
+        stats.err_after = stats.err_before;
+        stats.ms = t0.elapsed().as_millis();
+        return (rots, lenses, cps, stats);
+    }
     let (s0, d0, _) = evaluate(&geos, &imgs, &test, &eval_cfg);
     stats.shift_before = s0;
     stats.diff_before = d0;
@@ -943,6 +1003,9 @@ pub fn run(
             stats.areas = o.areas;
             stats.points_refined = o.refined;
             stats.points_not_updated = o.failed;
+            stats.locked_far = o.locked_far;
+            stats.locked_far_max = o.locked_far_max;
+            stats.locked_unmatched = o.locked_unmatched;
             next_cps = o.cps;
         }
     }

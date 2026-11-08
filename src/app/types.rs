@@ -94,6 +94,8 @@ pub(super) enum JobMsg {
     Snapped(Box<super::points_snap::SnapDone>),
     /// the person pressed Cancel: the job's result is thrown away
     Cancelled,
+    /// the job stopped with an error that was not expected (a panic in the worker); the text says what happened
+    Failed(String),
 }
 
 pub(super) struct Job {
