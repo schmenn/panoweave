@@ -131,7 +131,7 @@ The preview shows the whole panorama.
 
 **Size.** The slider sets the size as a percentage of full detail (the size at which the photos keep all their pixels). **More size and file options** lets you give a width in pixels and use 16-bit TIFF. The dialog shows the size in megapixels, the memory the export will use and the file size, and checks the free disk space before it starts.
 
-**File.** JPEG (with quality), PNG or TIFF; PNG and TIFF keep the transparent area outside the panorama. The extension of the file name follows the file type (the dialog says when it changes it), and it warns when an existing file will be replaced. JPEG files can be at most 65535 pixels wide or high; TIFF files above 3.5 GB are written as BigTIFF.
+**File.** JPEG (with quality), PNG or TIFF; PNG and TIFF keep the transparent area outside the panorama. The extension of the file name follows the file type (the step shows "Will be saved as …" with the final name), and it says when an existing file will be replaced. JPEG files can be at most 65535 pixels wide or high; TIFF files above 3.5 GB are written as BigTIFF.
 
 **Blending**
 
