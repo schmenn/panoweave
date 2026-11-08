@@ -154,22 +154,23 @@ impl PanoApp {
         let groups = image_groups(self.photos.len(), &active, &self.cps);
         self.preview_dirty = true;
         let q = if a.mean_err < 1.5 { "excellent" } else if a.mean_err < 3.0 { "good" } else { "rough – check the points" };
+        let fine_note = a.fine.as_ref().map(fine_attention).unwrap_or_default();
         self.set_status(
             format!(
-                "Aligned in {}: average error {:.2} px ({q}){}.{}",
+                "Aligned in {}: average error {:.2} px ({q}){}.{}{fine_note}",
                 fmt_ms(a.ms),
                 a.mean_err,
                 if a.removed > 0 { format!(", {} bad points removed automatically", a.removed) } else { String::new() },
                 pair_note.unwrap_or_default()
             ),
-            if a.mean_err < 3.0 { GOOD } else { WARN },
+            if a.mean_err < 3.0 && fine_note.is_empty() { GOOD } else { WARN },
         );
         if groups.len() >= 2 && active.len() > 1 {
             // like the original after the assistant: warn with the list
             // of groups and open the point editor with the first photo of the first two groups
             self.set_status(
                 format!(
-                    "Warning {} unconnected image groups found: {}. Please create control points between unconnected images in step 2, then press “Align photos” again.",
+                    "Warning {} unconnected image groups found: {}. Please create control points between unconnected images in step 2, then press “Align photos” again.{fine_note}",
                     groups.len(),
                     groups_text(&groups)
                 ),

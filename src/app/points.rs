@@ -12,6 +12,10 @@ impl PanoApp {
         if self.pe.a == self.pe.b {
             self.pe.b = if self.pe.a + 1 < n { self.pe.a + 1 } else { 0 };
         }
+        if self.click.pair != (self.pe.a, self.pe.b) {
+            // other photos on screen (switch, swap sides, photo removed): the clicks were made in the old ones
+            self.click = ClickState { pair: (self.pe.a, self.pe.b), ..Default::default() };
+        }
         let ctx = ui.ctx().clone();
         self.points_toolbar_all(ui);
         let (a, b) = (self.pe.a, self.pe.b);

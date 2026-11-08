@@ -254,7 +254,7 @@ impl PanoApp {
             let cache = Mutex::new(crate::photo_cache::PhotoCache::new(cache_bytes));
             let loader = |i: usize, pixels: bool| -> Result<RenderPhoto, String> {
                 // seams only need the geometry plus where the photo is blown out: the small copy is enough
-                let img = if pixels { cache.lock().unwrap().get_or_load(i, || sources[i].0.load_full())? } else { sources[i].1.clone() };
+                let img = if pixels { cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_load(i, || sources[i].0.load_full())? } else { sources[i].1.clone() };
                 Ok(render_photo_of(&sources[i], img))
             };
             let prog = stitch::Progress { report, cancel };
@@ -279,7 +279,7 @@ impl PanoApp {
                 }
                 let job = stitch::prepare_strips(sources.len(), &loader, &view, out_w, blend, &render_opts, &cfg, total, &prog)?;
                 // when the memory is tight the planner takes memory from the photo cache and, if needed, lowers the blend levels
-                cache.lock().unwrap().set_capacity(job.cache_bytes);
+                cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).set_capacity(job.cache_bytes);
                 if job.levels_used < job.levels_wanted {
                     eprintln!("export: blend levels lowered from {} to {} to fit into the memory ({:.2} GB for the whole export)", job.levels_wanted, job.levels_used, crate::sysmem::gb(total));
                 }
@@ -288,7 +288,7 @@ impl PanoApp {
                 write_atomically(&path, &stop, |tmp| {
                     crate::strip_write::write_file(tmp, job.w, job.h, &wo, |sink| job.run(&loader, &mut |y0, c, v, _| sink.push(y0, c, v), &prog))
                 })?;
-                let c = cache.lock().unwrap();
+                let c = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 eprintln!(
                     "export: {}x{} px, {} strips of {} rows, planned strip memory {:.2} GB, photo cache {} hits / {} misses ({:.2} GB), peak memory of the program {:.2} GB (at the start {:.2} GB, highest during the export {:.2} GB), {} ms",
                     job.w,
@@ -308,7 +308,7 @@ impl PanoApp {
             })();
             mem_stop.store(true, Ordering::Relaxed);
             let _ = sampler.join();
-            cache.lock().unwrap().clear();
+            cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
             JobMsg::Rendered(res)
         });
     }
