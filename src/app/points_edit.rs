@@ -333,6 +333,13 @@ impl PanoApp {
                         if p.0 >= -0.5 && p.1 >= -0.5 && p.0 <= w - 0.5 && p.1 <= h - 0.5 {
                             self.add_point_click(pane, p);
                         }
+                    } else if self.pe.tool == PointTool::SelectBrush {
+                        // a single click with the brush already selects the points under it
+                        self.pe.sel_drag = Some(SelDrag { pane, path: vec![px_of(pane, pos)], mods });
+                        self.apply_select(&pane_pts(pane), brush_r(pane), true);
+                        self.pe.sel_drag = None;
+                        let n = self.pe.sel.len();
+                        self.set_status(format!("{n} point{} selected.", if n == 1 { "" } else { "s" }), MUTED);
                     } else if mods.shift || mods.command {
                         // Shift/Ctrl+click: add the point to the selection or take it out again
                         if let Some(k) = nearest(pane, pos) {
@@ -357,7 +364,9 @@ impl PanoApp {
                     }
                 }
                 PaneEvent::DragStart(pane, pos, primary, mods) => {
-                    if primary && self.pe.tool.is_select() {
+                    // rectangle and lasso start on empty space; on a point the point is dragged as usual
+                    let on_point = self.pe.tool != PointTool::SelectBrush && !mods.shift && !mods.command && nearest(pane, pos).is_some();
+                    if primary && self.pe.tool.is_select() && !on_point {
                         // a selection shape starts here (the secondary button still moves the photo)
                         self.pe.dragging = None;
                         self.pe.drag_before = None;
