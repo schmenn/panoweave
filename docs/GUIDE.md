@@ -96,6 +96,8 @@ Matching points (control points) are spots that show the same thing in two photo
 
 ![Alignment result and options](align.png)
 
+Next to **📐 Align photos**: **🔬 Patch comparison** (the patches of the fine alignment), **🖌 Masks** (the mask editor, also in the export step) and **⟲ Level the horizon**.
+
 **Options**
 
 - **Measure the lens field of view precisely** and **Correct lens distortion**: let the alignment change the lens. Leave on unless a lens is known exactly.
@@ -144,7 +146,7 @@ The preview shows the whole panorama.
 - The brightness values are worked out in the background (after aligning, opening a project, turning the view in step 4 or changing these switches; up to about a second with the lens correction). Meanwhile the preview keeps the old brightness and **Export panorama** is greyed out for that moment.
 - **Use the sharpest photo where photos overlap**, **Sharper resampling**: detail options, on by default.
 - **Smart seams** (off by default, only with Smooth seams): searches, once for the whole panorama, where the photos agree, so close objects seen from two sides (poles, lamps, people) are not cut in two.
-- **Masks** ("🖌 Edit masks…", only with Smooth seams): paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole. "Show seams" shows which photo wins where. Masks are saved in the project.
+- **Masks** ("🖌 Edit masks…" here, or "🖌 Masks" next to "Patch comparison" in step 3; only with Smooth seams): paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole. "Show seams" shows which photo wins where. Masks are saved in the project.
 
 The export is made strip by strip and written straight to the file, so it works with little memory; the strip height never changes a pixel. **Cancel** stops it within about a second, and a cancelled or failed export never leaves a half-written file.
 
@@ -330,6 +332,7 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Key / action | What it does |
 |---|---|
 | Left button | Paint or draw with the chosen tool |
+| Lasso: drag | Draw around an area; it is masked when you let go |
 | Lasso: click | Set a corner; double-click or Enter closes the shape |
 | Esc | Throw away the shape that is being drawn |
 | Ctrl+Z | While drawing a lasso: remove the last corner; otherwise undo the last mask change |
