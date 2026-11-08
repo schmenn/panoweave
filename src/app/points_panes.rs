@@ -255,7 +255,7 @@ impl PanoApp {
     fn paint_click_marks(&self, painter: &egui::Painter, d: &PaneDraw, a: usize, b: usize) {
         let pane = d.pane;
         if self.pe.tool == PointTool::PatchClick {
-            let orange = Color32::from_rgb(255, 150, 40);
+            let orange = MARK_CLICK;
             let click = if pane == Pane::A { self.click.a } else { self.click.b };
             if let Some(c) = click {
                 let s = d.to_screen(c);
@@ -267,7 +267,7 @@ impl PanoApp {
                 && r.a == a && r.b == b {
                     for sg in r.main.iter().chain(r.more.iter()) {
                         let q = if pane == Pane::A { sg.pa } else { sg.pb };
-                        let col = if sg.accept { GOOD } else { Color32::from_gray(150) };
+                        let col = if sg.accept { GOOD } else { MUTED };
                         painter.circle_stroke(d.to_screen(q), if sg.main { 7.0 } else { 4.5 }, Stroke::new(if sg.main { 2.5 } else { 1.5 }, col));
                     }
                 }
@@ -335,8 +335,8 @@ impl PanoApp {
                     let hy = 0.5 * MAGNIFIER_WIDTH / full_h;
                     painter.rect_filled(lr.expand(3.0), f32::from(RADIUS_CARD), Color32::BLACK);
                     painter.image(t, lr, Rect::from_min_max(Pos2::new(u.x - hx, u.y - hy), Pos2::new(u.x + hx, u.y + hy)), Color32::WHITE);
-                    painter.line_segment([lr.center() - Vec2::new(10.0, 0.0), lr.center() + Vec2::new(10.0, 0.0)], Stroke::new(1.0, Color32::from_rgb(255, 80, 80)));
-                    painter.line_segment([lr.center() - Vec2::new(0.0, 10.0), lr.center() + Vec2::new(0.0, 10.0)], Stroke::new(1.0, Color32::from_rgb(255, 80, 80)));
+                    painter.line_segment([lr.center() - Vec2::new(10.0, 0.0), lr.center() + Vec2::new(10.0, 0.0)], Stroke::new(1.0, MARK_RED));
+                    painter.line_segment([lr.center() - Vec2::new(0.0, 10.0), lr.center() + Vec2::new(0.0, 10.0)], Stroke::new(1.0, MARK_RED));
                 }
     }
 

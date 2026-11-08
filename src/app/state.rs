@@ -36,6 +36,7 @@ impl PanoApp {
             pe: PointEditor { b: 1, ..Default::default() },
             err_threshold: 5.0,
             preview_tex: None,
+            logo_tex: None,
             preview_size: [0, 0],
             preview_gen: 0,
             preview_shown_gen: 0,

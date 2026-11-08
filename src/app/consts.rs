@@ -3,7 +3,7 @@ use super::*;
 /// Magnifier: default width 61 px.
 pub(super) const MAGNIFIER_WIDTH: f32 = 61.0;
 /// Frame colours of the original's point editor: template RED, search area WHITE.
-pub(super) const TEMPLATE_FRAME_COLOR: Color32 = Color32::from_rgb(255, 60, 60);
+pub(super) const TEMPLATE_FRAME_COLOR: Color32 = MARK_RED;
 pub(super) const SEARCH_FRAME_COLOR: Color32 = Color32::WHITE;
 /// Point colours in the order the original's point editor uses them:
 /// BLUE, GREEN, CYAN, GOLD, NAVY, DARK TURQUOISE, SALMON, MAROON, KHAKI
@@ -54,15 +54,64 @@ pub(super) const CARD_MARGIN: i8 = 14;
 pub(super) const TILE_MARGIN: i8 = 8;
 /// Width of a photo tile in the overview of step 1 (thumbnail width; the grid makes as many columns as fit).
 pub(super) const PHOTO_TILE_W: f32 = 200.0;
-pub(super) const ACCENT: Color32 = Color32::from_rgb(70, 160, 255);
-pub(super) const ACCENT_DARK: Color32 = Color32::from_rgb(34, 92, 160);
-pub(super) const GOOD: Color32 = Color32::from_rgb(90, 200, 120);
-pub(super) const WARN: Color32 = Color32::from_rgb(240, 190, 70);
-pub(super) const BAD: Color32 = Color32::from_rgb(235, 90, 80);
-pub(super) const PANEL: Color32 = Color32::from_rgb(28, 30, 35);
-pub(super) const BG: Color32 = Color32::from_rgb(20, 21, 25);
-pub(super) const CARD: Color32 = Color32::from_rgb(36, 39, 46);
-pub(super) const MUTED: Color32 = Color32::from_rgb(150, 156, 168);
+// ---- Colours --------------------------------------------------------------------------------------
+// Every colour of the UI comes from here (a test rejects colours written as numbers elsewhere).
+// Neutral greys for the surfaces and a violet accent that matches the program icon
+// (`assets/logo.svg`: #4B3BA8, #6F5BD8, #9C8CFF).
+
+/// Window background behind everything (top bar, empty canvas).
+pub(crate) const BG: Color32 = Color32::from_rgb(20, 20, 21);
+/// Side panels and the main panel.
+pub(crate) const PANEL: Color32 = Color32::from_rgb(28, 28, 30);
+/// Cards, windows, menus.
+pub(crate) const CARD: Color32 = Color32::from_rgb(38, 38, 40);
+/// A card or list row under the mouse.
+pub(crate) const CARD_HOVER: Color32 = Color32::from_rgb(46, 46, 49);
+/// Every second row of a table, the inside of drop areas.
+pub(crate) const FAINT: Color32 = Color32::from_rgb(33, 33, 35);
+/// Behind pictures (frame preview, connection graph, patch views).
+pub(crate) const CANVAS: Color32 = Color32::from_rgb(24, 24, 26);
+/// Buttons and other widgets at rest / under the mouse.
+pub(crate) const WIDGET: Color32 = Color32::from_rgb(50, 50, 53);
+pub(crate) const WIDGET_HOVER: Color32 = Color32::from_rgb(63, 63, 67);
+/// Lines and frames that must stay visible (dashed drop area, steps not reached yet).
+pub(crate) const BORDER_STRONG: Color32 = Color32::from_rgb(80, 80, 84);
+/// Normal text drawn by hand (labels in pictures, step names).
+pub(crate) const TEXT: Color32 = Color32::from_rgb(220, 221, 222);
+/// Less important text.
+pub(crate) const MUTED: Color32 = Color32::from_rgb(153, 153, 153);
+/// Tint for the thumbnail of a photo that is switched off.
+pub(crate) const DIMMED_TINT: Color32 = Color32::from_rgb(90, 90, 90);
+/// Accent: light (text, lines, active things), middle, dark (filled buttons, selection).
+pub(crate) const ACCENT: Color32 = Color32::from_rgb(156, 140, 255);
+pub(crate) const ACCENT_MID: Color32 = Color32::from_rgb(111, 91, 216);
+pub(crate) const ACCENT_DARK: Color32 = Color32::from_rgb(75, 59, 168);
+/// Background of a selected or highlighted row / card.
+pub(crate) const ACCENT_SOFT: Color32 = Color32::from_rgb(44, 38, 72);
+/// Status colours (meaning stays: green fine, yellow check, red problem).
+pub(crate) const GOOD: Color32 = Color32::from_rgb(90, 200, 120);
+pub(crate) const WARN: Color32 = Color32::from_rgb(240, 190, 70);
+pub(crate) const BAD: Color32 = Color32::from_rgb(235, 90, 80);
+/// Background of a row that needs attention (duplicate point).
+pub(crate) const WARN_SOFT: Color32 = Color32::from_rgb(66, 54, 28);
+/// Background of a row with a point on sky or cloud.
+pub(crate) const SKY_ROW: Color32 = Color32::from_rgb(28, 44, 66);
+/// Marks drawn over photos: a hand click waiting for its partner, the red cross of the magnifier,
+/// the search spot of a patch, photo B over A in the patch window.
+pub(crate) const MARK_CLICK: Color32 = Color32::from_rgb(255, 150, 40);
+pub(crate) const MARK_RED: Color32 = Color32::from_rgb(255, 60, 60);
+pub(crate) const MARK_SPOT: Color32 = Color32::from_rgb(90, 200, 255);
+pub(crate) const PATCH_B_TINT: Color32 = Color32::from_rgba_unmultiplied_const(255, 200, 120, 140);
+/// Mask colours: "use here" and "do not use here".
+pub(crate) const MASK_GREEN: Color32 = Color32::from_rgb(60, 200, 90);
+pub(crate) const MASK_RED: Color32 = Color32::from_rgb(235, 70, 60);
+
+/// Colour between `a` (t = 0) and `b` (t = 1), for scales such as bad → good.
+pub(crate) fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+}
 
 /// Steps kept for undo (and again for redo). Every step holds a copy of all control points
 /// (~100 bytes each, up to ~12 000 points), so 20 steps stay below ~25 MB per stack.
@@ -73,3 +122,17 @@ pub(super) const DEMO_TIMEOUT_S: u64 = 300;
 
 /// The user guide (docs/GUIDE.md), opened from the help window.
 pub(super) const GUIDE_URL: &str = "https://github.com/schmenn/panoweave/blob/main/docs/GUIDE.md";
+
+/// The program icon (`assets/logo.svg` rendered at 256 px), for the main window and every
+/// secondary window, so the task bar shows PanoWeave's icon and not the toolkit's default one.
+pub(crate) fn window_icon() -> std::sync::Arc<eframe::egui::IconData> {
+    static ICON: std::sync::OnceLock<std::sync::Arc<eframe::egui::IconData>> = std::sync::OnceLock::new();
+    ICON.get_or_init(|| std::sync::Arc::new(eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon-256.png")).expect("assets/icon-256.png is a PNG")))
+        .clone()
+}
+
+/// The logo for the top bar (64 px, drawn at 30 px).
+pub(super) fn logo_image() -> eframe::egui::ColorImage {
+    let img = image::load_from_memory(include_bytes!("../../assets/icon-64.png")).expect("assets/icon-64.png is a PNG").to_rgba8();
+    eframe::egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw())
+}

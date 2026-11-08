@@ -18,7 +18,7 @@ use crate::fine_align::{self, FineStats};
 use crate::patch_matcher;
 use crate::patch_store::{self as ps, Change, Event, LiveFrame, PatchData, PatchState, Phase, RoundInfo, Status, STORE};
 use crate::patch_viz::{self as pv, Colormap, DiffSpace, HeatMode};
-use crate::app::RADIUS;
+use crate::app::{palette, RADIUS};
 use crate::stitch::{Mapper, PanoView};
 use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2};
 use image::RgbImage;
@@ -420,26 +420,20 @@ pub struct PatchWindow {
     action: Option<PatchAction>,
 }
 
-fn lerp_col(a: Color32, b: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
-}
-
-const C_RED: Color32 = Color32::from_rgb(220, 60, 50);
-const C_YELLOW: Color32 = Color32::from_rgb(230, 200, 40);
-const C_GREEN: Color32 = Color32::from_rgb(40, 190, 80);
-const C_GREY: Color32 = Color32::from_rgb(120, 120, 125);
+const C_RED: Color32 = palette::BAD;
+const C_YELLOW: Color32 = palette::WARN;
+const C_GREEN: Color32 = palette::GOOD;
+const C_GREY: Color32 = palette::MUTED;
 
 /// Continuous red - yellow - green by confidence (0, 0.5, 1).
 fn conf_colour(c: f32) -> Color32 {
-    if c < 0.5 { lerp_col(C_RED, C_YELLOW, c / 0.5) } else { lerp_col(C_YELLOW, C_GREEN, (c - 0.5) / 0.5) }
+    if c < 0.5 { palette::lerp_color(C_RED, C_YELLOW, c / 0.5) } else { palette::lerp_color(C_YELLOW, C_GREEN, (c - 0.5) / 0.5) }
 }
 
 /// Row background: the status colour blended into the theme's background so the theme's text
 /// colour stays readable in dark and light mode.
 fn row_bg(c: Color32, dark: bool, bg: Color32) -> Color32 {
-    if dark { lerp_col(bg, c, 0.30) } else { lerp_col(Color32::WHITE, c, 0.32) }
+    if dark { palette::lerp_color(bg, c, 0.30) } else { palette::lerp_color(Color32::WHITE, c, 0.32) }
 }
 
 fn category(st: &PatchState) -> usize {
@@ -635,7 +629,7 @@ impl PatchWindow {
         }
         STORE.set_live(self.s.live, self.s.sample_every, self.s.delay_ms);
         self.pump(pc);
-        let mut b = egui::ViewportBuilder::default().with_title("Patch comparison").with_inner_size(self.builder_size).with_min_inner_size([760.0, 520.0]);
+        let mut b = egui::ViewportBuilder::default().with_title("Patch comparison").with_inner_size(self.builder_size).with_min_inner_size([760.0, 520.0]).with_icon(palette::window_icon());
         if let Some(p) = self.builder_pos {
             b = b.with_position(p);
         }
@@ -1212,12 +1206,12 @@ impl PatchWindow {
             // search area of this level
             let r = im.radius as f32;
             let sr = Rect::from_min_max(rect.min + Vec2::splat((c - h - r) * k), rect.min + Vec2::splat((c + h + r + 1.0) * k));
-            dashed_rect(&p, sr, Color32::from_rgb(230, 230, 240));
+            dashed_rect(&p, sr, palette::TEXT);
             // patch A (template) moved to the tested offset, half transparent
             let tr = Rect::from_min_size(rect.min + Vec2::new((c - h + f.offset.0) * k, (c - h + f.offset.1) * k), Vec2::splat((2.0 * h + 1.0) * k));
             let auv = Rect::from_min_max(Pos2::new((c - h) / s, (c - h) / s), Pos2::new((c + h + 1.0) / s, (c + h + 1.0) / s));
             if let Some(t) = &self.live_tex.a {
-                p.image(t.id(), tr, auv, Color32::from_rgba_unmultiplied(255, 200, 120, 140));
+                p.image(t.id(), tr, auv, palette::PATCH_B_TINT);
             }
             p.rect_stroke(tr, 0.0, Stroke::new(1.5, if f.last { C_GREEN } else { C_YELLOW }), StrokeKind::Inside);
             ui.vertical(|ui| {
@@ -1515,11 +1509,11 @@ impl PatchWindow {
                     let mut fill = row_bg(base, dark, bg);
                     if ri % 2 == 1 {
                         // alternate row colours, as in the original's list
-                        fill = lerp_col(fill, if dark { Color32::BLACK } else { Color32::WHITE }, ALT_ROW_SHADE);
+                        fill = palette::lerp_color(fill, if dark { Color32::BLACK } else { Color32::WHITE }, ALT_ROW_SHADE);
                     }
                     p.rect_filled(rect, 0.0, fill);
                     if self.sel.contains(&d.id) {
-                        p.rect_stroke(rect.shrink(1.0), f32::from(RADIUS), Stroke::new(2.0, Color32::from_rgb(70, 160, 255)), StrokeKind::Inside);
+                        p.rect_stroke(rect.shrink(1.0), f32::from(RADIUS), Stroke::new(2.0, palette::ACCENT), StrokeKind::Inside);
                     }
                     if self.detail == Some(d.id) {
                         p.rect_stroke(rect.shrink(3.0), f32::from(RADIUS), Stroke::new(1.0, text_col), StrokeKind::Inside);
@@ -1659,8 +1653,8 @@ impl PatchWindow {
                 p.text(r.right_top() + Vec2::new(-4.0, 2.0), Align2::RIGHT_TOP, "✕ uncorrected", FontId::proportional(10.0), C_RED);
             }
         } else {
-            p.rect_filled(r, f32::from(RADIUS), Color32::from_gray(70));
-            p.text(r.center(), Align2::CENTER_CENTER, "…", FontId::proportional(14.0), Color32::from_gray(200));
+            p.rect_filled(r, f32::from(RADIUS), palette::BORDER_STRONG);
+            p.text(r.center(), Align2::CENTER_CENTER, "…", FontId::proportional(14.0), palette::TEXT);
         }
         if !fresh && !self.thumb_pending.contains(&d.id) && self.thumb_pending.len() < THUMB_JOBS_MAX {
             self.thumb_pending.insert(d.id);
@@ -1790,7 +1784,7 @@ impl PatchWindow {
                             }
                             self.clamp_pan(img, bw);
                             let p = ui.painter_at(r);
-                            p.rect_filled(r, 0.0, Color32::from_gray(40));
+                            p.rect_filled(r, 0.0, palette::CANVAS);
                             if let Some(t) = t {
                                 p.image(t.id(), Rect::from_min_size(r.min + self.pan, Vec2::splat(img)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                             }
@@ -1806,7 +1800,7 @@ impl PatchWindow {
                 let off = Vec2::splat((bw - img) * 0.5);
                 let ir = Rect::from_min_size(r.min + off, Vec2::splat(img));
                 let p = ui.painter_at(r);
-                p.rect_filled(r, 0.0, Color32::from_gray(40));
+                p.rect_filled(r, 0.0, palette::CANVAS);
                 let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
                 if let Some(t) = &self.dtex.a {
                     p.image(t.id(), ir, uv, Color32::WHITE);
@@ -1814,7 +1808,7 @@ impl PatchWindow {
                 if self.s.view == ViewMode::Overlay {
                     if let Some(t) = &self.dtex.b {
                         let a = (self.s.alpha * 255.0) as u8;
-                        p.image(t.id(), ir, uv, Color32::from_rgba_unmultiplied(255, 255, 255, a));
+                        p.image(t.id(), ir, uv, Color32::from_white_alpha(a));
                     }
                     if resp.drag_started() {
                         self.drag_start = shift;
@@ -1873,7 +1867,7 @@ impl PatchWindow {
                         ui.painter().image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                     }
                 } else {
-                    ui.painter().rect_filled(r, 0.0, Color32::from_gray(45));
+                    ui.painter().rect_filled(r, 0.0, palette::CANVAS);
                     ui.painter().text(r.center(), Align2::CENTER_CENTER, "no valid result", FontId::proportional(14.0), C_RED);
                 }
             });
@@ -2066,7 +2060,7 @@ impl PatchWindow {
         // current (hand) position
         if st.manual || self.drag_shift.is_some() {
             let c = to(shift.0, shift.1);
-            p.add(egui::Shape::convex_polygon(vec![c + Vec2::new(0.0, -6.0), c + Vec2::new(6.0, 0.0), c + Vec2::new(0.0, 6.0), c + Vec2::new(-6.0, 0.0)], Color32::TRANSPARENT, Stroke::new(2.0, Color32::from_rgb(90, 200, 255))));
+            p.add(egui::Shape::convex_polygon(vec![c + Vec2::new(0.0, -6.0), c + Vec2::new(6.0, 0.0), c + Vec2::new(0.0, 6.0), c + Vec2::new(-6.0, 0.0)], Color32::TRANSPARENT, Stroke::new(2.0, palette::MARK_SPOT)));
         }
         // legend of the map
         let lx = rect.max.x + 8.0;
@@ -2108,7 +2102,7 @@ fn dashed_rect(p: &egui::Painter, r: Rect, col: Color32) {
 
 fn crosshair(p: &egui::Painter, r: Rect) {
     let c = r.center();
-    let col = Color32::from_rgba_unmultiplied(255, 80, 80, 160);
+    let col = palette::MARK_RED.gamma_multiply(160.0 / 255.0);
     p.line_segment([Pos2::new(c.x - 6.0, c.y), Pos2::new(c.x + 6.0, c.y)], Stroke::new(1.0, col));
     p.line_segment([Pos2::new(c.x, c.y - 6.0), Pos2::new(c.x, c.y + 6.0)], Stroke::new(1.0, col));
 }

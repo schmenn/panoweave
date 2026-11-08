@@ -1,7 +1,7 @@
 //! The big photo of the mask window: zoom, move, paint, and the mask drawn over the photo.
 
 use super::masks_tool::{screen_radius, to_screen, Ptr};
-use super::masks_ui::{overlay_image, MASK_ALPHA, MASK_GREEN, MASK_RED};
+use super::masks_ui::{overlay_image, MASK_ALPHA};
 use super::*;
 use crate::masks::{MaskKind, MaskStroke};
 

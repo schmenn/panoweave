@@ -6,13 +6,8 @@ impl PanoApp {
             .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::symmetric(14, 8)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let (r, p) = ui.allocate_painter(Vec2::new(30.0, 30.0), Sense::hover());
-                    let c = r.rect.center();
-                    p.circle_filled(c, 14.0, ACCENT_DARK);
-                    p.line_segment([c + Vec2::new(-9.0, 4.0), c + Vec2::new(-3.0, -4.0)], Stroke::new(2.5, Color32::WHITE));
-                    p.line_segment([c + Vec2::new(-3.0, -4.0), c + Vec2::new(2.0, 2.0)], Stroke::new(2.5, Color32::WHITE));
-                    p.line_segment([c + Vec2::new(2.0, 2.0), c + Vec2::new(5.0, -1.0)], Stroke::new(2.5, Color32::WHITE));
-                    p.line_segment([c + Vec2::new(5.0, -1.0), c + Vec2::new(9.0, 4.0)], Stroke::new(2.5, Color32::WHITE));
+                    let logo = self.logo_tex.get_or_insert_with(|| ui.ctx().load_texture("logo", logo_image(), egui::TextureOptions::LINEAR)).id();
+                    ui.add(egui::Image::new((logo, Vec2::splat(30.0))));
                     ui.label(RichText::new("PanoWeave").size(19.0).strong().color(Color32::WHITE));
                     ui.add_space(18.0);
                     for (m, label) in [(Mode::Panorama, "🌄  Panorama"), (Mode::Exposure, "◑  Exposure blend")] {
@@ -76,20 +71,20 @@ impl PanoApp {
                         let fill = if sel {
                             ACCENT_DARK
                         } else if resp.hovered() {
-                            Color32::from_rgb(48, 52, 61)
+                            WIDGET
                         } else {
                             CARD
                         };
                         p.rect_filled(rect, f32::from(RADIUS_CARD), fill);
                         let cc = rect.left_center() + Vec2::new(20.0, 0.0);
-                        p.circle_filled(cc, 11.0, if done { GOOD } else if sel { ACCENT } else { Color32::from_rgb(70, 75, 88) });
+                        p.circle_filled(cc, 11.0, if done { GOOD } else if sel { ACCENT } else { BORDER_STRONG });
                         p.text(cc, Align2::CENTER_CENTER, if done { "✔".to_string() } else { format!("{}", k + 1) }, FontId::proportional(13.0), Color32::WHITE);
                         p.text(
                             rect.left_center() + Vec2::new(38.0, 0.0),
                             Align2::LEFT_CENTER,
                             s.title(),
                             FontId::proportional(14.5),
-                            if sel { Color32::WHITE } else { Color32::from_rgb(205, 210, 220) },
+                            if sel { Color32::WHITE } else { TEXT },
                         );
                         if resp.clicked() {
                             self.step = *s;

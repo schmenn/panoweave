@@ -3,7 +3,7 @@
 mod align;
 mod chrome;
 mod connections;
-mod consts;
+pub(crate) mod consts;
 mod demo;
 mod export;
 mod exposure;
@@ -39,6 +39,8 @@ mod viewport_window;
 
 pub use self::types::PanoApp;
 pub(crate) use self::consts::RADIUS;
+/// The colours of the UI, also for the patch window outside `app`.
+pub(crate) use self::consts as palette;
 use self::{connections::*, consts::*, export::*, points_panes::*, types::*, ui_helpers::*};
 
 use crate::align::{ControlPoint, Lens};

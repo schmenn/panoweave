@@ -115,7 +115,7 @@ impl PanoApp {
             r = Rect::from_center_size(r.center(), Vec2::new(r.width(), h));
         }
         // checkerboard behind (transparent areas)
-        painter.rect_filled(r, 0.0, Color32::from_rgb(34, 36, 42));
+        painter.rect_filled(r, 0.0, CANVAS);
         if let Some(t) = &self.preview_tex {
             painter.image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
         }

@@ -3,9 +3,6 @@
 use super::*;
 use crate::sky_points::{self, PhotoSky, SkyPoint};
 
-/// Colour of the list rows of points on sky or cloud.
-pub(super) const SKY_ROW: Color32 = Color32::from_rgb(28, 44, 66);
-
 impl PanoApp {
     fn sky_key(&self, i: usize) -> usize {
         Arc::as_ptr(&self.photos[i].work) as usize

@@ -6,8 +6,6 @@ use super::viewport_window::WinSpec;
 use super::*;
 
 /// Colours of the mask overlay and the tools.
-pub(super) const MASK_GREEN: Color32 = Color32::from_rgb(60, 200, 90);
-pub(super) const MASK_RED: Color32 = Color32::from_rgb(235, 70, 60);
 /// How see-through the mask is drawn over the photo (0..255).
 pub(super) const MASK_ALPHA: u8 = 102;
 
@@ -133,7 +131,7 @@ impl PanoApp {
             for (i, p) in self.photos.iter().enumerate() {
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 56.0), Sense::click());
                 let sel = i == self.mk.sel;
-                let fill = if sel { Color32::from_rgb(38, 50, 68) } else if resp.hovered() { Color32::from_rgb(44, 48, 57) } else { PANEL };
+                let fill = if sel { ACCENT_SOFT } else if resp.hovered() { CARD_HOVER } else { PANEL };
                 ui.painter().rect_filled(rect, f32::from(RADIUS_CARD), fill);
                 if sel {
                     ui.painter().rect_stroke(rect, f32::from(RADIUS_CARD), Stroke::new(1.5, ACCENT), StrokeKind::Inside);
@@ -143,7 +141,7 @@ impl PanoApp {
                 let tr = Rect::from_min_size(rect.min + Vec2::new(4.0, 3.0), Vec2::new(tw, tw * ts.y / ts.x));
                 egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), tr.size()))
                     .corner_radius(CornerRadius::same(RADIUS))
-                    .tint(if p.enabled { Color32::WHITE } else { Color32::from_gray(90) })
+                    .tint(if p.enabled { Color32::WHITE } else { DIMMED_TINT })
                     .paint_at(ui, tr);
                 let tx = rect.min.x + 72.0;
                 ui.painter().text(Pos2::new(tx, rect.min.y + 8.0), Align2::LEFT_TOP, format!("{}. {}", i + 1, p.name), FontId::proportional(12.5), Color32::WHITE);
@@ -213,8 +211,8 @@ mod tests {
         let m = MaskBuf { w: 3, h: 1, data: vec![POSITIVE, NEGATIVE, NEUTRAL] };
         let img = overlay_image(&m);
         assert_eq!(img.size, [3, 1]);
-        assert_eq!(img.pixels[0], Color32::from_rgba_unmultiplied(60, 200, 90, MASK_ALPHA));
-        assert_eq!(img.pixels[1], Color32::from_rgba_unmultiplied(235, 70, 60, MASK_ALPHA));
+        assert_eq!(img.pixels[0], Color32::from_rgba_unmultiplied(MASK_GREEN.r(), MASK_GREEN.g(), MASK_GREEN.b(), MASK_ALPHA));
+        assert_eq!(img.pixels[1], Color32::from_rgba_unmultiplied(MASK_RED.r(), MASK_RED.g(), MASK_RED.b(), MASK_ALPHA));
         assert_eq!(img.pixels[2], Color32::TRANSPARENT);
         assert!((MASK_ALPHA as f32 / 255.0 - 0.4).abs() < 0.01);
     }

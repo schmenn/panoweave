@@ -11,7 +11,7 @@ default `raw` feature. Their source code is available from the repositories belo
 replace the crate in `Cargo.toml` (e.g. with a `[patch.crates-io]` entry) and rebuild. Building with
 `cargo build --no-default-features` leaves them out; JPEG, PNG and TIFF keep working.
 
-## All crates (511)
+## All crates (515)
 
 | Crate | Version | License | Source |
 |---|---|---|---|
@@ -372,6 +372,7 @@ replace the crate in `Cargo.toml` (e.g. with a `[patch.crates-io]` entry) and re
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | https://github.com/serde-rs/json |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/serde-repr |
+| serde_spanned | 1.1.3 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
 | serde_yaml | 0.8.26 | MIT OR Apache-2.0 | https://github.com/dtolnay/serde-yaml |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | https://github.com/comex/rust-shlex |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | https://github.com/vorner/signal-hook |
@@ -408,9 +409,11 @@ replace the crate in `Cargo.toml` (e.g. with a `[patch.crates-io]` entry) and re
 | tinystr | 0.8.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | tokio | 1.54.1 | MIT | https://github.com/tokio-rs/tokio |
 | toml | 0.5.11 | MIT/Apache-2.0 | https://github.com/toml-rs/toml |
-| toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
+| toml | 1.2.1+spec-1.1.0 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
+| toml_datetime | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
 | toml_edit | 0.25.17+spec-1.1.0 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
 | toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
+| toml_writer | 1.2.0+spec-1.1.0 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
 | tracing | 0.1.44 | MIT | https://github.com/tokio-rs/tracing |
 | tracing-attributes | 0.1.31 | MIT | https://github.com/tokio-rs/tracing |
 | tracing-core | 0.1.36 | MIT | https://github.com/tokio-rs/tracing |
@@ -489,6 +492,7 @@ replace the crate in `Cargo.toml` (e.g. with a `[patch.crates-io]` entry) and re
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | winit | 0.30.13 | Apache-2.0 | https://github.com/rust-windowing/winit |
 | winnow | 1.0.4 | MIT | https://github.com/winnow-rs/winnow |
+| winresource | 0.1.34 | MIT | https://github.com/BenjaminRi/winresource |
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/wit-bindgen |
 | wl-clipboard-rs | 0.9.5 | MIT OR Apache-2.0 | https://github.com/YaLTeR/wl-clipboard-rs |
 | writeable | 0.6.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
