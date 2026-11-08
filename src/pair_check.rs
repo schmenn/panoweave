@@ -346,11 +346,11 @@ struct Ctx<'a> {
 
 impl Ctx<'_> {
     fn sky(&self, i: usize) -> Arc<features::SkyMask> {
-        if let Some(m) = self.skies.lock().unwrap().get(&i) {
+        if let Some(m) = self.skies.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&i) {
             return m.clone();
         }
         let m = Arc::new(features::sky_mask(&self.photos[i].rgb, &self.photos[i].gray));
-        self.skies.lock().unwrap().insert(i, m.clone());
+        self.skies.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(i, m.clone());
         m
     }
     fn count(&self, a: usize, b: usize) -> usize {
