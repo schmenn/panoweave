@@ -193,7 +193,7 @@ impl PanoApp {
                 .on_disabled_hover_text("Needs an alignment: align the photos first (steps Matching points and Align).");
         });
         let hint = if self.mk.tool.tool.is_lasso() {
-            "Lasso: click to set corners. Double click or Enter closes the shape, Esc cancels. Scroll to zoom, drag with the right mouse button to move."
+            "Lasso: drag around an area (closes when you let go), or click corner by corner and close with a double click or Enter. Esc cancels, Ctrl+Z takes the last corner back. Scroll to zoom, drag with the right mouse button to move."
         } else {
             "Brush: press and drag. Scroll to zoom, drag with the right mouse button to move the photo."
         };

@@ -86,7 +86,7 @@ impl PanoApp {
             if line.len() >= 2 {
                 painter.add(egui::Shape::line(line, Stroke::new(2.0, col)));
             }
-            for p in &pts {
+            for p in pts.iter().filter(|_| !t.dragging_lasso()) {
                 painter.circle_filled(*p, 3.5, col);
                 painter.circle_stroke(*p, 3.5, Stroke::new(1.0, Color32::BLACK));
             }

@@ -1,6 +1,7 @@
 //! The mask tools: turns pointer events (already in screen coordinates) into strokes.
-//! Brush: press, drag, release = one stroke. Lasso: every click sets a corner, double click or
-//! Enter closes the polygon, Escape throws it away. Pure logic, no window code.
+//! Brush: press, drag, release = one stroke. Lasso: drag around an area (closes on release, like the
+//! lasso of the point editor), or click corner by corner and close with a double click or Enter;
+//! Escape throws it away. Pure logic, no window code.
 
 use super::masks_state::PhotoMask;
 use super::types::PaneGeo;
@@ -15,6 +16,10 @@ pub(super) const MAX_BRUSH: f32 = 0.10;
 const STEP_IN_RADII: f32 = 0.25;
 /// A lasso needs at least this many corners.
 pub(super) const MIN_CORNERS: usize = 3;
+/// A lasso drag shorter than this (screen pixels across) is a shaky click: it sets one corner.
+const LASSO_DRAG_MIN_PX: f32 = 12.0;
+/// Corners of a dragged lasso are taken this far apart (screen pixels).
+const LASSO_STEP_PX: f32 = 4.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Tool {
@@ -93,11 +98,13 @@ pub(super) struct MaskTool {
     pub(super) stroke: Option<MaskStroke>,
     /// the corners of the lasso being drawn
     pub(super) corners: Vec<[f32; 2]>,
+    /// a lasso drag is going on; the corner it started with
+    lasso_drag: Option<usize>,
 }
 
 impl Default for MaskTool {
     fn default() -> Self {
-        Self { tool: Tool::BrushPositive, radius: DEFAULT_BRUSH, stroke: None, corners: Vec::new() }
+        Self { tool: Tool::BrushPositive, radius: DEFAULT_BRUSH, stroke: None, corners: Vec::new(), lasso_drag: None }
     }
 }
 
@@ -106,11 +113,17 @@ impl MaskTool {
     pub(super) fn cancel(&mut self) {
         self.stroke = None;
         self.corners.clear();
+        self.lasso_drag = None;
     }
 
     #[cfg(test)]
     pub(super) fn busy(&self) -> bool {
         self.stroke.is_some() || !self.corners.is_empty()
+    }
+
+    /// A lasso outline is being dragged (its many corners are not drawn as dots).
+    pub(super) fn dragging_lasso(&self) -> bool {
+        self.lasso_drag.is_some()
     }
 
     /// Takes the last lasso corner back; false if there is none.
@@ -127,6 +140,40 @@ impl MaskTool {
                     self.stroke = Some(MaskStroke { kind: self.tool.kind(), points: vec![f], radius: self.radius, polygon: false });
                 }
                 false
+            }
+            Ptr::Down(p) => {
+                // lasso: a drag draws the outline (or, while corners are being clicked, adds to them)
+                let f = to_frac(geo, p);
+                if inside(f) {
+                    self.lasso_drag = Some(self.corners.len());
+                    self.corners.push(f);
+                }
+                false
+            }
+            Ptr::Move(p) if self.lasso_drag.is_some() => {
+                let f = clamp01(to_frac(geo, p));
+                let far = self.corners.last().is_none_or(|l| to_screen(geo, *l).distance(to_screen(geo, f)) >= LASSO_STEP_PX);
+                if far {
+                    self.corners.push(f);
+                }
+                false
+            }
+            Ptr::Up if self.lasso_drag.is_some() => {
+                let start = self.lasso_drag.take().unwrap_or(0);
+                let path: Vec<Pos2> = self.corners[start..].iter().map(|&c| to_screen(geo, c)).collect();
+                let (lo, hi) = path.iter().fold((Pos2::new(f32::MAX, f32::MAX), Pos2::new(f32::MIN, f32::MIN)), |(lo, hi), q| (lo.min(*q), hi.max(*q)));
+                let drawn = path.len() >= MIN_CORNERS && (hi - lo).length() >= LASSO_DRAG_MIN_PX;
+                if !drawn {
+                    // a click that moved a little: one corner, as a click would have set
+                    self.corners.truncate(start + 1);
+                    false
+                } else if start == 0 {
+                    // dragged around an area from scratch: done
+                    self.close_lasso(mask, w, h)
+                } else {
+                    // dragged while clicking corners: the outline joins the corners, still open
+                    false
+                }
             }
             Ptr::Move(p) => {
                 let f = clamp01(to_frac(geo, p));
@@ -257,6 +304,40 @@ mod tests {
         }
         assert!(at(&mut t, &mut m, Ptr::Enter));
         assert_eq!(m.strokes.len(), 2);
+    }
+
+    /// Like the lasso of the point editor: press, drag around, release.
+    #[test]
+    fn a_dragged_lasso_closes_on_release() {
+        let (mut t, mut m) = (MaskTool { tool: Tool::LassoNegative, ..Default::default() }, PhotoMask::default());
+        at(&mut t, &mut m, Ptr::Down(p(60.0, 50.0)));
+        for q in [(200.0, 50.0), (360.0, 50.0), (360.0, 190.0), (200.0, 190.0), (60.0, 190.0)] {
+            at(&mut t, &mut m, Ptr::Move(p(q.0, q.1)));
+        }
+        assert!(m.strokes.is_empty());
+        assert!(at(&mut t, &mut m, Ptr::Up), "the area is masked on release");
+        assert!(m.strokes[0].polygon && m.strokes[0].points.len() == 6);
+        assert_eq!(m.buf.as_ref().unwrap().at(100.0, 50.0, 200.0, 100.0), NEGATIVE);
+        assert!(!t.busy());
+    }
+
+    /// A click that moved a few pixels arrives as a tiny drag: it must still set one corner.
+    #[test]
+    fn a_shaky_click_on_the_lasso_still_sets_a_corner() {
+        let (mut t, mut m) = (MaskTool { tool: Tool::LassoPositive, ..Default::default() }, PhotoMask::default());
+        at(&mut t, &mut m, Ptr::Down(p(100.0, 100.0)));
+        at(&mut t, &mut m, Ptr::Move(p(105.0, 103.0)));
+        assert!(!at(&mut t, &mut m, Ptr::Up));
+        assert_eq!(t.corners.len(), 1);
+        at(&mut t, &mut m, Ptr::Click(p(300.0, 100.0)));
+        // a drag while corners are being clicked joins them and leaves the shape open
+        at(&mut t, &mut m, Ptr::Down(p(300.0, 150.0)));
+        at(&mut t, &mut m, Ptr::Move(p(250.0, 190.0)));
+        at(&mut t, &mut m, Ptr::Move(p(150.0, 190.0)));
+        assert!(!at(&mut t, &mut m, Ptr::Up));
+        assert!(t.corners.len() >= 4 && m.strokes.is_empty());
+        assert!(at(&mut t, &mut m, Ptr::Enter));
+        assert_eq!(m.buf.as_ref().unwrap().at(100.0, 60.0, 200.0, 100.0), POSITIVE);
     }
 
     #[test]

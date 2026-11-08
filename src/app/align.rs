@@ -199,6 +199,13 @@ impl PanoApp {
             {
                 self.patch_win.open = !self.patch_win.open;
             }
+            // the mask editor is also in the export step (Blending); here it is easier to find
+            let masks = ui
+                .add_enabled(!self.photos.is_empty(), egui::Button::selectable(self.mk.open, "🖌  Masks"))
+                .on_hover_text("Opens the mask editor: paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole. Masks steer the seams of “Smooth seams”.");
+            if masks.clicked() {
+                self.mk.open = !self.mk.open;
+            }
             if ui.add_enabled(self.aligned && !self.busy(), egui::Button::new("⟲  Level the horizon")).clicked() {
                 let mut rots: Vec<M3> = self.photos.iter().map(|p| p.rot).collect();
                 let used: Vec<bool> = self.photos.iter().map(|p| p.enabled).collect();
