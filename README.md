@@ -70,7 +70,7 @@ Start the program and add photos in the first step, or pass image files on the c
 | `--screenshot <file.png>` | Save a screenshot after about 120 frames and exit |
 | `--demo <name>` | Open a demo view (`photos`, `points`, `align`, `export`, `exposure`, `patches`, `connections`, ...) |
 
-Environment variables for experiments: `PW_FINE`, `PW_SHARP`, `PW_PARALLAX`, `PW_SKY`, `PW_PPP` (points per photo), `PW_DEBUG`, `PW_CANCEL_TEST`, `PW_SCROLL`.
+Environment variables for experiments: `PW_FINE`, `PW_SHARP`, `PW_PARALLAX`, `PW_SKY`, `PW_PPP` (points per photo), `PW_DEBUG`, `PW_CANCEL_TEST`, `PW_SCROLL`, `PW_RECORD=0` (do not keep the patches for the "Patch comparison" window; also a checkbox in the fine alignment settings).
 
 Export and seam experiments (with `--screenshot ... --demo render <photos or .pwproj>`): `PW_SCALE` (percent), `PW_OUT` / `PW_OUT2` (output file of the first and of a second export), `PW_EXPORT_MB` / `PW_EXPORT_MB2` (memory budget in MB, shows that the picture does not depend on it), `PW_OLD_EXPORT=1` (render the whole picture in memory, for comparing), `PW_SAVE_PROJECT=<file.pwproj>` (keep the alignment; a `.pwproj` on the command line loads it again), `PW_SEAMS=0/1` and `PW_SEAMS2` (force smart seams off / on for the first / second export), `PW_SEAM_DATA`, `PW_SEAM_SMOOTH`, `PW_SEAM_CUT`, `PW_SEAM_POWER`, `PW_SEAM_MISSING`, `PW_SEAM_SIDE` (seam finder weights and grid), `PW_GAINS=0` (no brightness matching), `PW_GAINMAP=0/1`, `PW_GM_GRID`, `PW_GM_SMOOTH`, `PW_GM_MAXDEV` (brightness correction field), `PW_LEVELS=<n>` (blend levels), `PW_FLAT_LO` / `PW_FLAT_HI` (texture limits below which a detail advantage fades out in the seam search; `PW_FLAT_HI=0` switches it off), `PW_SEAM_DEBUG=<file.png>` (write a picture of the seams).
 
