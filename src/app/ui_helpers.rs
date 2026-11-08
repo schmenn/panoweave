@@ -128,7 +128,27 @@ pub(super) fn fine_summary(st: &fine_align::FineStats) -> String {
         st.err_after[0],
         st.err_after[1],
         st.err_after[2]
-    )
+    ) + &fine_attention(st)
+}
+
+/// What of a fine-alignment run needs the person's attention (empty when nothing does).
+pub(super) fn fine_attention(st: &fine_align::FineStats) -> String {
+    let mut s = String::new();
+    if st.locked_far > 0 {
+        s += &format!(
+            " · {} protected point(s) are off by more than {:.0} px (up to {:.1} px) and were left as they are – check them in the list of all points (“only protected”)",
+            st.locked_far,
+            st.locked_warn_px,
+            st.locked_far_max
+        );
+    }
+    if st.locked_unmatched > 0 {
+        s += &format!(" · {} protected point(s) could not be confirmed (no match nearby – maybe far off) and were left as they are", st.locked_unmatched);
+    }
+    if st.no_test_spots {
+        s += " · fine alignment changed nothing: no control areas to judge it with (switch on “Add control areas”)";
+    }
+    s
 }
 
 pub(super) fn mean_luma(img: &RgbImage) -> f64 {

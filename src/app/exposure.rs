@@ -71,7 +71,15 @@ impl PanoApp {
         if self.fusion_out_path.trim().is_empty() {
             self.fusion_out_path = self.default_out_path("blended", "jpg");
         }
-        let path = PathBuf::from(self.fusion_out_path.trim());
+        let mut path = PathBuf::from(self.fusion_out_path.trim());
+        // the file type follows the extension; an unknown or missing one becomes a JPEG and gets ".jpg"
+        let fmt = [OutFormat::Png, OutFormat::Tiff, OutFormat::Jpeg]
+            .into_iter()
+            .find(|f| path.extension().and_then(|e| e.to_str()).is_some_and(|e| f.has_ext(e)))
+            .unwrap_or_else(|| {
+                path = path.with_extension("jpg");
+                OutFormat::Jpeg
+            });
         let sources: Vec<Source> = self.brackets.iter().map(|b| b.source.clone()).collect();
         let fw = self.fusion_weights;
         let al = self.fusion_align;
@@ -92,11 +100,6 @@ impl PanoApp {
                 let out = fusion::fuse(&imgs, &fw);
                 report(0.95, "Saving");
                 let rgba: Vec<u8> = out.pixels().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
-                let fmt = match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()) {
-                    Some(e) if e == "png" => OutFormat::Png,
-                    Some(e) if e == "tif" || e == "tiff" => OutFormat::Tiff,
-                    _ => OutFormat::Jpeg,
-                };
                 save_output(&path, &rgba, out.width() as usize, out.height() as usize, fmt, q)?;
                 Ok((path.clone(), t0.elapsed().as_millis()))
             })();

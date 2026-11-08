@@ -28,7 +28,7 @@ pub(super) enum Mode {
     Exposure,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum OutFormat {
     Jpeg,
     Png,
@@ -41,6 +41,15 @@ impl OutFormat {
             OutFormat::Jpeg => "jpg",
             OutFormat::Png => "png",
             OutFormat::Tiff => "tif",
+        }
+    }
+    /// Whether a file extension (any case, also "jpeg"/"tiff") belongs to this format.
+    pub(super) fn has_ext(&self, ext: &str) -> bool {
+        let e = ext.to_ascii_lowercase();
+        match self {
+            OutFormat::Jpeg => e == "jpg" || e == "jpeg",
+            OutFormat::Png => e == "png",
+            OutFormat::Tiff => e == "tif" || e == "tiff",
         }
     }
     pub(super) fn name(&self) -> &'static str {
@@ -412,6 +421,8 @@ pub struct PanoApp {
 /// Patch click mode: the two rough clicks and the last result (suggestions).
 #[derive(Default)]
 pub(super) struct ClickState {
+    /// the photo pair the clicks belong to; another pair on screen drops them
+    pub(super) pair: (usize, usize),
     pub(super) a: Option<P2>,
     pub(super) b: Option<P2>,
     pub(super) result: Option<crate::click_match::ClickResult>,

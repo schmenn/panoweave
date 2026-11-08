@@ -96,20 +96,25 @@ pub fn write_file(path: &Path, w: usize, h: usize, o: &WriteOptions, produce: im
             return Err(format!("JPEG files can be at most {JPEG_MAX_SIDE} pixels wide or high (this picture is {w} x {h}) – choose TIFF or a smaller size"));
         }
     let file = File::create(path).map_err(|e| format!("could not create {}: {e}", path.display()))?;
-    let out = BufWriter::with_capacity(FILE_BUFFER, file);
+    let mut out = BufWriter::with_capacity(FILE_BUFFER, file);
     match o.format {
-        Format::Png => write_png(out, w, h, produce),
+        // the PNG writer flushes the buffer itself when it finishes (and reports an error there)
+        Format::Png => return write_png(out, w, h, produce),
         Format::Tiff { sixteen_bit } => {
             if raw_bytes(w, h, o.format) > o.bigtiff_above {
-                let enc = tiff::encoder::TiffEncoder::new_big(out).map_err(|e| e.to_string())?;
+                let enc = tiff::encoder::TiffEncoder::new_big(&mut out).map_err(|e| e.to_string())?;
                 write_tiff(enc, w, h, sixteen_bit, o.rows_per_strip, produce)
             } else {
-                let enc = tiff::encoder::TiffEncoder::new(out).map_err(|e| e.to_string())?;
+                let enc = tiff::encoder::TiffEncoder::new(&mut out).map_err(|e| e.to_string())?;
                 write_tiff(enc, w, h, sixteen_bit, o.rows_per_strip, produce)
             }
         }
-        Format::Jpeg { quality } => write_jpeg(out, w, h, quality, o.jpeg_queue, produce),
-    }
+        Format::Jpeg { quality } => write_jpeg(&mut out, w, h, quality, o.jpeg_queue, produce),
+    }?;
+    // the last part of the file is still in the buffer: write it here, where an error (disk full) is reported,
+    // instead of in the drop, which would ignore it
+    let file = out.into_inner().map_err(|e| format!("could not write {}: {}", path.display(), e.error()))?;
+    file.sync_all().map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
 /// Checks that strips come in order and have the expected size; returns the number of rows.
@@ -197,6 +202,9 @@ where
     [C::Inner]: tiff::encoder::TiffValue,
 {
     let mut img = enc.new_image::<C>(w as u32, h as u32).map_err(|e| e.to_string())?;
+    // the 4th sample is the coverage: mark it as (not premultiplied) alpha, otherwise other programs see an
+    // unnamed extra channel instead of transparency
+    img.encoder().write_tag(tiff::tags::Tag::ExtraSamples, &[tiff::tags::ExtraSamples::UnassociatedAlpha.to_u16()][..]).map_err(|e| e.to_string())?;
     img.rows_per_strip(rows_per_strip.min(h) as u32).map_err(|e| e.to_string())?;
     let mut sink = TiffSink { img, convert, w, h, rows_per_strip: rows_per_strip.min(h), next_y: 0 };
     produce(&mut sink)?;
@@ -289,11 +297,14 @@ impl RowSink for JpegSink {
         let rgba = to_rgba8(col, cov);
         let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
         drop(rgba);
-        self.tx.as_ref().ok_or("the JPEG writer has stopped")?.send((y0, rgb)).map_err(|_| "the JPEG encoder stopped unexpectedly".to_string())?;
+        self.tx.as_ref().ok_or("the JPEG writer has stopped")?.send((y0, rgb)).map_err(|_| ENCODER_GONE.to_string())?;
         self.next_y += rows;
         Ok(())
     }
 }
+
+/// What the producer sees when the JPEG encoder thread has ended before taking all rows.
+const ENCODER_GONE: &str = "the JPEG encoder stopped unexpectedly";
 
 fn write_jpeg<W: Write + Send>(out: W, w: usize, h: usize, quality: u8, queue: usize, produce: impl FnOnce(&mut dyn RowSink) -> Result<(), String>) -> Result<(), String> {
     let (tx, rx) = mpsc::sync_channel(queue.max(1));
@@ -308,10 +319,13 @@ fn write_jpeg<W: Write + Send>(out: W, w: usize, h: usize, quality: u8, queue: u
         // closing the channel ends the encoder: normally after the last row, early on an error
         sink.tx = None;
         let encoded = worker.join();
-        res?;
-        match encoded {
-            Ok(r) => r.map_err(|e| e.to_string()),
-            Err(_) => Err("the JPEG encoder stopped unexpectedly".into()),
+        match (res, encoded) {
+            // the encoder failed first (e.g. disk full): the producer only saw the channel close, the cause is the encoder's
+            (Err(e), Ok(Err(enc))) if e == ENCODER_GONE => Err(enc.to_string()),
+            // the producer failed first (stopped, wrong strip): the encoder then only saw the channel close
+            (Err(e), _) => Err(e),
+            (Ok(()), Ok(r)) => r.map_err(|e| e.to_string()),
+            (Ok(()), Err(_)) => Err(ENCODER_GONE.into()),
         }
     })
 }
@@ -483,5 +497,47 @@ mod tests {
         assert_eq!(raw_bytes(10, 10, Format::Png), 400);
         assert_eq!(raw_bytes(10, 10, Format::Tiff { sixteen_bit: true }), 800);
         assert_eq!(raw_bytes(10, 10, Format::Jpeg { quality: 90 }), 300);
+    }
+
+    #[test]
+    fn tiff_marks_the_fourth_channel_as_transparency() {
+        use tiff::tags::Tag;
+        for (name, sixteen_bit, big) in [("alpha8.tif", false, false), ("alpha16.tif", true, false), ("alpha_big.tif", false, true)] {
+            let p = tmp(name);
+            let mut o = WriteOptions::new(Format::Tiff { sixteen_bit }, 8);
+            if big {
+                o.bigtiff_above = 0;
+            }
+            write_file(&p, W, H, &o, |s| send(8, s)).unwrap();
+            let mut dec = tiff::decoder::Decoder::new(std::io::BufReader::new(File::open(&p).unwrap())).unwrap();
+            let extra = dec.get_tag_u32_vec(Tag::ExtraSamples).unwrap();
+            assert_eq!(extra, [2], "{name}: unassociated alpha");
+            assert_eq!(dec.get_tag_u32(Tag::SamplesPerPixel).unwrap(), 4, "{name}");
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+
+    /// A file that accepts `left` bytes and then fails like a full disk.
+    struct FullDisk {
+        left: usize,
+    }
+    impl Write for FullDisk {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            if self.left == 0 {
+                return Err(std::io::Error::other("disk full (test)"));
+            }
+            let n = b.len().min(self.left);
+            self.left -= n;
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failing_jpeg_file_reports_its_own_error() {
+        let e = write_jpeg(FullDisk { left: 200 }, W, H, 90, 1, |s| send(4, s)).unwrap_err();
+        assert!(e.contains("disk full (test)"), "the cause is named, not only that the encoder stopped: {e}");
     }
 }

@@ -120,8 +120,35 @@ impl PanoApp {
         self.gain_maps = vec![None; self.photos.len()];
         self.lens_models = vec![None; self.photos.len()];
         if let Some(pf) = self.pending_project.take() {
+            let total = pf.photos.len();
+            // which photos of the project were loaded (the loader keeps the order and leaves out what failed)
+            let loaded: Vec<PathBuf> = self.photos.iter().filter_map(|p| if let Source::File(f) = &p.source { Some(f.clone()) } else { None }).collect();
+            let mut next = loaded.iter().peekable();
+            let found: Vec<bool> = pf.photos.iter().map(|pp| next.next_if(|f| **f == pp.path).is_some()).collect();
+            let missing: Vec<String> = pf.photos.iter().zip(&found).filter(|(_, f)| !**f).map(|(pp, _)| pp.path.display().to_string()).collect();
+            let (pf, dropped) = project::keep_photos(pf, &found);
+            if pf.photos.len() != self.photos.len() {
+                // cannot happen with the loader keeping the order; do not apply anything rather than mix photos up
+                self.set_status("The photos of the project could not be matched to the files – nothing of the project was applied.", BAD);
+                self.project_path = None;
+                return;
+            }
             self.apply_project(pf);
-            self.set_status(format!("Project opened with {} photos.", self.photos.len()), GOOD);
+            if missing.is_empty() {
+                self.set_status(format!("Project opened with {} photos.", self.photos.len()), GOOD);
+            } else {
+                // a save must not replace the complete project by the reduced one without the person choosing so
+                self.project_path = None;
+                let why = errs.first().map(|e| format!(" ({e})")).unwrap_or_default();
+                self.set_status(
+                    format!(
+                        "Project opened with {} of {total} photos – missing: {}{why}. {dropped} points to them were left out. Save under a new name to keep the original file complete.",
+                        self.photos.len(),
+                        missing.join(", ")
+                    ),
+                    WARN,
+                );
+            }
             return;
         }
         if added > 0 {
@@ -162,8 +189,20 @@ impl PanoApp {
             }
         }
         self.pe = PointEditor { a: 0, b: 1.min(self.photos.len().saturating_sub(1)), ..Default::default() };
+        self.forget_photo_numbers();
         self.needs_align = true;
         self.preview_dirty = true;
+    }
+
+    /// State that names photos by their number; after removing a photo or starting anew it would point at other photos.
+    fn forget_photo_numbers(&mut self) {
+        self.graph_photo = None;
+        self.click = ClickState::default();
+        self.pair_summary = None;
+        self.sky_cache = None;
+        self.dup_cache = None;
+        self.cp_rows_cache = None;
+        self.ov_tex = None;
     }
 
     pub(super) fn clear_all(&mut self) {
@@ -186,6 +225,15 @@ impl PanoApp {
         self.last_align = None;
         self.pe = PointEditor { b: 1, ..Default::default() };
         self.mk = Default::default();
+        self.forget_photo_numbers();
+        self.lens_models.clear();
+        self.needs_align = false;
+        // the export of a new project goes next to its own photos, not into the old project's folder
+        self.out_path.clear();
+        self.last_output = None;
+        // a preview of the old project still being computed must not show up in the new one
+        self.preview_rx = None;
+        self.preview_dirty = true;
     }
 
     // ---------------- project files ----------------
@@ -210,7 +258,7 @@ impl PanoApp {
             photos.push(ProjectPhoto { path: pp, lens: p.lens, rot: p.rot, enabled: p.enabled, field, masks: p.mask.strokes.clone() });
         }
         let pf = ProjectFile {
-            version: 1,
+            version: project::VERSION,
             photos,
             lenses: self.lenses.clone(),
             cps: self.cps.clone(),
@@ -219,8 +267,12 @@ impl PanoApp {
             parallax: Some(self.parallax_cfg.clone()),
         };
         match project::save(&path, &pf) {
-            Ok(()) => {
+            Ok(0) => {
                 self.set_status(format!("Project saved: {}", path.display()), GOOD);
+                self.project_path = Some(path);
+            }
+            Ok(n) => {
+                self.set_status(format!("Project saved: {} ({n} invalid measurement values of points were saved as 0)", path.display()), WARN);
                 self.project_path = Some(path);
             }
             Err(e) => self.set_status(format!("Could not save the project: {e}"), BAD),
@@ -248,11 +300,8 @@ impl PanoApp {
         }
     }
 
+    /// Takes over a project whose photos are exactly `self.photos` (in the same order).
     pub(super) fn apply_project(&mut self, pf: ProjectFile) {
-        if pf.photos.len() != self.photos.len() {
-            self.set_status("Some photos of the project could not be found.", WARN);
-            return;
-        }
         self.lenses = pf.lenses;
         for (p, pp) in self.photos.iter_mut().zip(&pf.photos) {
             p.lens = pp.lens;
