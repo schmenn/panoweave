@@ -18,6 +18,7 @@ use crate::fine_align::{self, FineStats};
 use crate::patch_matcher;
 use crate::patch_store::{self as ps, Change, Event, LiveFrame, PatchData, PatchState, Phase, RoundInfo, Status, STORE};
 use crate::patch_viz::{self as pv, Colormap, DiffSpace, HeatMode};
+use crate::app::RADIUS;
 use crate::stitch::{Mapper, PanoView};
 use egui::{Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2};
 use image::RgbImage;
@@ -1531,10 +1532,10 @@ impl PatchWindow {
                     }
                     p.rect_filled(rect, 0.0, fill);
                     if self.sel.contains(&d.id) {
-                        p.rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(2.0, Color32::from_rgb(70, 160, 255)), StrokeKind::Inside);
+                        p.rect_stroke(rect.shrink(1.0), f32::from(RADIUS), Stroke::new(2.0, Color32::from_rgb(70, 160, 255)), StrokeKind::Inside);
                     }
                     if self.detail == Some(d.id) {
-                        p.rect_stroke(rect.shrink(3.0), 2.0, Stroke::new(1.0, text_col), StrokeKind::Inside);
+                        p.rect_stroke(rect.shrink(3.0), f32::from(RADIUS), Stroke::new(1.0, text_col), StrokeKind::Inside);
                     }
                     let disabled = st.status == Status::DisabledManual;
                     let mut x = rect.min.x;
@@ -1671,7 +1672,7 @@ impl PatchWindow {
                 p.text(r.right_top() + Vec2::new(-4.0, 2.0), Align2::RIGHT_TOP, "✕ uncorrected", FontId::proportional(10.0), C_RED);
             }
         } else {
-            p.rect_filled(r, 2.0, Color32::from_gray(70));
+            p.rect_filled(r, f32::from(RADIUS), Color32::from_gray(70));
             p.text(r.center(), Align2::CENTER_CENTER, "…", FontId::proportional(14.0), Color32::from_gray(200));
         }
         if !fresh && !self.thumb_pending.contains(&d.id) && self.thumb_pending.len() < THUMB_JOBS_MAX {

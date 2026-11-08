@@ -288,9 +288,9 @@ impl PanoApp {
                         let p = ui.painter();
                         let dup = dup_of.get(&k);
                         if sel {
-                            p.rect_filled(rect, 3.0, ACCENT_DARK);
+                            p.rect_filled(rect, f32::from(RADIUS), ACCENT_DARK);
                         } else if resp.hovered() {
-                            p.rect_filled(rect, 3.0, Color32::from_rgb(48, 52, 61));
+                            p.rect_filled(rect, f32::from(RADIUS), Color32::from_rgb(48, 52, 61));
                         } else if dup.is_some() {
                             p.rect_filled(rect, 0.0, Color32::from_rgb(64, 48, 24));
                         } else if sky_of.contains_key(&k) {
@@ -631,7 +631,7 @@ impl PanoApp {
             let size = Vec2::new(ui.available_width(), 330.0);
             let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
             let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 6.0, Color32::from_rgb(24, 26, 31));
+            painter.rect_filled(rect, f32::from(RADIUS_CARD), Color32::from_rgb(24, 26, 31));
             let inner = rect.shrink(28.0);
             // positions: from the alignment (direction of each photo's centre), else a circle
             let main_group: Vec<usize> = groups.iter().max_by_key(|g| g.len()).cloned().unwrap_or_default();
@@ -727,7 +727,7 @@ impl PanoApp {
                     let t = &self.photos[i].thumb;
                     let s = t.size_vec2();
                     let k = (120.0 / s.y.max(1.0)).min(220.0 / s.x.max(1.0));
-                    let thumb = ui.add(egui::Image::new((t.id(), s * k)).sense(Sense::click()));
+                    let thumb = ui.add(egui::Image::new((t.id(), s * k)).corner_radius(CornerRadius::same(RADIUS)).sense(Sense::click()));
                     photo_choice = self.photo_menu(&thumb, i);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(format!("{}. {}", i + 1, self.photos[i].name)).strong());
