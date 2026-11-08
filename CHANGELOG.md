@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `--accuracy` measures on 3200 px copies of the photos by default (was the 1600 px working images, where part of the result was the inaccuracy of the measurement itself: 0.40 instead of 0.27 px on the Fischerbastei set). `PW_ACC_CHECK_SIZE` still sets it.
 - Headless `--accuracy <photos>`: aligns like the Align button and measures the remaining shift in every overlap on spots that are neither points nor control areas (`fine_align::quality`), so removing points cannot improve it; per pass, by distance from the photo centre and optionally per pair (`PW_ACC_PAIRS=1`). Documented in the README, the guide and `CLAUDE.md`; unit test with a known misalignment. Measured with it (Fischerbastei 13 photos, Citadelle 21 photos): aligning again lowers the shown average error (0.60 → 0.54 px) but not the real fit; fine alignment on 3200 px images, a second distortion term and accepting optimiser steps by the robust cost (review C4) changed the real fit by 0–3 %, so no "maximum accuracy" mode was added.
 - User guide (`docs/GUIDE.md`): quick start, how to take photos that stitch well, every step and its settings, the point editor, the extra windows, exposure blend, projects, pitfalls with solutions, what the messages mean, keys and mouse. With screenshots; linked from the README and the help window.
 
