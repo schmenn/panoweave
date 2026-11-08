@@ -56,6 +56,7 @@ impl PanoApp {
                             if bad == 0 { GOOD } else { WARN },
                         );
                     }
+                    JobMsg::SkyMasks(v) => self.on_sky_masks(v),
                     JobMsg::PairPoints { a, b, cps, ms, mode } => self.on_pair_points(a, b, cps, ms, mode),
                     JobMsg::PairChecked { a, b, cps, reports } => self.on_pair_checked(a, b, cps, reports),
                     JobMsg::ClickMatched(r) => self.on_click_matched(*r),
