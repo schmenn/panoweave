@@ -1,16 +1,30 @@
 use super::*;
+use super::state::{ready, Ready};
 
 impl PanoApp {
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
-        if let Some(job) = &self.job
-            && let Ok(msg) = job.rx.try_recv() {
+        let got = match self.job.as_ref().map(|j| ready(&j.rx)) {
+            Some(Ready::Value(m)) => Some(m),
+            // the worker ended without a result (it should send one even on a panic; this is the last safety net)
+            Some(Ready::Gone) => Some(JobMsg::Failed("the worker stopped without a result".into())),
+            _ => None,
+        };
+        if let Some(msg) = got
+            && let Some(job) = &self.job {
                 let elapsed = job.started.elapsed().as_millis();
                 let title = job.title.clone();
                 let was_cancelled = job.cancel.load(Ordering::Relaxed) || engine::cancelled();
                 self.job = None;
                 engine::CANCEL.store(false, Ordering::Relaxed);
-                let msg = if was_cancelled && !matches!(msg, JobMsg::Rendered(_) | JobMsg::FusedSaved(_)) { JobMsg::Cancelled } else { msg };
+                let msg = if was_cancelled && !matches!(msg, JobMsg::Rendered(_) | JobMsg::FusedSaved(_) | JobMsg::Failed(_)) { JobMsg::Cancelled } else { msg };
                 match msg {
+                    JobMsg::Failed(e) => {
+                        self.auto_chain = false;
+                        self.pending_project = None;
+                        eprintln!("{title}: failed: {e}");
+                        let log = crate::crashlog::log_path().map(|p| format!(" Details: {}", p.display())).unwrap_or_default();
+                        self.set_status(format!("{title}: failed with an internal error ({e}) – nothing was changed.{log}"), BAD);
+                    }
                     JobMsg::Cancelled => {
                         self.auto_chain = false;
                         if title.starts_with("Loading") {
@@ -71,8 +85,13 @@ impl PanoApp {
                 }
                 let _ = elapsed;
             }
-        if let Some(rx) = &self.preview_rx
-            && let Ok((generation, img, view)) = rx.try_recv() {
+        match self.preview_rx.as_ref().map(ready) {
+            Some(Ready::Gone) => {
+                // the preview worker ended without a picture: allow a new one instead of waiting for ever
+                self.preview_rx = None;
+                self.set_status("The preview could not be made (internal error) – change the view to try again.", BAD);
+            }
+            Some(Ready::Value((generation, img, view))) => {
                 self.preview_rx = None;
                 self.preview_size = img.size;
                 match &mut self.preview_tex {
@@ -82,6 +101,8 @@ impl PanoApp {
                 self.preview_shown_gen = generation;
                 self.preview_view = Some(view);
             }
+            _ => {}
+        }
         while let Ok((i, name, img)) = self.full_rx.try_recv() {
             self.full_pending.remove(&i);
             // only if the photo at that place is still the same one
@@ -89,14 +110,20 @@ impl PanoApp {
                 self.full_tex.insert(i, ctx.load_texture(format!("full-{i}-{name}"), img, egui::TextureOptions::LINEAR));
             }
         }
-        if let Some(rx) = &self.fusion_rx
-            && let Ok(img) = rx.try_recv() {
+        match self.fusion_rx.as_ref().map(ready) {
+            Some(Ready::Gone) => {
+                self.fusion_rx = None;
+                self.set_status("The blended preview could not be made (internal error).", BAD);
+            }
+            Some(Ready::Value(img)) => {
                 self.fusion_rx = None;
                 match &mut self.fusion_tex {
                     Some(t) => t.set(img, egui::TextureOptions::LINEAR),
                     None => self.fusion_tex = Some(ctx.load_texture("fusion", img, egui::TextureOptions::LINEAR)),
                 }
             }
+            _ => {}
+        }
         if self.fusion_dirty && self.mode == Mode::Exposure {
             self.request_fusion_preview();
         }
@@ -136,5 +163,44 @@ impl PanoApp {
         if !dropped.is_empty() {
             self.add_paths(dropped);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::masks_tests::app_with_photos;
+    use super::*;
+
+    fn poll_until_idle(app: &mut PanoApp) {
+        let ctx = egui::Context::default();
+        let t0 = Instant::now();
+        while app.busy() {
+            assert!(t0.elapsed().as_secs() < 20, "the job never finished");
+            app.poll(&ctx);
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_panicking_job_is_reported_and_the_program_is_not_busy_for_ever() {
+        let mut app = app_with_photos(2);
+        app.start_job("Test job", |_, _| panic!("boom in the worker"));
+        poll_until_idle(&mut app);
+        assert!(app.status.contains("Test job: failed") && app.status.contains("boom in the worker"), "{}", app.status);
+        assert_eq!(app.photos.len(), 2, "nothing was changed");
+        // and the next job runs normally
+        app.start_job("Next", |_, _| JobMsg::Cancelled);
+        poll_until_idle(&mut app);
+    }
+
+    #[test]
+    fn a_preview_worker_that_vanished_allows_a_new_preview() {
+        let mut app = app_with_photos(2);
+        let (tx, rx) = channel();
+        drop(tx);
+        app.preview_rx = Some(rx);
+        app.poll(&egui::Context::default());
+        assert!(app.preview_rx.is_none(), "a new preview can be requested");
+        assert!(app.status.contains("preview could not be made"), "{}", app.status);
     }
 }

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- A job that failed with an internal error (a panic in the worker) left the program "busy" for ever with no message. Now the status line says which job failed and why, names the crash log, and nothing is changed; the next job works. A preview or blended preview whose worker ended without a picture no longer blocks every later preview.
+- The locks of the patch store, the export photo cache, the sky cache of the pair check and the JPEG writer keep working after a panic in another thread (before, one failure made every later access fail too).
+- The "use" tick in the photo list is locked while a job runs (an alignment that finished after a tick changed could duplicate or lose points).
+
 ### Changed
 - GUI: step 1 shows the photos as a grid that wraps into rows (they ran out of the window to the right before, with no way to scroll). The export step, the connections window and the help window scroll when the window is too low; before, the lower settings could only be reached by making the window bigger. Frame & crop needs no scrolling (the buttons wrap, the preview fits the window). Unit test for the grid columns.
 - Code: `cargo clippy --all-targets -- -D warnings` passes and runs in the CI. About 100 warnings fixed (mostly nested `if`s written as one condition); four lints are switched off on purpose in `Cargo.toml` with the reason (many parameters, complex types, index loops, `!(a >= b)` that must fail on NaN). No functional change; all tests unchanged.
