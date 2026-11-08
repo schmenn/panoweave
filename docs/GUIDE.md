@@ -102,7 +102,7 @@ Matching points (control points) are spots that show the same thing in two photo
 - **Remove wrong matches automatically**: drops points that do not fit the others.
 - **Level the horizon automatically**: turns the panorama so that the horizon is level. **⟲ Level the horizon** does it again later.
 
-**Pair check** (on by default): after aligning, PanoWeave knows which photos overlap. Pairs that overlap but have too few points are searched again: first the normal point finder inside the overlap only, then a prediction through a third photo, then patch matching. Pairs that still have too few points are reported, nothing is made up.
+**Pair check** (on by default): after aligning, PanoWeave knows which photos overlap. Pairs that overlap but have too few points are searched again: first the normal point finder inside the overlap only, then a prediction through a third photo, then patch matching. Points the pair already has are not counted again ("n already there" in the pair's report), so a pair only counts as solved by really new points. Pairs that still have too few points are reported, nothing is made up.
 
 **Fine alignment (patch matching)** compares small image patches in the overlaps after aligning and refines the alignment in rounds, for sharper seams. A round that makes the result worse is undone ("The last round was undone…"). The main switches:
 

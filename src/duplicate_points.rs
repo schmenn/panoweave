@@ -110,6 +110,31 @@ pub fn find(cps: &[ControlPoint], cfg: &DupConfig) -> Vec<Duplicate> {
     out
 }
 
+/// Splits `new` points of one search into those on a new spot and those that lie on the spot of a
+/// point in `existing` (or of an earlier one of `new`) in both photos – they add no information and
+/// would count twice in the alignment. Same tolerance as `find`. Returns (new spots, number dropped).
+pub fn new_spots(existing: &[ControlPoint], new: Vec<ControlPoint>, cfg: &DupConfig) -> (Vec<ControlPoint>, usize) {
+    if !cfg.enabled {
+        return (new, 0);
+    }
+    let tol = cfg.tolerance_px.max(0.0) / WORK_SIZE as f64;
+    let mut kept: Vec<ControlPoint> = Vec::new();
+    let mut dropped = 0;
+    for c in new {
+        let (pair, l, h) = oriented(&c);
+        let same = existing.iter().chain(&kept).any(|o| {
+            let (op, ol, oh) = oriented(o);
+            op == pair && close(l, ol, tol) && close(h, oh, tol)
+        });
+        if same {
+            dropped += 1;
+        } else {
+            kept.push(c);
+        }
+    }
+    (kept, dropped)
+}
+
 /// The points that can be removed without losing information: exact duplicates that were neither placed by hand nor protected.
 /// Sorted, without repeats.
 pub fn removable(cps: &[ControlPoint], dups: &[Duplicate]) -> Vec<usize> {
@@ -217,5 +242,30 @@ mod tests {
         assert!(find(&cps, &DupConfig { tolerance_px: 2.0, ..DupConfig::default() }).is_empty());
         let d = find(&cps, &DupConfig { tolerance_px: 4.0, ..DupConfig::default() });
         assert_eq!(d.len(), 1);
+    }
+
+    /// The pair check must not count points the pair already has as new.
+    #[test]
+    fn new_spots_drops_points_the_pair_already_has() {
+        let px = 1.0 / WORK_SIZE as f64;
+        let existing = vec![pt(0, 1, [0.1, 0.1], [-0.2, 0.1], false)];
+        let new = vec![
+            // the same spot, stored the other way round and 1 px off
+            pt(1, 0, [-0.2 + px, 0.1], [0.1, 0.1 - px], false),
+            // a new spot
+            pt(0, 1, [0.3, 0.1], [0.0, 0.1], false),
+            // the new spot found a second time by the same search
+            pt(0, 1, [0.3, 0.1], [0.0, 0.1], false),
+            // the same spot as an existing point, but in another pair
+            pt(0, 2, [0.1, 0.1], [-0.2, 0.1], false),
+        ];
+        let (kept, dropped) = new_spots(&existing, new, &DupConfig::default());
+        assert_eq!(dropped, 2);
+        assert_eq!(kept.len(), 2);
+        assert_eq!((kept[0].a, kept[0].b, kept[0].pa), (0, 1, [0.3, 0.1]));
+        assert_eq!((kept[1].a, kept[1].b), (0, 2));
+        // switched off nothing is dropped
+        let (kept, dropped) = new_spots(&existing, vec![pt(0, 1, [0.1, 0.1], [-0.2, 0.1], false)], &DupConfig { enabled: false, ..Default::default() });
+        assert_eq!((kept.len(), dropped), (1, 0));
     }
 }

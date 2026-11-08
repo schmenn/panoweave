@@ -571,6 +571,14 @@ impl Ctx<'_> {
                 STEP_PREDICT => self.predicted(o, &mut note),
                 _ => self.patches(o, &mut note),
             };
+            // points the pair already has (or an earlier step just found) are no help: before, they
+            // counted as new and could make a weak pair look solved
+            let pair_cps: Vec<ControlPoint> = self.cps.iter().filter(|c| (c.a, c.b) == (o.a, o.b) || (c.a, c.b) == (o.b, o.a)).copied().chain(add.iter().copied()).collect();
+            let (pts, dup) = crate::duplicate_points::new_spots(&pair_cps, pts, &crate::duplicate_points::DupConfig::default());
+            if dup > 0 {
+                note.push_str(&format!(", {dup} already there"));
+                eprintln!("pair check {}-{} {name}: {dup} points already there, {} new", o.a, o.b, pts.len());
+            }
             have += pts.len();
             add.extend(pts);
             rep.steps.push(StepLog { step: name, points: have, note });
