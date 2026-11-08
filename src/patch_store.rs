@@ -285,6 +285,7 @@ pub struct RoundInfo {
 
 /// Kept for a patch when the optimisation is restarted from the window.
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)] // one per patch at most, only while the window restarts an optimisation
 pub enum Override {
     Disabled,
     /// shifted by hand: kept as it is (not matched again)
@@ -536,8 +537,8 @@ impl Store {
         if let Some(Some((_, st))) = r.slots.get_mut(i) {
             st.cp = cp;
             st.cp_auto = cp;
-            if let Some(reason) = rejected_reason {
-                if st.auto_status == Status::Valid {
+            if let Some(reason) = rejected_reason
+                && st.auto_status == Status::Valid {
                     st.auto_status = Status::Rejected;
                     st.auto_reason = reason;
                     st.prev_status = Status::Rejected;
@@ -548,7 +549,6 @@ impl Store {
                         delta = (-1, 1);
                     }
                 }
-            }
         }
         r.valid = (r.valid as isize + delta.0) as usize;
         r.rejected = (r.rejected as isize + delta.1) as usize;
@@ -782,7 +782,7 @@ mod tests {
 
     #[test]
     fn encoding_keeps_invalid_pixels() {
-        assert_eq!(dec(enc(0.5, false)).1, false);
+        assert!(!dec(enc(0.5, false)).1);
         let (v, m) = dec(enc(0.5, true));
         assert!(m && (v - 0.5).abs() < 0.01);
         let (v, _) = dec(enc(0.0, true));

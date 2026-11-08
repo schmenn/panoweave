@@ -45,21 +45,6 @@ pub(super) fn groups_text(groups: &[Vec<usize>]) -> String {
 /// Edge labels of the connection view are drawn only on lines at least this long (points).
 pub(super) const GRAPH_LABEL_MIN_LEN: f32 = 70.0;
 
-#[cfg(test)]
-mod group_tests {
-    use super::*;
-
-    #[test]
-    fn groups_are_listed_like_the_original() {
-        let g = vec![vec![0, 1, 2, 3, 5], vec![4, 6]];
-        assert_eq!(groups_text(&g), "[1-4, 6], [5, 7]");
-        let mut cps = vec![ControlPoint::new(0, 1, [0.0; 2], [0.0; 2], false), ControlPoint::new(2, 3, [0.0; 2], [0.0; 2], false)];
-        cps.push(ControlPoint::new(1, 2, [0.0; 2], [0.0; 2], false));
-        let gs = image_groups(6, &[0, 1, 2, 3, 4, 5], &cps);
-        assert_eq!(gs, vec![vec![0, 1, 2, 3], vec![4], vec![5]]);
-    }
-}
-
 impl PanoApp {
     /// Position of a control point side in pixels of the full-size photo.
     pub(super) fn full_px(&self, i: usize, p: [f64; 2]) -> (f64, f64) {
@@ -96,11 +81,10 @@ impl PanoApp {
             (c.a, c.b, c.manual, c.kind as u8, c.pa[0].to_bits(), c.pa[1].to_bits(), c.pb[0].to_bits(), c.pb[1].to_bits(), c.err.to_bits()).hash(&mut h);
         }
         let key = h.finish();
-        if let Some((k, d)) = &self.dup_cache {
-            if *k == key {
+        if let Some((k, d)) = &self.dup_cache
+            && *k == key {
                 return d.clone();
             }
-        }
         let d = crate::duplicate_points::find(&self.cps, &self.dup_cfg);
         self.dup_cache = Some((key, d.clone()));
         d
@@ -703,8 +687,8 @@ impl PanoApp {
                 }
                 painter.text(p, Align2::CENTER_CENTER, (i + 1).to_string(), FontId::proportional(12.0), Color32::WHITE);
             }
-            if resp.clicked() {
-                if let Some(hp) = resp.interact_pointer_pos() {
+            if resp.clicked()
+                && let Some(hp) = resp.interact_pointer_pos() {
                     let node = active.iter().copied().filter(|&i| pos[i].distance(hp) < 15.0).min_by(|&x, &y| pos[x].distance(hp).partial_cmp(&pos[y].distance(hp)).unwrap());
                     if let Some(i) = node {
                         self.graph_photo = Some(i);
@@ -720,7 +704,6 @@ impl PanoApp {
                         }
                     }
                 }
-            }
             ui.label(RichText::new(format!("green: {enough}+ points · yellow: fewer · red dashed: overlap {:.0} %+ but fewer than {min_pts} points · red ring: no points at all. Click a line to open the pair, a photo to see it.", self.pair_cfg.min_overlap * 100.0)).small().color(MUTED));
             if let Some(i) = self.graph_photo {
                 ui.horizontal(|ui| {
@@ -821,5 +804,20 @@ impl PanoApp {
         });
         self.vp = vp;
         self.show_help = open;
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn groups_are_listed_like_the_original() {
+        let g = vec![vec![0, 1, 2, 3, 5], vec![4, 6]];
+        assert_eq!(groups_text(&g), "[1-4, 6], [5, 7]");
+        let mut cps = vec![ControlPoint::new(0, 1, [0.0; 2], [0.0; 2], false), ControlPoint::new(2, 3, [0.0; 2], [0.0; 2], false)];
+        cps.push(ControlPoint::new(1, 2, [0.0; 2], [0.0; 2], false));
+        let gs = image_groups(6, &[0, 1, 2, 3, 4, 5], &cps);
+        assert_eq!(gs, vec![vec![0, 1, 2, 3], vec![4], vec![5]]);
     }
 }

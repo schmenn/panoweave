@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Code: `cargo clippy --all-targets -- -D warnings` passes and runs in the CI. About 100 warnings fixed (mostly nested `if`s written as one condition); four lints are switched off on purpose in `Cargo.toml` with the reason (many parameters, complex types, index loops, `!(a >= b)` that must fail on NaN). No functional change; all tests unchanged.
 - GUI: the last hand-written corner radii (2 to 18 px in the step bar, start-page drop area, point list rows, mask photo list, connection graph, magnifier, patch window) now use `RADIUS` / `RADIUS_CARD`. The big image surfaces (point editor panes, frame preview, mask canvas) are square (`RADIUS_CANVAS` = 0), so a zoomed photo no longer pokes square corners over a rounded edge. Thumbnails in the mask list, the connection window and the seam preview get the same small radius as in the photo list. A unit test fails when a painter call or frame in the UI code gets a written radius again. README screenshots taken again (new tool row, step "Export"). No functional change.
 
 ### Added

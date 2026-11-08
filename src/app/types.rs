@@ -75,6 +75,7 @@ impl Photo {
     }
 }
 
+#[allow(clippy::large_enum_variant)] // a few messages per job; boxing would not save anything that matters
 pub(super) enum JobMsg {
     Loaded(Vec<Result<LoadedPhoto, String>>),
     Matched(MatchResult),

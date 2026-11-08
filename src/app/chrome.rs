@@ -39,11 +39,10 @@ impl PanoApp {
                                     self.save_project(p);
                                 }
                             }
-                            if ui.add_enabled(!self.busy(), egui::Button::new("📂  Open project")).clicked() {
-                                if let Some(p) = rfd::FileDialog::new().add_filter("PanoWeave project", &["pwproj"]).pick_file() {
+                            if ui.add_enabled(!self.busy(), egui::Button::new("📂  Open project")).clicked()
+                                && let Some(p) = rfd::FileDialog::new().add_filter("PanoWeave project", &["pwproj"]).pick_file() {
                                     self.open_project(&p);
                                 }
-                            }
                             if ui.add_enabled(!self.photos.is_empty() && !self.busy(), egui::Button::new("➕  New")).clicked() {
                                 self.clear_all();
                                 self.set_status("Started a new panorama.", MUTED);

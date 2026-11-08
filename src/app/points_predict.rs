@@ -133,11 +133,10 @@ impl PanoApp {
             (mp[1] * 1e4) as i64,
             self.cps.len(),
         );
-        if let Some(f) = self.sel_frame {
-            if f.key == key || (self.pe.dragging.is_some() && f.key.0 == k && f.fixed == fixed) {
+        if let Some(f) = self.sel_frame
+            && (f.key == key || (self.pe.dragging.is_some() && f.key.0 == k && f.fixed == fixed)) {
                 return Some(f);
             }
-        }
         let pf = self.to_px(fi, fp);
         let pm = self.to_px(mi, mp);
         let j = self.predict(fi, mi, pf).map(|x| x.1).unwrap_or_else(|| self.rotation_guess(fi, pf, mi, pm));

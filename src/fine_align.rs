@@ -368,11 +368,10 @@ pub fn measure_ex(
     let result = if rec.is_some() {
         let mut tr = SearchTrace { want_images: focused && STORE.wants_frames(), ..Default::default() };
         let (result, detail) = patch_matcher::match_patch_detailed(&ra, &rb, cfg, Some(&mut tr));
-        if focused {
-            if let Some(r) = rec {
+        if focused
+            && let Some(r) = rec {
                 STORE.play_trace(id, r.a, r.b, &tr, &result);
             }
-        }
         store(&result, detail, Some(&rb), &tr, diff);
         result
     } else {
@@ -612,12 +611,11 @@ fn measure_round(
                 }
                 c.shift = [m.result.dx, m.result.dy];
                 // points placed by hand stay where the person put them
-                if !c.manual || c.kind == CpKind::AreaManual {
-                    if let Some(p) = geos[c.b].dir_to_px(m.dir_b) {
+                if (!c.manual || c.kind == CpKind::AreaManual)
+                    && let Some(p) = geos[c.b].dir_to_px(m.dir_b) {
                         c.pb = norm(&geos[c.b], p);
                         n_refined += 1;
                     }
-                }
                 c.weight = match c.kind {
                     CpKind::AreaManual => cfg.manual_area_weight * c.conf.max(0.05) as f64,
                     _ => 1.0,
@@ -750,14 +748,13 @@ fn measure_round(
             }
             // control areas shifted by hand: kept as they are
             for o in ov.values() {
-                if let Override::Manual(d, st) = o {
-                    if d.kind == CpKind::Area && d.image_a == a && d.image_b == b {
+                if let Override::Manual(d, st) = o
+                    && d.kind == CpKind::Area && d.image_a == a && d.image_b == b {
                         STORE.keep_manual(d, st);
                         if let Some(c) = st.cp {
                             out.push(c);
                         }
                     }
-                }
             }
         }
     }
@@ -878,7 +875,7 @@ pub fn run(
     stats.patches_total = o.total;
     stats.patches_valid = o.valid;
     let mut rs: Vec<(String, usize)> = o.reasons.iter().map(|(k, v)| (k.to_string(), *v)).collect();
-    rs.sort_by(|a, b| b.1.cmp(&a.1));
+    rs.sort_by_key(|a| std::cmp::Reverse(a.1));
     stats.reasons = rs;
     stats.log.push(format!("measured {} patches, {} valid, {} control areas kept", o.total, o.valid, o.areas));
     if o.valid == 0 {
@@ -1060,7 +1057,7 @@ pub fn reoptimize(
     stats.shift_after = o.mean_shift;
     stats.diff_after = o.mean_diff;
     let mut rs: Vec<(String, usize)> = o.reasons.iter().map(|(k, v)| (k.to_string(), *v)).collect();
-    rs.sort_by(|a, b| b.1.cmp(&a.1));
+    rs.sort_by_key(|a| std::cmp::Reverse(a.1));
     stats.reasons = rs;
     stats.ms = t0.elapsed().as_millis();
     (rots, lenses, cps, stats)

@@ -55,11 +55,10 @@ pub(super) fn output_width(natural: f64, scale_pct: f32, o: &ExportOptions) -> u
 /// Write via `write(temp_path)` into a hidden temporary file next to `path` and move it into
 /// place only when finished and not cancelled, so a stop never leaves a half-written picture.
 fn write_atomically(path: &Path, stop: &dyn Fn() -> bool, write: impl FnOnce(&Path) -> Result<(), String>) -> Result<(), String> {
-    if let Some(d) = path.parent() {
-        if !d.as_os_str().is_empty() {
+    if let Some(d) = path.parent()
+        && !d.as_os_str().is_empty() {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
-    }
     if stop() {
         return Err(stitch::CANCELLED.into());
     }
@@ -212,15 +211,14 @@ impl PanoApp {
             return;
         }
         let (file_bytes, disk_free) = self.disk_estimate();
-        if let Some(free) = disk_free {
-            if file_bytes > free {
+        if let Some(free) = disk_free
+            && file_bytes > free {
                 self.set_status(
                     format!("The file needs up to {:.1} GB, but only {:.1} GB are free on the drive of {}. Choose a smaller size or another folder.", crate::sysmem::gb(file_bytes), crate::sysmem::gb(free), path.display()),
                     BAD,
                 );
                 return;
             }
-        }
         let sources = self.export_sources();
         let view = self.view.clone();
         let out_w = ew;
@@ -423,15 +421,14 @@ impl PanoApp {
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut self.out_path).desired_width(ui.available_width() - 90.0));
-                        if ui.button("Choose…").clicked() {
-                            if let Some(p) = rfd::FileDialog::new()
+                        if ui.button("Choose…").clicked()
+                            && let Some(p) = rfd::FileDialog::new()
                                 .add_filter(self.out_format.name(), &[self.out_format.ext()])
                                 .set_file_name(format!("panorama.{}", self.out_format.ext()))
                                 .save_file()
                             {
                                 self.out_path = p.to_string_lossy().to_string();
                             }
-                        }
                     });
                 });
                 ui.add_space(6.0);
@@ -486,11 +483,10 @@ impl PanoApp {
                         if ui.button("Open picture").clicked() {
                             let _ = open::that(&p);
                         }
-                        if ui.button("Show in folder").clicked() {
-                            if let Some(d) = p.parent() {
+                        if ui.button("Show in folder").clicked()
+                            && let Some(d) = p.parent() {
                                 let _ = open::that(d);
                             }
-                        }
                     });
                 }
             });
@@ -582,7 +578,7 @@ mod tests {
         save_output(&p, &rgba, 4, 4, OutFormat::Png, 90).unwrap();
         let before = std::fs::read(&p).unwrap();
         let calls = std::cell::Cell::new(0);
-        let r = save_output_stoppable(&p, &vec![0u8; 4 * 4 * 4], 4, 4, OutFormat::Png, 90, &|| {
+        let r = save_output_stoppable(&p, &[0u8; 4 * 4 * 4], 4, 4, OutFormat::Png, 90, &|| {
             calls.set(calls.get() + 1);
             calls.get() >= 2
         });

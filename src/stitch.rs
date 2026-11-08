@@ -52,7 +52,7 @@ impl Projection {
     }
     /// Plane coordinates -> view direction (x right, y down, z forward).
     #[inline]
-    pub fn to_dir(&self, x: f64, y: f64) -> Option<V3> {
+    pub fn to_dir(self, x: f64, y: f64) -> Option<V3> {
         match self {
             Projection::Equirectangular => {
                 if x.abs() > PI || y.abs() > FRAC_PI_2 {
@@ -84,7 +84,7 @@ impl Projection {
                 if r < 1e-12 {
                     return Some([0.0, 0.0, 1.0]);
                 }
-                let th = if *self == Projection::Stereographic { 2.0 * (r / 2.0).atan() } else { r };
+                let th = if self == Projection::Stereographic { 2.0 * (r / 2.0).atan() } else { r };
                 if th > PI {
                     return None;
                 }
@@ -95,6 +95,7 @@ impl Projection {
     }
     /// View direction -> plane coordinates.
     #[inline]
+    #[allow(clippy::wrong_self_convention)] // the projection itself is `self`; the name pairs with `to_dir`
     pub fn from_dir(&self, d: V3) -> Option<(f64, f64)> {
         let d = normalize(d);
         match self {
@@ -296,7 +297,7 @@ impl RenderPhoto {
         let yi = ((y + 0.5) * sy - 0.5).round().clamp(0.0, self.img.height() as f32 - 1.0) as u32;
         let p = self.img.get_pixel(xi, yi);
         let mx = p[0].max(p[1]).max(p[2]);
-        mx > CLIP_UPPER || mx < CLIP_LOWER
+        !(CLIP_LOWER..=CLIP_UPPER).contains(&mx)
     }
 
     /// What the person painted at this spot (`masks::NEUTRAL`, `POSITIVE`, `NEGATIVE`). Works with the full photo
@@ -626,11 +627,10 @@ pub fn compute_gains(photos: &[RenderPhoto], view: &PanoView) -> Vec<[f32; 3]> {
             let Some(d) = m.dir(i % w, i / w) else { return vec![] };
             let mut v = Vec::new();
             for (k, p) in photos.iter().enumerate() {
-                if let Some((x, y, wt)) = p.lookup(d) {
-                    if wt > 0.05 {
+                if let Some((x, y, wt)) = p.lookup(d)
+                    && wt > 0.05 {
                         v.push((k, p.photometry_at(sample_rgb_linear(&p.img, x, y), x, y)));
                     }
-                }
             }
             v
         })
@@ -1121,7 +1121,7 @@ fn compute_labels(
                 // a more detailed photo only counts where there is detail to gain: in flat areas (sky) its
                 // advantage fades out, so a zoomed-in photo does not cut a visible patch out of the sky
                 let q = if ro.prefer_detail && flat.0 < flat.1 {
-                    let tex = block_texture(&p, &m, px, py, bsz, w, h, (sx, sy));
+                    let tex = block_texture(&p, m, px, py, bsz, w, h, (sx, sy));
                     let t = ((tex - flat.0) / (flat.1 - flat.0)).clamp(0.0, 1.0);
                     qual[i].powf(t)
                 } else {

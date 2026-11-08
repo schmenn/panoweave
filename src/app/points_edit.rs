@@ -102,19 +102,17 @@ impl PanoApp {
             self.delete_selection();
             return;
         }
-        if let Some(k) = self.pe.selected {
-            if self.cps.get(k).is_some_and(|c| c.locked) {
+        if let Some(k) = self.pe.selected
+            && self.cps.get(k).is_some_and(|c| c.locked) {
                 self.set_status("This point is protected: press L (or the lock button) to unlock it first.", WARN);
                 return;
             }
-        }
-        if let Some(k) = self.pe.selected.take() {
-            if k < self.cps.len() {
+        if let Some(k) = self.pe.selected.take()
+            && k < self.cps.len() {
                 self.edit_cps("deleting a point", |s| {
                     s.cps.remove(k);
                 });
             }
-        }
     }
 
     /// Removes the points at `idx` (any order, duplicates allowed) as one undo step. Protected
@@ -174,8 +172,8 @@ impl PanoApp {
                 let pn = self.to_norm(this, p);
                 if let Some((guess, j)) = self.predict(this, other, p) {
                     let r = self.placing_radius(other);
-                    if let Some((pos, v)) = self.finetune(this, p, other, guess, j, r) {
-                        if v >= guided::FINETUNE_MIN_NCC {
+                    if let Some((pos, v)) = self.finetune(this, p, other, guess, j, r)
+                        && v >= guided::FINETUNE_MIN_NCC {
                             let on = self.to_norm(other, pos);
                             let o = pane.other();
                             if self.pe.views[o.i()].zoom > 1.2 {
@@ -185,7 +183,6 @@ impl PanoApp {
                             self.push_manual(pane, pn, on);
                             return;
                         }
-                    }
                 }
                 self.pe.pending = Some((pane, pn));
             }
@@ -259,8 +256,8 @@ impl PanoApp {
         }
         .unwrap_or_else(|| self.rotation_guess(fixed, pf, moving, pm));
         let r = self.local_radius(moving);
-        if let Some((q, v)) = self.finetune(fixed, pf, moving, pm, j, r) {
-            if v >= guided::FINETUNE_MIN_NCC {
+        if let Some((q, v)) = self.finetune(fixed, pf, moving, pm, j, r)
+            && v >= guided::FINETUNE_MIN_NCC {
                 let n = self.to_norm(moving, q);
                 let cp = &mut self.cps[k];
                 if cp.a == moving {
@@ -270,7 +267,6 @@ impl PanoApp {
                 }
                 self.set_status(format!("Point snapped to the exact spot (match {:.0} %).", v * 100.0), GOOD);
             }
-        }
     }
 
     pub(super) fn handle_pane_events(&mut self, events: Vec<PaneEvent>, geo: &[PaneGeo; 2], pts: &[(usize, P2, P2)]) {
@@ -352,15 +348,14 @@ impl PanoApp {
                             self.pe.moving = Some(pane);
                         }
                         // show the partner in the other photo
-                        if let Some(k) = self.pe.selected {
-                            if let Some((_, pa, pb)) = pts.iter().find(|t| t.0 == k) {
+                        if let Some(k) = self.pe.selected
+                            && let Some((_, pa, pb)) = pts.iter().find(|t| t.0 == k) {
                                 let other = pane.other();
                                 if self.pe.views[other.i()].zoom > 1.2 {
                                     let q = if other == Pane::A { *pa } else { *pb };
                                     self.pe.views[other.i()].center = Vec2::new(q.0 as f32 + 0.5, q.1 as f32 + 0.5);
                                 }
                             }
-                        }
                     }
                 }
                 PaneEvent::DragStart(pane, pos, primary, mods) => {
@@ -378,8 +373,8 @@ impl PanoApp {
                     self.pe.dragging = None;
                     self.pe.drag_before = None;
                     self.pe.panning = None;
-                    if primary {
-                        if let Some(k) = nearest(pane, pos) {
+                    if primary
+                        && let Some(k) = nearest(pane, pos) {
                             self.pe.selected = Some(k);
                             if !self.pe.sel.contains(&k) {
                                 self.pe.sel.clear();
@@ -394,7 +389,6 @@ impl PanoApp {
                             self.pe.moving = Some(pane);
                             continue;
                         }
-                    }
                     self.pe.panning = Some(pane);
                 }
                 PaneEvent::Drag(pane, pos, delta) => {

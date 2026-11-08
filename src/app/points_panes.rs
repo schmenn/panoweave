@@ -24,7 +24,7 @@ struct PaneDraw {
 }
 
 impl PaneDraw {
-    fn to_screen(&self, p: P2) -> Pos2 {
+    fn to_screen(self, p: P2) -> Pos2 {
         self.origin + Vec2::new((p.0 as f32 + 0.5) * self.scale, (p.1 as f32 + 0.5) * self.scale)
     }
 }
@@ -129,8 +129,8 @@ impl PanoApp {
     /// Edges around the point while it is being moved.
     fn paint_edges(&mut self, ui: &egui::Ui, painter: &egui::Painter, d: &PaneDraw, frame: Option<SelFrame>, pts: &[(usize, P2, P2)]) {
         let PaneDraw { pane, idx, origin, scale, .. } = *d;
-        if let (Some((dk, _)), Some(fr)) = (self.pe.dragging, frame) {
-            if let Some((_, pa, pb)) = pts.iter().find(|t| t.0 == dk) {
+        if let (Some((dk, _)), Some(fr)) = (self.pe.dragging, frame)
+            && let Some((_, pa, pb)) = pts.iter().find(|t| t.0 == dk) {
                 let p = if pane == Pane::A { *pa } else { *pb };
                 let (sf, sm) = guided::step_sizes(&fr.j);
                 let r = (self.tpl_size / 2) as f64;
@@ -158,7 +158,6 @@ impl PanoApp {
                 painter.rect_filled(Rect::from_min_size(rmin, Vec2::new(ew as f32 * scale, eh as f32 * scale)), 0.0, Color32::from_black_alpha(70));
                 painter.image(tid, Rect::from_min_size(rmin, Vec2::new(ew as f32 * scale, eh as f32 * scale)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
             }
-        }
     }
 
     /// The pair's points of one half.
@@ -209,8 +208,8 @@ impl PanoApp {
     /// Matching window and search area of the selected point.
     fn paint_selection_frames(&self, painter: &egui::Painter, d: &PaneDraw, frame: Option<SelFrame>, pts: &[(usize, P2, P2)]) {
         let PaneDraw { pane, idx, .. } = *d;
-        if let (Some(fr), Some(k)) = (frame, self.pe.selected) {
-            if let Some((_, pa, pb)) = pts.iter().find(|t| t.0 == k) {
+        if let (Some(fr), Some(k)) = (frame, self.pe.selected)
+            && let Some((_, pa, pb)) = pts.iter().find(|t| t.0 == k) {
                 let p = if pane == Pane::A { *pa } else { *pb };
                 let (sf, sm) = guided::step_sizes(&fr.j);
                 // half size = TemplateSize / 2 (integer), as the original draws it
@@ -250,7 +249,6 @@ impl PanoApp {
                     painter.text(label_at + Vec2::new(0.0, 3.0), Align2::LEFT_TOP, "match window", FontId::proportional(11.0), yellow);
                 }
             }
-        }
     }
 
     /// Patch click: rough clicks (orange), refined spot and suggestions.
@@ -265,28 +263,26 @@ impl PanoApp {
                 painter.line_segment([s - Vec2::new(14.0, 0.0), s + Vec2::new(14.0, 0.0)], Stroke::new(1.0, orange));
                 painter.line_segment([s - Vec2::new(0.0, 14.0), s + Vec2::new(0.0, 14.0)], Stroke::new(1.0, orange));
             }
-            if let Some(r) = &self.click.result {
-                if r.a == a && r.b == b {
+            if let Some(r) = &self.click.result
+                && r.a == a && r.b == b {
                     for sg in r.main.iter().chain(r.more.iter()) {
                         let q = if pane == Pane::A { sg.pa } else { sg.pb };
                         let col = if sg.accept { GOOD } else { Color32::from_gray(150) };
                         painter.circle_stroke(d.to_screen(q), if sg.main { 7.0 } else { 4.5 }, Stroke::new(if sg.main { 2.5 } else { 1.5 }, col));
                     }
                 }
-            }
         }
     }
 
     /// First click of a point being placed.
     fn paint_pending(&self, painter: &egui::Painter, d: &PaneDraw) {
         let PaneDraw { pane, idx, .. } = *d;
-        if let Some((pp, pn)) = self.pe.pending {
-            if pp == pane {
+        if let Some((pp, pn)) = self.pe.pending
+            && pp == pane {
                 let s = d.to_screen(self.to_px(idx, pn));
                 painter.circle_stroke(s, 9.0, Stroke::new(2.5, ACCENT));
                 painter.circle_filled(s, 2.0, ACCENT);
             }
-        }
     }
 
     /// The selection shape being dragged and the brush circle.
@@ -297,12 +293,11 @@ impl PanoApp {
         }
         let stroke = Stroke::new(1.6, ACCENT);
         let halo = Stroke::new(3.2, Color32::BLACK);
-        if tool == PointTool::SelectBrush {
-            if let Some(hp) = resp.hover_pos() {
+        if tool == PointTool::SelectBrush
+            && let Some(hp) = resp.hover_pos() {
                 painter.circle_stroke(hp, self.brush_radius(), halo);
                 painter.circle_stroke(hp, self.brush_radius(), stroke);
             }
-        }
         let Some(sd) = self.pe.sel_drag.as_ref().filter(|s| s.pane == d.pane) else { return };
         let pts: Vec<Pos2> = sd.path.iter().map(|p| d.to_screen(*p)).collect();
         match tool {
@@ -314,14 +309,13 @@ impl PanoApp {
                     painter.rect_stroke(r, 0.0, stroke, StrokeKind::Middle);
                 }
             }
-            PointTool::SelectLasso => {
-                if pts.len() > 1 {
+            PointTool::SelectLasso
+                if pts.len() > 1 => {
                     let mut closed = pts.clone();
                     closed.push(pts[0]);
                     painter.add(egui::Shape::line(closed.clone(), halo));
                     painter.add(egui::Shape::line(closed, stroke));
                 }
-            }
             _ => {}
         }
     }
@@ -329,9 +323,9 @@ impl PanoApp {
     /// Loupe while placing points.
     fn paint_loupe(&self, painter: &egui::Painter, d: &PaneDraw, resp: &egui::Response) {
         let PaneDraw { rect, idx, v, tex_id, img_rect, .. } = *d;
-        if self.pe.tool == PointTool::Add && v.zoom < 3.0 {
-            if let (Some(hp), Some(t)) = (resp.hover_pos(), tex_id) {
-                if img_rect.contains(hp) {
+        if self.pe.tool == PointTool::Add && v.zoom < 3.0
+            && let (Some(hp), Some(t)) = (resp.hover_pos(), tex_id)
+                && img_rect.contains(hp) {
                     let lr = Rect::from_min_size(rect.right_bottom() - Vec2::new(170.0, 170.0), Vec2::splat(160.0));
                     let u = (hp - img_rect.min) / img_rect.size();
                     // magnifier shows MAGNIFIER_WIDTH pixels of the full-size photo
@@ -344,8 +338,6 @@ impl PanoApp {
                     painter.line_segment([lr.center() - Vec2::new(10.0, 0.0), lr.center() + Vec2::new(10.0, 0.0)], Stroke::new(1.0, Color32::from_rgb(255, 80, 80)));
                     painter.line_segment([lr.center() - Vec2::new(0.0, 10.0), lr.center() + Vec2::new(0.0, 10.0)], Stroke::new(1.0, Color32::from_rgb(255, 80, 80)));
                 }
-            }
-        }
     }
 
     /// Scroll, click and drag input of one half.
@@ -353,20 +345,18 @@ impl PanoApp {
         if resp.hovered() {
             ui.ctx().set_cursor_icon(if self.pe.tool == PointTool::Add || self.pe.tool.is_select() { egui::CursorIcon::Crosshair } else { egui::CursorIcon::Default });
             let sc = ui.input(|i| i.smooth_scroll_delta.y);
-            if sc.abs() > 0.1 {
-                if let Some(hp) = resp.hover_pos() {
+            if sc.abs() > 0.1
+                && let Some(hp) = resp.hover_pos() {
                     events.push(PaneEvent::Zoom(pane, hp, (sc * 0.0025).exp()));
                 }
-            }
         }
         if resp.double_clicked() {
             events.push(PaneEvent::Fit(pane));
-        } else if resp.clicked() {
-            if let Some(p) = resp.interact_pointer_pos() {
+        } else if resp.clicked()
+            && let Some(p) = resp.interact_pointer_pos() {
                 let mods = ui.input(|i| i.modifiers);
                 events.push(PaneEvent::Click(pane, p, mods));
             }
-        }
         if resp.drag_started() {
             let primary = resp.drag_started_by(egui::PointerButton::Primary);
             if let Some(p) = resp.interact_pointer_pos() {
@@ -374,11 +364,10 @@ impl PanoApp {
                 events.push(PaneEvent::DragStart(pane, p, primary, mods));
             }
         }
-        if resp.dragged() {
-            if let Some(p) = resp.interact_pointer_pos() {
+        if resp.dragged()
+            && let Some(p) = resp.interact_pointer_pos() {
                 events.push(PaneEvent::Drag(pane, p, resp.drag_delta()));
             }
-        }
         if resp.drag_stopped() {
             events.push(PaneEvent::DragEnd);
         }

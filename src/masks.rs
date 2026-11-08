@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn a_polygon_is_filled_and_later_strokes_paint_over_earlier_ones() {
         let square = MaskStroke { kind: MaskKind::Negative, points: vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]], radius: 0.0, polygon: true };
-        let m = rasterize(&[square.clone()], 200, 200).unwrap();
+        let m = rasterize(std::slice::from_ref(&square), 200, 200).unwrap();
         assert_eq!(m.at(100.0, 100.0, 200.0, 200.0), NEGATIVE);
         assert_eq!(m.at(20.0, 100.0, 200.0, 200.0), NEUTRAL);
         // positive on top, then an eraser through the middle

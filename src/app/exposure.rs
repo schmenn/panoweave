@@ -180,11 +180,10 @@ impl PanoApp {
                     self.fusion_out_path = self.default_out_path("blended", "jpg");
                 }
                 ui.add(egui::TextEdit::singleline(&mut self.fusion_out_path).desired_width(420.0));
-                if ui.button("Choose…").clicked() {
-                    if let Some(p) = rfd::FileDialog::new().add_filter("Pictures", &["jpg", "png", "tif"]).set_file_name("blended.jpg").save_file() {
+                if ui.button("Choose…").clicked()
+                    && let Some(p) = rfd::FileDialog::new().add_filter("Pictures", &["jpg", "png", "tif"]).set_file_name("blended.jpg").save_file() {
                         self.fusion_out_path = p.to_string_lossy().to_string();
                     }
-                }
                 if primary_button(ui, "Export blended picture", !self.busy() && self.brackets.len() >= 2).clicked() {
                     self.run_fusion_export();
                 }

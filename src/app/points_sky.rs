@@ -89,11 +89,10 @@ impl PanoApp {
             (c.a, c.b, c.kind as u8, c.pa[0].to_bits(), c.pa[1].to_bits(), c.pb[0].to_bits(), c.pb[1].to_bits()).hash(&mut h);
         }
         let key = h.finish();
-        if let Some((k, d)) = &self.sky_cache {
-            if *k == key {
+        if let Some((k, d)) = &self.sky_cache
+            && *k == key {
                 return d.clone();
             }
-        }
         let photos: Vec<Option<PhotoSky>> = (0..self.photos.len())
             .map(|i| {
                 let (_, mask) = self.sky_masks.get(&self.sky_key(i))?;

@@ -2,8 +2,8 @@ use super::*;
 
 impl PanoApp {
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
-        if let Some(job) = &self.job {
-            if let Ok(msg) = job.rx.try_recv() {
+        if let Some(job) = &self.job
+            && let Ok(msg) = job.rx.try_recv() {
                 let elapsed = job.started.elapsed().as_millis();
                 let title = job.title.clone();
                 let was_cancelled = job.cancel.load(Ordering::Relaxed) || engine::cancelled();
@@ -71,9 +71,8 @@ impl PanoApp {
                 }
                 let _ = elapsed;
             }
-        }
-        if let Some(rx) = &self.preview_rx {
-            if let Ok((generation, img, view)) = rx.try_recv() {
+        if let Some(rx) = &self.preview_rx
+            && let Ok((generation, img, view)) = rx.try_recv() {
                 self.preview_rx = None;
                 self.preview_size = img.size;
                 match &mut self.preview_tex {
@@ -83,7 +82,6 @@ impl PanoApp {
                 self.preview_shown_gen = generation;
                 self.preview_view = Some(view);
             }
-        }
         while let Ok((i, name, img)) = self.full_rx.try_recv() {
             self.full_pending.remove(&i);
             // only if the photo at that place is still the same one
@@ -91,15 +89,14 @@ impl PanoApp {
                 self.full_tex.insert(i, ctx.load_texture(format!("full-{i}-{name}"), img, egui::TextureOptions::LINEAR));
             }
         }
-        if let Some(rx) = &self.fusion_rx {
-            if let Ok(img) = rx.try_recv() {
+        if let Some(rx) = &self.fusion_rx
+            && let Ok(img) = rx.try_recv() {
                 self.fusion_rx = None;
                 match &mut self.fusion_tex {
                     Some(t) => t.set(img, egui::TextureOptions::LINEAR),
                     None => self.fusion_tex = Some(ctx.load_texture("fusion", img, egui::TextureOptions::LINEAR)),
                 }
             }
-        }
         if self.fusion_dirty && self.mode == Mode::Exposure {
             self.request_fusion_preview();
         }

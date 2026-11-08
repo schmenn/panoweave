@@ -153,12 +153,11 @@ impl PanoApp {
                     pick = Some(i);
                 }
             }
-            if let Some(i) = pick {
-                if i != self.mk.sel {
+            if let Some(i) = pick
+                && i != self.mk.sel {
                     self.mk.sel = i;
                     self.mk.tool.cancel();
                 }
-            }
         });
     }
 

@@ -162,12 +162,11 @@ fn sample_overlap(from: &Geo, to: &Geo, n: usize) -> (f64, [f64; 4]) {
         for gx in 0..n {
             let p = ((gx as f64 + 0.5) * cw, (gy as f64 + 0.5) * ch);
             let d = from.px_to_dir(p);
-            if let Some(q) = to.dir_to_px(d) {
-                if to.inside(q, 0.0) {
+            if let Some(q) = to.dir_to_px(d)
+                && to.inside(q, 0.0) {
                     cnt += 1;
                     bx = [bx[0].min(p.0 - cw * 0.5), bx[1].min(p.1 - ch * 0.5), bx[2].max(p.0 + cw * 0.5), bx[3].max(p.1 + ch * 0.5)];
                 }
-            }
         }
     }
     (cnt as f64 / (n * n) as f64, bx)
@@ -755,7 +754,7 @@ mod tests {
         assert!(estimate_overlap(0, 1, &a, &geo(90.0), 24).is_none());
         // the sweep finds the same pairs as testing all of them
         let gs: Vec<Geo> = (0..12).map(|i| geo(i as f64 * 25.0)).collect();
-        let fast = overlaps(&gs, &vec![true; 12], 16, 0.05);
+        let fast = overlaps(&gs, &[true; 12], 16, 0.05);
         let mut all = 0;
         for i in 0..12 {
             for j in i + 1..12 {
