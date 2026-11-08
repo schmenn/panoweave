@@ -560,6 +560,42 @@ pub fn coverage(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usize) -> 
         .collect()
 }
 
+/// Experiments (`PW_MASK_MAP=<file.png>` on export): the preview with the masks drawn in – orange where
+/// some covering photo is masked "do not use", magenta where all are (a hole), green where one is
+/// masked "use". Shows where masks land in the panorama (a moving boat is elsewhere in every photo).
+pub fn mask_map(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usize) -> Vec<u8> {
+    let mut px = render_preview(photos, view, w, h, false, false);
+    let m = Mapper::new(view, view.bounds, w, h);
+    px.par_chunks_mut(w * 4).enumerate().for_each(|(py, row)| {
+        for x in 0..w {
+            let Some(d) = m.dir(x, py) else { continue };
+            let (mut neg, mut pos, mut any, mut used) = (false, false, false, false);
+            for p in photos {
+                if let Some((u, v, _)) = p.lookup(d) {
+                    any = true;
+                    match p.mask_at(u, v) {
+                        crate::masks::NEGATIVE => neg = true,
+                        crate::masks::POSITIVE => pos = true,
+                        _ => {}
+                    }
+                    used |= p.mask_at(u, v) != crate::masks::NEGATIVE;
+                }
+            }
+            // magenta: masked in every covering photo (a hole), orange: masked in some of them only
+            // (the others still show what is there), green: a photo is masked "use" here
+            let tint = if any && !used { Some([255u8, 0, 255]) } else if neg { Some([255, 150, 0]) } else if pos { Some([40, 255, 80]) } else { None };
+            if let Some(t) = tint {
+                let o = x * 4;
+                for k in 0..3 {
+                    row[o + k] = ((row[o + k] as u16 + t[k] as u16) / 2) as u8;
+                }
+                row[o + 3] = 255;
+            }
+        }
+    });
+    px
+}
+
 /// Share of the panorama (within the crop) that a photo covers but that every covering photo has
 /// masked "do not use": a hole the masks make. Checked on a small grid of `w` × `h` points.
 pub fn mask_holes(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usize) -> f32 {

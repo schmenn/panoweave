@@ -223,6 +223,18 @@ impl PanoApp {
                 );
                 return;
             }
+        if let Ok(f) = std::env::var("PW_MASK_MAP") {
+            // experiments: where the masks land in the panorama
+            // framed like the export (the crop), so it can be laid over the exported picture
+            let mut v = self.view.clone();
+            v.bounds = v.crop_bounds();
+            v.crop = [0.0, 1.0, 0.0, 1.0];
+            let (w, h) = (2400usize, ((2400.0 * eh as f64 / ew.max(1) as f64) as usize).max(8));
+            let px = stitch::mask_map(&self.render_photos(true), &v, w, h);
+            if let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, px) {
+                let _ = img.save(&f);
+            }
+        }
         let sources = self.export_sources();
         let view = self.view.clone();
         let out_w = ew;
