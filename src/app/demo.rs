@@ -56,7 +56,7 @@ impl PanoApp {
 
     /// `render` demo: export once (twice with PW_OUT2).
     fn demo_render(&mut self, d: &str) {
-        if d == "render" && !self.busy() && self.aligned && self.last_output.is_none() && !self.render_started {
+        if d == "render" && !self.busy() && !self.gains_pending() && self.aligned && self.last_output.is_none() && !self.render_started {
             self.render_started = true;
             // experiments: PW_SAVE_PROJECT=<file.pwproj> keeps the alignment, a .pwproj on the command line loads it again (no new alignment)
             if let Ok(p) = std::env::var("PW_SAVE_PROJECT") {
@@ -220,7 +220,7 @@ impl PanoApp {
         if let Some(path) = self.screenshot.clone() {
             ctx.request_repaint();
             let masks_ready = self.demo.as_deref() != Some("masks") || (self.mk.seam_rx.is_none() && (self.mk.seam_tex.is_some() || self.mk.seam_err.is_some()));
-            let settled = masks_ready && !self.busy() && self.preview_rx.is_none() && self.fusion_rx.is_none() && (self.step != Step::Frame || !self.preview_dirty);
+            let settled = masks_ready && !self.busy() && !self.gains_pending() && self.preview_rx.is_none() && self.fusion_rx.is_none() && (self.step != Step::Frame || !self.preview_dirty);
             let ready = if self.demo.is_some() { settled && self.frames > 120 && (self.demo.as_deref() != Some("render") || (self.last_output.is_some() && (std::env::var("PW_OUT2").is_err() || self.second_render_started))) && (self.aligned || self.mode == Mode::Exposure || self.demo.as_deref() == Some("photos")) } else { self.frames >= 120 };
             if ready && !self.shot_requested {
                 self.shot_requested = true;

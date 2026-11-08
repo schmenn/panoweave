@@ -141,6 +141,7 @@ The preview shows the whole panorama.
 - **Match brightness and colour between photos**: one correction per photo.
 - **Smooth brightness correction across each photo**: evens out sky gradients, vignetting and auto exposure inside each photo, so the outlines of single photos do not show as rectangles.
 - **Lens correction (response curve + vignetting per lens)**: an experiment, off by default. It helped on one test set and not on another.
+- The brightness values are worked out in the background (after aligning, opening a project, turning the view in step 4 or changing these switches; up to about a second with the lens correction). Meanwhile the preview keeps the old brightness and **Export panorama** is greyed out for that moment.
 - **Use the sharpest photo where photos overlap**, **Sharper resampling**: detail options, on by default.
 - **Smart seams** (off by default, only with Smooth seams): searches, once for the whole panorama, where the photos agree, so close objects seen from two sides (poles, lamps, people) are not cut in two.
 - **Masks** ("🖌 Edit masks…", only with Smooth seams): paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole. "Show seams" shows which photo wins where. Masks are saved in the project.

@@ -309,6 +309,9 @@ pub struct PanoApp {
     pub(super) preview_gen: u64,
     pub(super) preview_shown_gen: u64,
     pub(super) preview_rx: Option<Receiver<(u64, egui::ColorImage, PanoView)>>,
+    /// brightness update being worked out on a worker thread (`update_gains`), with its number
+    pub(super) gains_rx: Option<Receiver<(u64, super::pipeline::GainsUpdate)>>,
+    pub(super) gains_gen: u64,
     pub(super) preview_view: Option<PanoView>,
     pub(super) preview_dirty: bool,
     pub(super) show_outlines: bool,

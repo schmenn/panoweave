@@ -201,7 +201,7 @@ impl PanoApp {
     }
 
     pub(super) fn run_render(&mut self) {
-        if self.busy() || !self.aligned {
+        if self.busy() || !self.aligned || self.gains_pending() {
             return;
         }
         if self.out_path.trim().is_empty() {
@@ -488,7 +488,11 @@ impl PanoApp {
                     self.mask_button(ui);
                 });
                 ui.add_space(10.0);
-                if primary_button(ui, "Export panorama", !self.busy()).clicked() {
+                let r = primary_button(ui, "Export panorama", !self.busy() && !self.gains_pending());
+                if self.gains_pending() {
+                    r.clone().on_disabled_hover_text("Brightness matching is being worked out – a moment.");
+                }
+                if r.clicked() {
                     self.run_render();
                 }
                 if let Some(p) = self.last_output.clone() {

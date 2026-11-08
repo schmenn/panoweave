@@ -40,6 +40,8 @@ impl PanoApp {
             preview_gen: 0,
             preview_shown_gen: 0,
             preview_rx: None,
+            gains_rx: None,
+            gains_gen: 0,
             preview_view: None,
             preview_dirty: false,
             show_outlines: false,

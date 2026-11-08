@@ -196,6 +196,8 @@ impl PanoApp {
 
     /// State that names photos by their number; after removing a photo or starting anew it would point at other photos.
     fn forget_photo_numbers(&mut self) {
+        // a brightness update still being worked out belongs to the old photo numbers
+        self.gains_rx = None;
         self.graph_photo = None;
         self.click = ClickState::default();
         self.pair_summary = None;
