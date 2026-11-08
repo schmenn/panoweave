@@ -12,7 +12,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      # installs the version named in rust-toolchain.toml (the same as the CI)
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
       - run: cargo build --release
