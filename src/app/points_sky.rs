@@ -105,7 +105,7 @@ impl PanoApp {
     /// protected points stay; the status line says how many and why.
     pub(super) fn remove_sky_points(&mut self) {
         let found = self.sky_points();
-        let r = sky_points::removable(&self.cps, &found);
+        let r = sky_points::removable(&self.cps, &found, self.sky_cfg.include_manual);
         let n = r.remove.len();
         let note = sky_points::removal_note(&r);
         if n == 0 {
@@ -137,16 +137,19 @@ impl PanoApp {
             return;
         }
         let found = self.sky_points();
-        let r = sky_points::removable(&self.cps, &found);
+        let r = sky_points::removable(&self.cps, &found, self.sky_cfg.include_manual);
         ui.label(RichText::new(format!("{} points on sky or cloud", found.len())).small().color(if found.is_empty() { MUTED } else { WARN }));
+        ui.checkbox(&mut self.sky_cfg.include_manual, "include points placed by hand")
+            .on_hover_text("Also remove points you placed by hand. Protected points (🔒) always stay.");
         if ui
-            .add_enabled(!r.remove.is_empty() && !self.busy(), egui::Button::new(format!("🗑 Remove {}", r.remove.len())))
-            .on_hover_text("Removes the automatic points on sky or cloud (one undo step). Points placed by hand and protected points stay and are only marked.")
+            .add_enabled(!r.remove.is_empty() && !self.busy(), egui::Button::new(sky_points::button_text(&r)))
+            .on_hover_text("Removes the points on sky or cloud (one undo step). Protected points stay; points placed by hand only with \"include points placed by hand\".")
+            .on_disabled_hover_text("Nothing to remove: the points found are protected or placed by hand (tick \"include points placed by hand\"), or none were found.")
             .clicked()
         {
             self.remove_sky_points();
         }
-        if r.skipped_manual + r.skipped_protected > 0 {
+        if !r.remove.is_empty() && r.skipped_manual + r.skipped_protected > 0 {
             ui.label(RichText::new(format!("{} stay (by hand or protected)", r.skipped_manual + r.skipped_protected)).small().color(MUTED));
         }
         if list {
@@ -192,7 +195,7 @@ mod tests {
         let mut app = setup();
         let found = app.sky_points();
         assert_eq!(found.iter().map(|s| s.point).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
-        let r = sky_points::removable(&app.cps, &found);
+        let r = sky_points::removable(&app.cps, &found, false);
         assert_eq!((r.remove, r.skipped_manual, r.skipped_protected), (vec![0, 1], 1, 1));
     }
 
@@ -220,6 +223,19 @@ mod tests {
         app.undo_last();
         assert_eq!(app.cps.len(), 5);
         assert!(!app.undo.can_undo(), "one undo step brings everything back");
+    }
+
+    #[test]
+    fn with_the_option_hand_placed_points_go_too_but_protected_stay() {
+        let mut app = setup();
+        app.sky_cfg.include_manual = true;
+        app.remove_sky_points();
+        // left: the protected sky point and the ground point
+        assert_eq!(app.cps.len(), 2);
+        assert!(app.cps.iter().all(|c| !c.manual));
+        assert!(app.cps.iter().any(|c| c.locked));
+        app.undo_last();
+        assert_eq!(app.cps.len(), 5);
     }
 
     #[test]

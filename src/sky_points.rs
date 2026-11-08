@@ -21,11 +21,13 @@ pub struct SkyConfig {
     pub enabled: bool,
     /// a point is on sky or cloud when the share of sky around it in one of its two photos is above this
     pub threshold: f32,
+    /// also offer points placed by hand for removal (protected points stay in any case)
+    pub include_manual: bool,
 }
 
 impl Default for SkyConfig {
     fn default() -> Self {
-        SkyConfig { enabled: false, threshold: features::CLOUD_THRESHOLD }
+        SkyConfig { enabled: false, threshold: features::CLOUD_THRESHOLD, include_manual: false }
     }
 }
 
@@ -90,20 +92,36 @@ pub struct Removal {
     pub skipped_protected: usize,
 }
 
-/// Splits the found points into those that may be removed and those that stay (by hand or protected).
-pub fn removable(cps: &[ControlPoint], found: &[SkyPoint]) -> Removal {
+/// Splits the found points into those that may be removed and those that stay: protected points
+/// always, points placed by hand unless `include_manual`.
+pub fn removable(cps: &[ControlPoint], found: &[SkyPoint], include_manual: bool) -> Removal {
     let mut r = Removal::default();
     for s in found {
         let Some(c) = cps.get(s.point) else { continue };
         if c.locked {
             r.skipped_protected += 1;
-        } else if c.manual {
+        } else if c.manual && !include_manual {
             r.skipped_manual += 1;
         } else {
             r.remove.push(s.point);
         }
     }
     r
+}
+
+/// Text of the remove button: "Remove n", or why there is nothing to remove ("0 to remove (2 by hand, 1 protected)").
+pub fn button_text(r: &Removal) -> String {
+    if !r.remove.is_empty() {
+        return format!("🗑 Remove {}", r.remove.len());
+    }
+    let mut why = Vec::new();
+    if r.skipped_manual > 0 {
+        why.push(format!("{} by hand", r.skipped_manual));
+    }
+    if r.skipped_protected > 0 {
+        why.push(format!("{} protected", r.skipped_protected));
+    }
+    if why.is_empty() { "0 to remove".to_string() } else { format!("0 to remove ({})", why.join(", ")) }
 }
 
 /// Text for the status line after a removal.
@@ -113,7 +131,7 @@ pub fn removal_note(r: &Removal) -> String {
         s += &format!(" {} protected on sky or cloud kept (protected points are never removed).", r.skipped_protected);
     }
     if r.skipped_manual > 0 {
-        s += &format!(" {} placed by hand kept (only automatic points are removed).", r.skipped_manual);
+        s += &format!(" {} placed by hand kept (tick \"include points placed by hand\" to remove them too).", r.skipped_manual);
     }
     s
 }
@@ -196,12 +214,12 @@ mod tests {
         // near the sky edge (y ~ 40): part of the circle around the point lies on the ground
         let cps = vec![cp(0, 1, (60.0, 42.0), (60.0, 42.0))];
         let ph = view(&m);
-        let low = find(&cps, &ph, &SkyConfig { enabled: true, threshold: 0.0 });
+        let low = find(&cps, &ph, &SkyConfig { enabled: true, threshold: 0.0, ..SkyConfig::default() });
         assert_eq!(low.len(), 1, "edge point must have a non-zero score");
         let sc = low[0].score;
         assert!(sc > 0.0 && sc < 1.0, "score {sc}");
-        assert!(find(&cps, &ph, &SkyConfig { enabled: true, threshold: sc + 0.01 }).is_empty());
-        assert_eq!(find(&cps, &ph, &SkyConfig { enabled: true, threshold: sc - 0.01 }).len(), 1);
+        assert!(find(&cps, &ph, &SkyConfig { enabled: true, threshold: sc + 0.01, ..SkyConfig::default() }).is_empty());
+        assert_eq!(find(&cps, &ph, &SkyConfig { enabled: true, threshold: sc - 0.01, ..SkyConfig::default() }).len(), 1);
     }
 
     #[test]
@@ -245,13 +263,24 @@ mod tests {
         cps[3].locked = true;
         let found = find(&cps, &view(&m), &on());
         assert_eq!(found.len(), 4);
-        let r = removable(&cps, &found);
+        let r = removable(&cps, &found, false);
         assert_eq!(r.remove, vec![0]);
         assert_eq!(r.skipped_manual, 1);
         assert_eq!(r.skipped_protected, 2);
         let note = removal_note(&r);
         assert!(note.contains("2 protected") && note.contains("1 placed by hand"), "{note}");
         assert_eq!(removal_note(&Removal::default()), "");
+        // with "include points placed by hand" the hand point goes too, protected ones still stay
+        let r = removable(&cps, &found, true);
+        assert_eq!((r.remove, r.skipped_manual, r.skipped_protected), (vec![0, 1], 0, 2));
+    }
+
+    #[test]
+    fn button_says_why_nothing_can_be_removed() {
+        assert_eq!(button_text(&Removal { remove: vec![3, 4], ..Default::default() }), "🗑 Remove 2");
+        assert_eq!(button_text(&Removal::default()), "0 to remove");
+        assert_eq!(button_text(&Removal { remove: vec![], skipped_manual: 2, skipped_protected: 1 }), "0 to remove (2 by hand, 1 protected)");
+        assert_eq!(button_text(&Removal { remove: vec![], skipped_manual: 0, skipped_protected: 1 }), "0 to remove (1 protected)");
     }
 
     #[test]
