@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- User guide (`docs/GUIDE.md`): quick start, how to take photos that stitch well, every step and its settings, the point editor, the extra windows, exposure blend, projects, pitfalls with solutions, what the messages mean, keys and mouse. With screenshots; linked from the README and the help window.
+
 ### Fixed
 - TIFF export: the fourth channel is now marked as transparency (`ExtraSamples` = unassociated alpha); other programs may have shown the area outside the panorama black or as an unnamed extra channel.
 - JPEG/TIFF export: the end of the file is written and checked before the export reports success (before, an error at the very end, e.g. a full disk, was lost and a cut-off file kept). When the JPEG encoder fails, the message names the real cause (e.g. disk full) instead of "the JPEG encoder stopped unexpectedly".

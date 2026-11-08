@@ -70,3 +70,6 @@ pub(super) const UNDO_DEPTH: usize = 20;
 
 /// Automated screenshots give up waiting after this long.
 pub(super) const DEMO_TIMEOUT_S: u64 = 300;
+
+/// The user guide (docs/GUIDE.md), opened from the help window.
+pub(super) const GUIDE_URL: &str = "https://github.com/schmenn/panoweave/blob/main/docs/GUIDE.md";
