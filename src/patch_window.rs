@@ -466,7 +466,7 @@ fn colour_image(w: usize, h: usize, px: &[u8]) -> egui::ColorImage {
 fn grey_plane(v: &[f32], m: &[bool], s: usize) -> egui::ColorImage {
     let mut vals: Vec<f32> = v.iter().zip(m).filter(|(_, ok)| **ok).map(|(x, _)| *x).collect();
     let (lo, hi) = if vals.len() > 4 {
-        vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        vals.sort_by(|a, b| a.total_cmp(b));
         (vals[vals.len() / 100], vals[vals.len() * 99 / 100])
     } else {
         (0.0, 1.0)
@@ -781,7 +781,7 @@ impl PatchWindow {
             self.median_mag = f32::NAN;
         } else {
             self.mean_mag = mags.iter().sum::<f32>() / mags.len() as f32;
-            mags.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            mags.sort_by(|a, b| a.total_cmp(b));
             self.median_mag = mags[mags.len() / 2];
         }
         self.data = data;
@@ -857,7 +857,8 @@ impl PatchWindow {
             Some((c, asc)) => {
                 let mut keyed: Vec<(f64, u32, usize)> = rows.iter().map(|&i| (self.sort_value(i, c), self.data[i].id, i)).collect();
                 keyed.sort_by(|a, b| {
-                    let o = a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.cmp(&b.1));
+                    // total order: a NaN score (e.g. after a shift by hand) must not make the sort panic
+                    let o = a.0.total_cmp(&b.0).then(a.1.cmp(&b.1));
                     if asc { o } else { o.reverse() }
                 });
                 rows = keyed.into_iter().map(|k| k.2).collect();
@@ -930,6 +931,7 @@ impl PatchWindow {
 
     fn commit_shift(&mut self, id: u32, shift: (f32, f32)) {
         let conf = self.s.manual_conf;
+        let outside = std::sync::atomic::AtomicBool::new(false);
         STORE.edit(&[id], |d, st| {
             let (dx, dy) = shift;
             st.manual = true;
@@ -941,13 +943,10 @@ impl PatchWindow {
             }
             st.confidence = conf;
             st.cp = fine_align::manual_cp(d, st, dx, dy, conf);
-            if st.status != Status::DisabledManual {
-                st.status = Status::Valid;
-                st.reason = "shifted by hand";
-            }
-            st.changed = Some(Change::Moved);
+            outside.store(st.cp.is_none(), std::sync::atomic::Ordering::Relaxed);
+            status_after_shift(st);
         });
-        if st_missing_cp(&self.data, &self.by_id, id) {
+        if outside.into_inner() {
             self.msg = format!("Patch {id}: the shifted spot lies outside photo B – it cannot be used.");
             eprintln!("{}", self.msg);
         }
@@ -2087,10 +2086,14 @@ impl PatchWindow {
     }
 }
 
-fn st_missing_cp(data: &[Arc<PatchData>], by_id: &HashMap<u32, usize>, id: u32) -> bool {
-    let Some(&i) = by_id.get(&id) else { return false };
-    let d = &data[i];
-    d.geo_b.dir_to_px(d.plane.dir(0.0, 0.0)).is_none()
+/// Status of a patch after it was shifted by hand. Without a control pair at the shifted spot (it
+/// lies outside photo B) the patch is rejected with that reason instead of being shown as valid
+/// although the optimisation cannot use it. A disabled patch stays disabled.
+fn status_after_shift(st: &mut PatchState) {
+    if st.status != Status::DisabledManual {
+        (st.status, st.reason) = if st.cp.is_none() { (Status::Rejected, ps::REASON_SHIFTED_OUT) } else { (Status::Valid, "shifted by hand") };
+    }
+    st.changed = Some(Change::Moved);
 }
 
 /// Brightness gain of a photo (1 when unknown).
@@ -2215,5 +2218,40 @@ mod screen_tests {
         assert!(on_screen([100.0, 100.0], [800.0, 600.0], 1.0));
         assert!(!on_screen([-32000.0, -32000.0], [800.0, 600.0], 1.0));
         assert!(!on_screen([60000.0, 100.0], [800.0, 600.0], 1.0));
+    }
+
+    fn st(status: Status, cp: Option<crate::align::ControlPoint>) -> PatchState {
+        PatchState {
+            status,
+            reason: ps::REASON_OK,
+            prev_status: status,
+            prev_reason: ps::REASON_OK,
+            manual: true,
+            dx: 0.0,
+            dy: 0.0,
+            score: f32::NAN,
+            confidence: 1.0,
+            cp,
+            cp_auto: None,
+            changed: None,
+            auto_status: status,
+            auto_reason: ps::REASON_OK,
+        }
+    }
+
+    /// A patch shifted out of photo B gets no control pair; it must not show as valid.
+    #[test]
+    fn a_patch_shifted_outside_photo_b_is_rejected() {
+        let c = crate::align::ControlPoint::new(0, 1, [0.0, 0.0], [0.0, 0.0], false);
+        let mut ok = st(Status::Valid, Some(c));
+        status_after_shift(&mut ok);
+        assert_eq!((ok.status, ok.reason), (Status::Valid, "shifted by hand"));
+        let mut out = st(Status::Valid, None);
+        status_after_shift(&mut out);
+        assert_eq!((out.status, out.reason), (Status::Rejected, ps::REASON_SHIFTED_OUT));
+        let mut off = st(Status::DisabledManual, None);
+        status_after_shift(&mut off);
+        assert_eq!(off.status, Status::DisabledManual);
+        assert_eq!(off.changed, Some(Change::Moved));
     }
 }

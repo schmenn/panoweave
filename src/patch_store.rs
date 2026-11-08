@@ -39,6 +39,7 @@ pub const MEMORY_WARN_BYTES: usize = 1 << 30;
 /// Reason of valid automatic areas that were not used because of the per-pair limit.
 pub const REASON_AREA_LIMIT: &str = "not used (area limit for this pair)";
 pub const REASON_OK: &str = "ok";
+pub const REASON_SHIFTED_OUT: &str = "shifted by hand outside photo B (cannot be used)";
 pub const REASON_B_SKIPPED: &str = "photo B not sampled (the template had too little texture, so the search was skipped)";
 
 /// Identity of a patch across rounds: the two photos and the spot in photo A.
@@ -307,20 +308,25 @@ pub struct Store {
 
 /// The one store. Its locks are taken with `unwrap_or_else(PoisonError::into_inner)`: a panic in one matching
 /// worker must not take the GUI (which reads the store every frame) and every later round down with it.
-pub static STORE: LazyLock<Store> = LazyLock::new(|| Store {
-    round: RwLock::new(Round::default()),
-    version: AtomicU64::new(1),
-    next_id: AtomicU32::new(1),
-    listening: AtomicBool::new(false),
-    animate: AtomicBool::new(true),
-    sample_every: AtomicU32::new(SAMPLE_EVERY_DEFAULT),
-    delay_ms: AtomicU32::new(FRAME_DELAY_DEFAULT_MS),
-    focus: AtomicU32::new(0),
-    tx: Mutex::new(None),
-    rounds: AtomicU64::new(0),
-});
+pub static STORE: LazyLock<Store> = LazyLock::new(Store::new);
 
 impl Store {
+    /// An empty store (the app uses the one `STORE`; tests make their own).
+    fn new() -> Store {
+        Store {
+            round: RwLock::new(Round::default()),
+            version: AtomicU64::new(1),
+            next_id: AtomicU32::new(1),
+            listening: AtomicBool::new(false),
+            animate: AtomicBool::new(true),
+            sample_every: AtomicU32::new(SAMPLE_EVERY_DEFAULT),
+            delay_ms: AtomicU32::new(FRAME_DELAY_DEFAULT_MS),
+            focus: AtomicU32::new(0),
+            tx: Mutex::new(None),
+            rounds: AtomicU64::new(0),
+        }
+    }
+
     // ---------------- window side ----------------
 
     /// The window opens: events start flowing (thread-safe queue, read in the GUI thread).
@@ -507,6 +513,10 @@ impl Store {
         {
             let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             if r.phase != Phase::Running {
+                // the round is over: still give the live focus back, or no patch is followed again
+                if focused {
+                    self.focus.store(0, Ordering::Release);
+                }
                 return;
             }
             r.bytes += data.bytes();
@@ -537,8 +547,18 @@ impl Store {
         let mut r = self.round.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut delta = (0isize, 0isize);
         if let Some(Some((_, st))) = r.slots.get_mut(i) {
-            st.cp = cp;
             st.cp_auto = cp;
+            // shifted by hand while the round was still running: the person's shift and status stay,
+            // only the automatic result is updated
+            if st.manual {
+                if let Some(reason) = rejected_reason
+                    && st.auto_status == Status::Valid {
+                        st.auto_status = Status::Rejected;
+                        st.auto_reason = reason;
+                    }
+                return;
+            }
+            st.cp = cp;
             if let Some(reason) = rejected_reason
                 && st.auto_status == Status::Valid {
                     st.auto_status = Status::Rejected;
@@ -557,7 +577,9 @@ impl Store {
     }
     /// Re-insert a record that was shifted by hand (not matched again) under a new id.
     pub fn keep_manual(&self, d: &PatchData, s: &PatchState) -> u32 {
-        let (id, _) = self.start_patch(d.levels, d.image_a, d.image_b);
+        // the live focus taken here is given back by finish_patch (before, it was kept for ever and
+        // the live preview stopped after a restart with patches shifted by hand)
+        let (id, focused) = self.start_patch(d.levels, d.image_a, d.image_b);
         let data = PatchData {
             id,
             image_a: d.image_a,
@@ -585,7 +607,7 @@ impl Store {
         };
         let mut st = s.clone();
         st.changed = None;
-        self.finish_patch(data, st, false);
+        self.finish_patch(data, st, focused);
         id
     }
 
@@ -789,6 +811,102 @@ mod tests {
         assert!(m && (v - 0.5).abs() < 0.01);
         let (v, _) = dec(enc(0.0, true));
         assert!(v.abs() < 1e-6);
+    }
+
+    fn data(id: u32) -> PatchData {
+        let geo = crate::fine_align::Geo { lens: crate::align::Lens::from_hfov_deg(60.0), rot: crate::geometry::IDENTITY, w: 100.0, h: 100.0 };
+        PatchData {
+            id,
+            image_a: 0,
+            image_b: 1,
+            key: key_of(0, 1, [0.1, 0.2]),
+            pa: [0.1, 0.2],
+            kind: CpKind::Area,
+            hand_point: false,
+            dir: [0.0, 0.0, 1.0],
+            cfg: MatchConfig::default(),
+            auto: MatchResult::default(),
+            uniqueness: 2.0,
+            texture: 1.0,
+            diff_before: 0.0,
+            a_size: 2,
+            a: vec![0; 4],
+            b_size: 2,
+            b: None,
+            map_radius: 0,
+            map: Vec::new(),
+            levels: 1,
+            plane: crate::fine_align::Plane { d: [0.0, 0.0, 1.0], ex: [1.0, 0.0, 0.0], ey: [0.0, 1.0, 0.0], scale: 0.01 },
+            geo_a: geo,
+            geo_b: geo,
+        }
+    }
+
+    fn state(status: Status) -> PatchState {
+        PatchState {
+            status,
+            reason: REASON_OK,
+            prev_status: status,
+            prev_reason: REASON_OK,
+            manual: false,
+            dx: 0.0,
+            dy: 0.0,
+            score: 0.9,
+            confidence: 1.0,
+            cp: None,
+            cp_auto: None,
+            changed: None,
+            auto_status: status,
+            auto_reason: REASON_OK,
+        }
+    }
+
+    fn cp(x: f64) -> crate::align::ControlPoint {
+        crate::align::ControlPoint::new(0, 1, [x, 0.0], [x, 0.0], false)
+    }
+
+    /// A patch shifted by hand is put back into the next round with `keep_manual`; the live
+    /// preview's focus taken for it must be given back (before, the preview stopped for good).
+    #[test]
+    fn keeping_a_hand_shifted_patch_gives_the_live_focus_back() {
+        let s = Store::new();
+        let _rx = s.subscribe();
+        s.begin_round(2, "test", true);
+        let mut st = state(Status::Valid);
+        st.manual = true;
+        s.keep_manual(&data(1), &st);
+        assert_eq!(s.focus.load(Ordering::Acquire), 0);
+        // the next patch can be followed again
+        let (_, focused) = s.start_patch(1, 0, 1);
+        assert!(focused);
+    }
+
+    /// A shift made by hand while the round still runs is not overwritten when the round decides
+    /// what the patch becomes; only the automatic result is updated.
+    #[test]
+    fn finalize_keeps_a_shift_made_by_hand_during_the_round() {
+        let s = Store::new();
+        s.begin_round(1, "test", true);
+        let (id, _) = s.start_patch(1, 0, 1);
+        s.finish_patch(data(id), state(Status::Valid), false);
+        let hand = cp(0.3);
+        s.edit(&[id], |_, st| {
+            st.manual = true;
+            st.cp = Some(hand);
+        });
+        s.finalize(id, Some(cp(0.1)), Some(REASON_AREA_LIMIT));
+        let (_, _, states) = s.snapshot();
+        let st = &states[0];
+        assert_eq!(st.cp.map(|c| c.pa), Some(hand.pa), "the hand shift stays");
+        assert_eq!(st.status, Status::Valid, "and so does its status");
+        assert_eq!(st.cp_auto.map(|c| c.pa), Some([0.1, 0.0]), "the automatic result is still recorded");
+        assert_eq!(st.auto_status, Status::Rejected);
+        // without a hand shift the round's decision is taken over as before
+        let (id2, _) = s.start_patch(1, 0, 1);
+        s.finish_patch(data(id2), state(Status::Valid), false);
+        s.finalize(id2, None, Some(REASON_AREA_LIMIT));
+        let (_, _, states) = s.snapshot();
+        assert_eq!(states[1].status, Status::Rejected);
     }
 
     /// With recording off every patch has id 0; finishing it must be a no-op, not an underflow.
