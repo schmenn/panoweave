@@ -10,17 +10,23 @@ pub(super) fn setup_style(ctx: &egui::Context) {
         v.panel_fill = PANEL;
         v.window_fill = CARD;
         v.extreme_bg_color = BG;
-        v.faint_bg_color = Color32::from_rgb(32, 34, 40);
+        v.faint_bg_color = FAINT;
         v.selection.bg_fill = ACCENT_DARK;
-        v.selection.stroke = Stroke::new(1.0, ACCENT);
+        // text on a selected item and on the progress bar: white on the dark accent (light violet was hard to read)
+        v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
         v.hyperlink_color = ACCENT;
         for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
             w.corner_radius = CornerRadius::same(RADIUS);
         }
         v.menu_corner_radius = CornerRadius::same(RADIUS_CARD);
-        v.widgets.inactive.weak_bg_fill = Color32::from_rgb(48, 52, 61);
-        v.widgets.hovered.weak_bg_fill = Color32::from_rgb(60, 65, 77);
+        v.widgets.inactive.weak_bg_fill = WIDGET;
+        v.widgets.hovered.weak_bg_fill = WIDGET_HOVER;
         v.widgets.active.weak_bg_fill = ACCENT_DARK;
+        // no frame lines on buttons, also not under the mouse or while pressed: the fill shows the state
+        // (egui draws grey / white ones by default, so some buttons looked framed and others not)
+        for w in [&mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+            w.bg_stroke = Stroke::NONE;
+        }
         v.window_corner_radius = CornerRadius::same(RADIUS_CARD);
         s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(14.5));
         s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(14.5));
@@ -38,7 +44,6 @@ pub(super) fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> eg
         enabled,
         egui::Button::new(RichText::new(text).color(Color32::WHITE).strong().size(BIG_FONT))
             .fill(ACCENT_DARK)
-            .stroke(Stroke::new(1.0, ACCENT))
             .min_size(Vec2::new(0.0, BIG_H)),
     )
 }
@@ -264,6 +269,51 @@ mod tests {
         assert!(bad.is_empty(), "use RADIUS / RADIUS_CARD / RADIUS_CANVAS instead of:
 {}", bad.join("
 "));
+    }
+
+    /// Colours come from the palette in `consts.rs`; a colour written as numbers anywhere else in the UI
+    /// fails here. Colours computed from other colours or from picture data are allowed.
+    #[test]
+    fn no_hand_written_colours_in_the_ui() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<_> = std::fs::read_dir(root.join("app")).unwrap().map(|e| e.unwrap().path()).collect();
+        files.extend(["patch_window.rs", "patch_viz.rs"].map(|f| root.join(f)));
+        files.retain(|f| f.extension().is_some_and(|e| e == "rs") && !f.ends_with("consts.rs"));
+        let calls = ["Color32::from_rgb(", "Color32::from_gray(", "Color32::from_rgba_unmultiplied(", "Color32::from_rgba_premultiplied(", "Color32::from_rgba_unmultiplied_const("];
+        let mut bad = Vec::new();
+        for f in &files {
+            let all = std::fs::read_to_string(f).unwrap();
+            let src = all.split("#[cfg(test)]").next().unwrap_or_default();
+            for call in calls {
+                for (at, _) in src.match_indices(call) {
+                    let args = call_args(src, at + call.len());
+                    if colour_is_written(&args) {
+                        let line = src[..at].lines().count();
+                        bad.push(format!("{}:{line}: {call}{})", f.file_name().unwrap().to_string_lossy(), args.join(", ")));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "use a colour from consts.rs (or add one there) instead of:
+{}", bad.join("
+"));
+    }
+
+    /// A colour is "written" when its colour channels (not the alpha) are plain numbers.
+    fn colour_is_written(args: &[String]) -> bool {
+        let channels = if args.len() == 1 { args } else { &args[..args.len().min(3)] };
+        !channels.is_empty() && channels.iter().all(|a| a.trim_end_matches("u8").trim().parse::<u32>().is_ok())
+    }
+
+    #[test]
+    fn the_colour_check_tells_written_from_computed_colours() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(colour_is_written(&s(&["48", "52", "61"])));
+        assert!(colour_is_written(&s(&["90"])));
+        assert!(colour_is_written(&s(&["255", "80", "80", "160"])));
+        assert!(!colour_is_written(&s(&["c.r()", "c.g()", "c.b()", "alpha"])));
+        assert!(!colour_is_written(&s(&["MASK_RED.r()", "MASK_RED.g()", "MASK_RED.b()", "MASK_ALPHA"])));
+        assert!(!colour_is_written(&s(&["(c[0] * 255.0) as u8", "(c[1] * 255.0) as u8", "(c[2] * 255.0) as u8"])));
     }
 
     #[test]

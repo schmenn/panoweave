@@ -274,13 +274,13 @@ impl PanoApp {
                         if sel {
                             p.rect_filled(rect, f32::from(RADIUS), ACCENT_DARK);
                         } else if resp.hovered() {
-                            p.rect_filled(rect, f32::from(RADIUS), Color32::from_rgb(48, 52, 61));
+                            p.rect_filled(rect, f32::from(RADIUS), WIDGET);
                         } else if dup.is_some() {
-                            p.rect_filled(rect, 0.0, Color32::from_rgb(64, 48, 24));
+                            p.rect_filled(rect, 0.0, WARN_SOFT);
                         } else if sky_of.contains_key(&k) {
-                            p.rect_filled(rect, 0.0, super::points_sky::SKY_ROW);
+                            p.rect_filled(rect, 0.0, SKY_ROW);
                         } else if r % 2 == 1 {
-                            p.rect_filled(rect, 0.0, Color32::from_rgb(32, 34, 40));
+                            p.rect_filled(rect, 0.0, FAINT);
                         }
                         let fa = self.full_px(c.a, c.pa);
                         let fb = self.full_px(c.b, c.pb);
@@ -549,7 +549,7 @@ impl PanoApp {
                         }
                         let sh = Vec2::new(c.shift[0], c.shift[1]) * (10.0 * self.ov_zoom / ppp);
                         let t = c.conf.clamp(0.0, 1.0);
-                        let col = Color32::from_rgb((255.0 * (1.0 - t)) as u8, (255.0 * t) as u8, 60);
+                        let col = lerp_color(BAD, GOOD, t);
                         painter.arrow(p, sh, Stroke::new(1.5, col));
                         if c.kind != CpKind::Point {
                             painter.rect_stroke(Rect::from_center_size(p, Vec2::splat(5.0)), 0.0, Stroke::new(1.0, col), StrokeKind::Middle);
@@ -617,7 +617,7 @@ impl PanoApp {
                 let size = Vec2::new(ui.available_width(), 330.0);
                 let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
                 let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, f32::from(RADIUS_CARD), Color32::from_rgb(24, 26, 31));
+                painter.rect_filled(rect, f32::from(RADIUS_CARD), CANVAS);
                 let inner = rect.shrink(28.0);
                 // positions: from the alignment (direction of each photo's centre), else a circle
                 let main_group: Vec<usize> = groups.iter().max_by_key(|g| g.len()).cloned().unwrap_or_default();
@@ -675,7 +675,7 @@ impl PanoApp {
                         Some(o) => format!("{c} · {:.0}%", o * 100.0),
                         None => c.to_string(),
                     };
-                    painter.text(mid, Align2::CENTER_CENTER, label, FontId::proportional(10.0), Color32::from_gray(220));
+                    painter.text(mid, Align2::CENTER_CENTER, label, FontId::proportional(10.0), TEXT);
                 }
                 for &i in &active {
                     let p = pos[i];

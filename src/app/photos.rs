@@ -372,7 +372,7 @@ impl PanoApp {
                         let pts = per_photo[i];
                         let highlight = self.step == Step::Points && (self.pe.a == i || self.pe.b == i);
                         egui::Frame::new()
-                            .fill(if highlight { Color32::from_rgb(38, 50, 68) } else { CARD })
+                            .fill(if highlight { ACCENT_SOFT } else { CARD })
                             .corner_radius(CornerRadius::same(RADIUS_CARD))
                             .inner_margin(egui::Margin::same(TILE_MARGIN))
                             .show(ui, |ui| {
@@ -383,14 +383,14 @@ impl PanoApp {
                                     let th = tw * ts.y / ts.x;
                                     let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(tw, th.min(72.0))))
                                         .corner_radius(CornerRadius::same(RADIUS))
-                                        .tint(if p.enabled { Color32::WHITE } else { Color32::from_gray(90) })
+                                        .tint(if p.enabled { Color32::WHITE } else { DIMMED_TINT })
                                         .sense(Sense::click());
                                     menu_resp.push((i, ui.add(img)));
                                     ui.vertical(|ui| {
                                         menu_resp.push((i, ui.add(egui::Label::new(RichText::new(format!("{}. {}", i + 1, p.name)).strong().color(Color32::WHITE)).sense(Sense::click()))));
                                         ui.label(RichText::new(format!("{} × {}", p.w, p.h)).small().color(MUTED));
                                         if menu_state.has_mask {
-                                            ui.label(RichText::new("🖌 has masks").small().color(super::masks_ui::MASK_GREEN));
+                                            ui.label(RichText::new("🖌 has masks").small().color(MASK_GREEN));
                                         }
                                         if self.matched {
                                             let (t, c) = if !p.enabled {
@@ -457,14 +457,14 @@ impl PanoApp {
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(avail.x.min(720.0), 300.0), Sense::click());
                 let p = ui.painter();
                 let hovered = resp.hovered() || ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
-                p.rect_filled(rect, f32::from(RADIUS_CARD), if hovered { Color32::from_rgb(34, 44, 60) } else { Color32::from_rgb(30, 33, 40) });
-                dashed_rect(p, rect.shrink(6.0), if hovered { ACCENT } else { Color32::from_rgb(80, 86, 100) });
+                p.rect_filled(rect, f32::from(RADIUS_CARD), if hovered { ACCENT_SOFT } else { FAINT });
+                dashed_rect(p, rect.shrink(6.0), if hovered { ACCENT } else { BORDER_STRONG });
                 // illustration: three overlapping frames
                 let c = rect.center() - Vec2::new(0.0, 60.0);
                 for (k, dx) in [-46.0f32, 0.0, 46.0].iter().enumerate() {
                     let r = Rect::from_center_size(c + Vec2::new(*dx, (k as f32 - 1.0).abs() * 4.0), Vec2::new(70.0, 50.0));
-                    p.rect_filled(r, f32::from(RADIUS), [Color32::from_rgb(52, 92, 140), Color32::from_rgb(64, 120, 180), Color32::from_rgb(52, 92, 140)][k]);
-                    p.rect_stroke(r, f32::from(RADIUS), Stroke::new(2.0, Color32::from_rgb(170, 205, 255)), StrokeKind::Inside);
+                    p.rect_filled(r, f32::from(RADIUS), [ACCENT_DARK, ACCENT_MID, ACCENT_DARK][k]);
+                    p.rect_stroke(r, f32::from(RADIUS), Stroke::new(2.0, ACCENT), StrokeKind::Inside);
                 }
                 p.text(rect.center() + Vec2::new(0.0, 10.0), Align2::CENTER_CENTER, "Drop your photos here", FontId::proportional(24.0), Color32::WHITE);
                 p.text(
@@ -479,7 +479,7 @@ impl PanoApp {
                     Align2::CENTER_CENTER,
                     "Tip: let neighbouring photos overlap by about a third.",
                     FontId::proportional(13.0),
-                    Color32::from_rgb(120, 126, 140),
+                    MUTED,
                 );
                 if resp.clicked() && !self.busy() {
                     self.pick_photos();
@@ -574,7 +574,7 @@ impl PanoApp {
                         ui.vertical(|ui| {
                             let s = p.thumb.size_vec2();
                             let w = PHOTO_TILE_W;
-                            let tint = if p.enabled { Color32::WHITE } else { Color32::from_gray(90) };
+                            let tint = if p.enabled { Color32::WHITE } else { DIMMED_TINT };
                             let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(CornerRadius::same(RADIUS)).tint(tint).sense(Sense::click());
                             menu_resp.push((i, ui.add(img)));
                             let name = if p.mask.any() { format!("{}. {}  🖌", i + 1, p.name) } else { format!("{}. {}", i + 1, p.name) };

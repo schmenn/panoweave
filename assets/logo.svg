@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PanoWeave: three photos taken by hand, one landscape line running across them -->
+  <rect width="512" height="512" rx="112" fill="#15131F"/>
+  <rect x="62" y="150" width="190" height="230" rx="26" fill="#4B3BA8" transform="rotate(-6 157 265)"/>
+  <rect x="160" y="132" width="190" height="230" rx="26" fill="#6F5BD8" stroke="#15131F" stroke-width="10" transform="rotate(3 255 247)"/>
+  <rect x="258" y="146" width="190" height="230" rx="26" fill="#9C8CFF" stroke="#15131F" stroke-width="10" transform="rotate(-2 353 261)"/>
+  <polyline points="96,318 168,242 222,292 280,228 340,286 380,254 416,292" fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

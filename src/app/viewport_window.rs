@@ -148,7 +148,7 @@ impl ViewportWindows {
             }
             WinState { now: saved, saved, last_save: Instant::now(), start_pos, start_size, focus_once: true }
         });
-        let mut b = ViewportBuilder::default().with_title(spec.title.clone()).with_inner_size(st.start_size).with_min_inner_size(spec.min_size);
+        let mut b = ViewportBuilder::default().with_title(spec.title.clone()).with_inner_size(st.start_size).with_min_inner_size(spec.min_size).with_icon(super::consts::window_icon());
         if let Some(p) = st.start_pos {
             b = b.with_position(p);
         }

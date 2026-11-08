@@ -305,6 +305,8 @@ pub struct PanoApp {
     pub(super) err_threshold: f64,
     // preview
     pub(super) preview_tex: Option<egui::TextureHandle>,
+    /// the logo in the top bar (made on first use)
+    pub(super) logo_tex: Option<egui::TextureHandle>,
     pub(super) preview_size: [usize; 2],
     pub(super) preview_gen: u64,
     pub(super) preview_shown_gen: u64,
