@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Fixed
+- TIFF export: the fourth channel is now marked as transparency (`ExtraSamples` = unassociated alpha); other programs may have shown the area outside the panorama black or as an unnamed extra channel.
+- JPEG/TIFF export: the end of the file is written and checked before the export reports success (before, an error at the very end, e.g. a full disk, was lost and a cut-off file kept). When the JPEG encoder fails, the message names the real cause (e.g. disk full) instead of "the JPEG encoder stopped unexpectedly".
+- Export: a typed file name whose extension does not fit the file type (e.g. "pano.png" with JPEG chosen) gets the right extension, and the dialog says so before the export; a JPEG is no longer written into a ".png" file. The dialog also says when an existing file will be replaced. Blended exposures: an unknown extension becomes ".jpg".
 - Opening a project whose photos are partly missing kept nothing of the project (points, alignment, masks were dropped, the warning was overwritten at once by "Project opened"). Now the photos that are there keep their points, alignment and masks; the message names the missing files and how many points to them were left out, and the next save asks for a file name instead of offering the old one.
 - Cancelling while a project loads no longer applies that project to the photos added next.
 - Removing a photo, "New" or opening another project no longer crashes the connections window (it still pointed at the old photo number); the patch click, pair report, overlap picture and list caches are dropped with it. The clicks of the patch click mode are dropped when another photo pair is shown, and a result that arrives for a pair no longer on screen is not used.
