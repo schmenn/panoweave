@@ -47,6 +47,11 @@ impl PanoApp {
             ),
             _ => {}
         }
+        if (r.a, r.b) != self.click.pair {
+            // the pair on screen changed while the job ran: the result belongs to other photos
+            self.set_status("Patch click: the photo pair changed meanwhile – result dropped, click again.", WARN);
+            return;
+        }
         if r.error.is_none() {
             // the refined spot replaces the rough right click
             if let Some(m) = &r.main {
