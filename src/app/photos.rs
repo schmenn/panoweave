@@ -505,12 +505,18 @@ impl PanoApp {
         ui.add_space(8.0);
         let mut menu_resp: Vec<(usize, egui::Response)> = Vec::new();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (i, p) in self.photos.iter().enumerate() {
+            // a grid: `horizontal_wrapped` does not wrap frames (their size is only known after drawing),
+            // so the tiles are put into rows of as many as fit the width
+            let per_row = tiles_per_row(ui.available_width(), PHOTO_TILE_W + 2.0 * f32::from(TILE_MARGIN), ui.spacing().item_spacing.x);
+            let idx: Vec<usize> = (0..self.photos.len()).collect();
+            for row in idx.chunks(per_row) {
+                ui.horizontal(|ui| {
+                for &i in row {
+                    let p = &self.photos[i];
                     egui::Frame::new().fill(CARD).corner_radius(CornerRadius::same(RADIUS_CARD)).inner_margin(egui::Margin::same(TILE_MARGIN)).show(ui, |ui| {
                         ui.vertical(|ui| {
                             let s = p.thumb.size_vec2();
-                            let w = 200.0;
+                            let w = PHOTO_TILE_W;
                             let tint = if p.enabled { Color32::WHITE } else { Color32::from_gray(90) };
                             let img = egui::Image::new(egui::load::SizedTexture::new(p.thumb.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(CornerRadius::same(RADIUS)).tint(tint).sense(Sense::click());
                             menu_resp.push((i, ui.add(img)));
@@ -527,7 +533,8 @@ impl PanoApp {
                         });
                     });
                 }
-            });
+                });
+            }
         });
         let chosen: Vec<_> = menu_resp.iter().filter_map(|(i, r)| self.photo_menu(r, *i)).collect();
         for (i, a) in chosen {

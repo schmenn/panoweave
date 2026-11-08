@@ -43,6 +43,11 @@ pub(super) fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> eg
     )
 }
 
+/// How many tiles of width `tile` fit next to each other into `avail` with `gap` between them (at least one).
+pub(super) fn tiles_per_row(avail: f32, tile: f32, gap: f32) -> usize {
+    (((avail + gap) / (tile + gap)).floor() as usize).max(1)
+}
+
 pub(super) fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .fill(CARD)
@@ -239,6 +244,15 @@ mod tests {
         assert!(bad.is_empty(), "use RADIUS / RADIUS_CARD / RADIUS_CANVAS instead of:
 {}", bad.join("
 "));
+    }
+
+    #[test]
+    fn tiles_wrap_into_rows_that_fit() {
+        assert_eq!(tiles_per_row(1000.0, 216.0, 8.0), 4); // 4*216 + 3*8 = 888
+        assert_eq!(tiles_per_row(888.0, 216.0, 8.0), 4);
+        assert_eq!(tiles_per_row(887.0, 216.0, 8.0), 3);
+        assert_eq!(tiles_per_row(100.0, 216.0, 8.0), 1, "a narrow window still shows one per row");
+        assert_eq!(tiles_per_row(0.0, 216.0, 8.0), 1);
     }
 
     #[test]
