@@ -273,16 +273,81 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 
 ## 10. Keyboard and mouse
 
+Shortcuts do nothing while a text or number field has the keyboard focus (there Ctrl+Z undoes your typing). On a Mac, Cmd works instead of Ctrl.
+
+**Everywhere (panorama mode)**
+
 | Key / action | What it does |
 |---|---|
-| Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo point changes |
-| F3 | Open the list of all points |
-| Delete / Backspace | Delete the selected point(s) in the point editor |
-| L | Protect / unprotect the selected point |
-| Esc | Leave the current tool, cancel a click |
-| Shift+click, Ctrl+click | Add to / take out of the selection |
-| Scroll | Zoom (point editor, preview) |
-| Double-click | Fit the photo (point editor) |
-| Right mouse drag | Move the photo while a selection tool is active |
-| Shift+drag (step 4) | Tilt the view |
+| Ctrl+Z | Undo the last change of the points (also from the point list, the patch window and the other windows) |
+| Ctrl+Y or Ctrl+Shift+Z | Redo |
+| F3 | Open or close the list of all points |
 | Right-click a photo (photo list) | Photo menu |
+
+**Point editor (step 2)**
+
+| Key / action | What it does |
+|---|---|
+| Scroll | Zoom at the mouse position |
+| Double-click | Fit the photo into its half (same as **⤢ Fit**) |
+| Drag on empty space | Move the photo (with **Select / edit** set to Click) |
+| Right-button drag | Move the photo, also while Rectangle, Lasso or Brush is chosen |
+| Click a point | Select it; the partner in the other photo is centred when that half is zoomed in |
+| Drag a point | Move it; it snaps to the exact spot when you let go (protected points stay) |
+| Shift+click, Ctrl+click a point | Add it to the selection or take it out |
+| Rectangle / Lasso: drag | Select the points inside; Shift+drag adds, Ctrl+drag takes out |
+| Brush: click or paint | Select the points under the brush; Ctrl takes out |
+| Delete or Backspace | Delete the selected point(s); protected points stay and are named |
+| L | Protect / unprotect the selected point (the one clicked last, not a multiple selection) |
+| Esc | **Add point**: cancel a half-placed point (the first click); pressed again, or in any other tool, back to **Select / edit** |
+
+**All points list (F3)**
+
+| Key / action | What it does |
+|---|---|
+| Click a row | Show the point in the point editor |
+| Ctrl+click | Add the row to the selection or take it out |
+| Shift+click | Select the range up to this row |
+| Click a column header | Sort by it, click again to reverse (error: worst first) |
+
+**Frame & crop (step 4)**
+
+| Key / action | What it does |
+|---|---|
+| Drag | Turn the view (move the panorama) |
+| Shift+drag | Tilt (roll) the view |
+| Drag near the white frame | Move that crop edge |
+| Scroll | Zoom |
+
+**Masks**
+
+| Key / action | What it does |
+|---|---|
+| Left button | Paint or draw with the chosen tool |
+| Lasso: click | Set a corner; double-click or Enter closes the shape |
+| Esc | Throw away the shape that is being drawn |
+| Ctrl+Z | While drawing a lasso: remove the last corner; otherwise undo the last mask change |
+| Ctrl+Y or Ctrl+Shift+Z | Redo a mask change |
+| Right- or middle-button drag | Move the photo |
+| Scroll | Zoom |
+
+The masks keep their own undo history, separate from the points. The keys work while the mouse is over the mask picture (or, in its own window, while that window has the focus).
+
+**Patch comparison window**
+
+| Key / action | What it does |
+|---|---|
+| Click a row | Open that patch in the detail view |
+| Ctrl+click, Shift+click | Add to the selection / select a range |
+| Right-click a row | Disable, enable or reset the selected patches |
+| Page Up / Page Down | Previous / next patch |
+| Arrow keys (side by side, wipe) | Previous / next patch |
+| Arrow keys (overlay view) | Shift photo B against A by 1 px; Shift: 0.1 px, Ctrl: 10 px |
+| Drag photo B (overlay view) | Shift it by hand |
+| Drag (wipe view) | Move the wipe line |
+
+**Check overlap**
+
+| Key / action | What it does |
+|---|---|
+| Drag | Move the picture |
