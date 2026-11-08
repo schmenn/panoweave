@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- Opening a project whose photos are partly missing kept nothing of the project (points, alignment, masks were dropped, the warning was overwritten at once by "Project opened"). Now the photos that are there keep their points, alignment and masks; the message names the missing files and how many points to them were left out, and the next save asks for a file name instead of offering the old one.
+- Cancelling while a project loads no longer applies that project to the photos added next.
+- Removing a photo, "New" or opening another project no longer crashes the connections window (it still pointed at the old photo number); the patch click, pair report, overlap picture and list caches are dropped with it. The clicks of the patch click mode are dropped when another photo pair is shown, and a result that arrives for a pair no longer on screen is not used.
+- "New"/opening a project resets the export file name and the last exported file (an export of the new project went into the old project's folder), "align again", and drops a preview still being computed for the old project.
+- Project files: opening checks that lens and photo numbers exist and that the file is not from a newer version (a damaged file is reported instead of crashing later). Saving writes a temporary file first and replaces the old one only when complete; a value that is not a number in the geometry stops the save with a message instead of writing a file that cannot be opened again, invalid measurement values of points are saved as 0 and counted in the message.
+
 ### Changed
 - GUI: step 1 shows the photos as a grid that wraps into rows (they ran out of the window to the right before, with no way to scroll). The export step, the connections window and the help window scroll when the window is too low; before, the lower settings could only be reached by making the window bigger. Frame & crop needs no scrolling (the buttons wrap, the preview fits the window). Unit test for the grid columns.
 - Code: `cargo clippy --all-targets -- -D warnings` passes and runs in the CI. About 100 warnings fixed (mostly nested `if`s written as one condition); four lints are switched off on purpose in `Cargo.toml` with the reason (many parameters, complex types, index loops, `!(a >= b)` that must fail on NaN). No functional change; all tests unchanged.

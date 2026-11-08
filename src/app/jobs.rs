@@ -13,6 +13,10 @@ impl PanoApp {
                 match msg {
                     JobMsg::Cancelled => {
                         self.auto_chain = false;
+                        if self.pending_project.take().is_some() {
+                            // the project was not opened: it must not be applied to photos added later
+                            self.project_path = None;
+                        }
                         if title.starts_with("Loading") {
                             // the original's wording
                             self.set_status("Loading canceled – no photos were added.", WARN);
