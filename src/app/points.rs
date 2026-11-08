@@ -209,6 +209,13 @@ impl PanoApp {
             {
                 self.delete_selected();
             }
+            if ui
+                .add_enabled(n_sel > 0 && !self.busy(), egui::Button::new(format!("🧲 Snap selected ({n_sel})")))
+                .on_hover_text("Refine the selected points like after dragging one: the right photo's side is searched again (match >= 80 %), the left one stays. Protected points are skipped. Runs in the background, one undo step.")
+                .clicked()
+            {
+                self.snap_selected();
+            }
             let sel_locked = self.pe.selected.and_then(|k| self.cps.get(k)).map(|c| c.locked);
             if ui
                 .add_enabled(sel_locked.is_some(), egui::Button::selectable(sel_locked == Some(true), "🔒 Protect"))

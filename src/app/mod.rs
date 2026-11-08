@@ -29,6 +29,7 @@ mod points_find;
 mod points_panes;
 mod points_predict;
 mod points_select;
+mod points_snap;
 mod select_shapes;
 mod state;
 mod types;
