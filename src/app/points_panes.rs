@@ -75,6 +75,7 @@ impl PanoApp {
         self.paint_selection_frames(&painter, &d, lay.frame, pts);
         self.paint_click_marks(&painter, &d, a, b);
         self.paint_pending(&painter, &d);
+        self.paint_select_shape(&painter, &d, &resp);
         painter.text(rect.left_top() + Vec2::new(10.0, 8.0), Align2::LEFT_TOP, format!("Photo {}", idx + 1), FontId::proportional(14.0), Color32::WHITE);
         self.paint_loupe(&painter, &d, &resp);
         self.pane_input(ui, &resp, pane, events);
@@ -172,6 +173,10 @@ impl PanoApp {
             let c = &self.cps[*k];
             let col = if self.aligned { err_color(c.err) } else { point_color(num) };
             let sel = self.pe.selected == Some(*k);
+            if self.pe.sel.contains(k) && !sel {
+                painter.circle_stroke(s, 10.0, Stroke::new(3.0, Color32::BLACK));
+                painter.circle_stroke(s, 10.0, Stroke::new(1.6, ACCENT));
+            }
             if sel {
                 let r = 11.0;
                 painter.circle_stroke(s, r, Stroke::new(3.0, Color32::BLACK));
@@ -284,6 +289,43 @@ impl PanoApp {
         }
     }
 
+    /// The selection shape being dragged and the brush circle.
+    fn paint_select_shape(&self, painter: &egui::Painter, d: &PaneDraw, resp: &egui::Response) {
+        let tool = self.pe.tool;
+        if !tool.is_select() {
+            return;
+        }
+        let stroke = Stroke::new(1.6, ACCENT);
+        let halo = Stroke::new(3.2, Color32::BLACK);
+        if tool == PointTool::SelectBrush {
+            if let Some(hp) = resp.hover_pos() {
+                painter.circle_stroke(hp, self.brush_radius(), halo);
+                painter.circle_stroke(hp, self.brush_radius(), stroke);
+            }
+        }
+        let Some(sd) = self.pe.sel_drag.as_ref().filter(|s| s.pane == d.pane) else { return };
+        let pts: Vec<Pos2> = sd.path.iter().map(|p| d.to_screen(*p)).collect();
+        match tool {
+            PointTool::SelectRect => {
+                if let (Some(a), Some(b)) = (pts.first(), pts.last()) {
+                    let r = Rect::from_two_pos(*a, *b);
+                    painter.rect_filled(r, 0.0, ACCENT.gamma_multiply(0.15));
+                    painter.rect_stroke(r, 0.0, halo, StrokeKind::Middle);
+                    painter.rect_stroke(r, 0.0, stroke, StrokeKind::Middle);
+                }
+            }
+            PointTool::SelectLasso => {
+                if pts.len() > 1 {
+                    let mut closed = pts.clone();
+                    closed.push(pts[0]);
+                    painter.add(egui::Shape::line(closed.clone(), halo));
+                    painter.add(egui::Shape::line(closed, stroke));
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Loupe while placing points.
     fn paint_loupe(&self, painter: &egui::Painter, d: &PaneDraw, resp: &egui::Response) {
         let PaneDraw { rect, idx, v, tex_id, img_rect, .. } = *d;
@@ -309,7 +351,7 @@ impl PanoApp {
     /// Scroll, click and drag input of one half.
     fn pane_input(&self, ui: &egui::Ui, resp: &egui::Response, pane: Pane, events: &mut Vec<PaneEvent>) {
         if resp.hovered() {
-            ui.ctx().set_cursor_icon(if self.pe.tool == PointTool::Add { egui::CursorIcon::Crosshair } else { egui::CursorIcon::Default });
+            ui.ctx().set_cursor_icon(if self.pe.tool == PointTool::Add || self.pe.tool.is_select() { egui::CursorIcon::Crosshair } else { egui::CursorIcon::Default });
             let sc = ui.input(|i| i.smooth_scroll_delta.y);
             if sc.abs() > 0.1 {
                 if let Some(hp) = resp.hover_pos() {
@@ -321,13 +363,15 @@ impl PanoApp {
             events.push(PaneEvent::Fit(pane));
         } else if resp.clicked() {
             if let Some(p) = resp.interact_pointer_pos() {
-                events.push(PaneEvent::Click(pane, p));
+                let mods = ui.input(|i| i.modifiers);
+                events.push(PaneEvent::Click(pane, p, mods));
             }
         }
         if resp.drag_started() {
             let primary = resp.drag_started_by(egui::PointerButton::Primary);
             if let Some(p) = resp.interact_pointer_pos() {
-                events.push(PaneEvent::DragStart(pane, p, primary));
+                let mods = ui.input(|i| i.modifiers);
+                events.push(PaneEvent::DragStart(pane, p, primary, mods));
             }
         }
         if resp.dragged() {

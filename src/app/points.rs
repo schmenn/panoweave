@@ -42,6 +42,7 @@ impl PanoApp {
                 (k, self.to_px(a, pa), self.to_px(b, pb))
             })
             .collect();
+        self.sync_selection();
         let frame = self.selection_frame();
         let mut new_a = a;
         let mut new_b = b;
@@ -63,6 +64,7 @@ impl PanoApp {
             self.pe.a = new_a;
             self.pe.b = new_b;
             self.pe.selected = None;
+            self.pe.sel.clear();
             self.pe.pending = None;
             return;
         }
@@ -75,6 +77,7 @@ impl PanoApp {
         }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc cancels a half-placed point first, otherwise it leaves the tool
+            self.pe.sel_drag = None;
             if self.pe.pending.take().is_none() {
                 self.pe.tool = PointTool::Edit;
             }
@@ -123,14 +126,38 @@ impl PanoApp {
         });
         // Row 2: tools and history. Every row below holds only normal-height widgets, so wrapped lines keep one height.
         ui.horizontal_wrapped(|ui| {
+            let selecting = self.pe.tool == PointTool::Edit || self.pe.tool.is_select();
             if ui
-                .add(egui::Button::selectable(self.pe.tool == PointTool::Edit, "↖ Select / edit"))
+                .add(egui::Button::selectable(selecting, "↖ Select / edit"))
                 .on_hover_text("Click a point to select it, drag it to move it, Delete removes it. Dragging empty space moves the photo, the wheel zooms.")
                 .clicked()
             {
                 self.pe.tool = PointTool::Edit;
                 self.pe.pending = None;
+                self.pe.sel_drag = None;
             }
+            // the selection shapes belong to Select / edit: shown right after it, only while it is on
+            if selecting {
+                for (tool, text, tip) in [
+                    (PointTool::Edit, "Click", "Click a point to select it (Shift/Ctrl+click adds or takes it out), drag it to move it."),
+                    (PointTool::SelectRect, "▭ Rectangle", "Drag a rectangle on empty space to select the points inside. Shift adds to the selection, Ctrl takes points out. Points can still be dragged."),
+                    (PointTool::SelectLasso, "➰ Lasso", "Drag a free outline on empty space to select the points inside. Shift adds to the selection, Ctrl takes points out. Points can still be dragged."),
+                    (PointTool::SelectBrush, "🖌 Brush", "Click or paint over points to select them. Ctrl takes points out again."),
+                ] {
+                    if ui.add(egui::Button::selectable(self.pe.tool == tool, text)).on_hover_text(tip).clicked() {
+                        self.pe.tool = tool;
+                        self.pe.pending = None;
+                        self.pe.sel_drag = None;
+                    }
+                }
+                if self.pe.tool == PointTool::SelectBrush {
+                    if self.pe.brush_px < 1.0 {
+                        self.pe.brush_px = select_shapes::BRUSH_PX_DEFAULT;
+                    }
+                    ui.add(egui::DragValue::new(&mut self.pe.brush_px).range(select_shapes::BRUSH_PX_RANGE).speed(0.5).suffix(" px")).on_hover_text("Brush radius");
+                }
+            }
+            ui.separator();
             let adding = self.pe.tool == PointTool::Add;
             let add_txt = if adding { "✔ Done adding" } else { "➕ Add point" };
             if ui
@@ -173,8 +200,21 @@ impl PanoApp {
         });
         // Row 4: actions on points and views.
         ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(self.pe.selected.is_some(), egui::Button::new("🗑 Delete point")).clicked() {
+            let n_sel = self.selection_indices().len();
+            let del_txt = if n_sel > 1 { format!("🗑 Delete selected ({n_sel})") } else { "🗑 Delete point".to_string() };
+            if ui
+                .add_enabled(n_sel > 0, egui::Button::new(del_txt))
+                .on_hover_text("Shift/Ctrl+click adds points to the selection. Protected points are never deleted.")
+                .clicked()
+            {
                 self.delete_selected();
+            }
+            if ui
+                .add_enabled(n_sel > 0 && !self.busy(), egui::Button::new(format!("🧲 Snap selected ({n_sel})")))
+                .on_hover_text("Refine the selected points like after dragging one: the right photo's side is searched again (match >= 80 %), the left one stays. Protected points are skipped. Runs in the background, one undo step.")
+                .clicked()
+            {
+                self.snap_selected();
             }
             let sel_locked = self.pe.selected.and_then(|k| self.cps.get(k)).map(|c| c.locked);
             if ui
@@ -231,7 +271,9 @@ impl PanoApp {
     /// Hint line under the toolbar (or the strip of the patch click mode).
     fn points_hint(&mut self, ui: &mut egui::Ui) {
         let adding = self.pe.tool == PointTool::Add;
-        let hint = if adding {
+        let hint = if self.pe.tool.is_select() {
+            "Drag in a photo to select points (the right mouse button still moves the photo). Shift adds, Ctrl takes out. Delete removes the selection; protected points stay. Esc leaves the tool."
+        } else if adding {
             match self.pe.pending {
                 Some((Pane::A, _)) => "Now click the same spot in the RIGHT photo – it snaps to the exact spot.",
                 Some((Pane::B, _)) => "Now click the same spot in the LEFT photo – it snaps to the exact spot.",

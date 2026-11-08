@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- Point editor: "Snap selected (n)" refines every selected point with the same correlation search as after dragging a point (local zoom/tilt from the other points of the pair, sub-pixel), as a background job with progress and Cancel (nothing is changed when cancelled). The right photo's side of the pair on screen is searched, the left one stays; a result is only taken when the match is at least 80 %. Hand-placed points are snapped too, protected points never. Status line: "n snapped, m unchanged (match too low), k protected skipped". One undo step. If the points change while the job runs, the result is dropped (all) or skipped (single points that were edited meanwhile). Unit-tested (displaced point snaps back, flat area stays, cancel, protected, stale results, one undo step); not tried by clicking through the GUI.
+- Point editor: selection shapes as a choice inside "Select / edit" (Click, Rectangle, Lasso, Brush with radius), shown only while "Select / edit" is on. Rectangle and lasso are dragged on empty space (a point under the mouse is still dragged as usual); the brush selects on a single click already and while painting. Plain drag replaces the selection with the points inside; Shift adds; Ctrl takes points out (with the brush, painting adds and Ctrl subtracts). The shape acts on the points of the photo half it was dragged in, for the pair on screen; the right mouse button still moves the photo. Tried in the GUI by the contributor (before the layout change).
+- Point editor: multiple selection. Shift or Ctrl+click on a point in either photo adds it to the selection or takes it out again (extra ring around selected points); in the point list (F3) Ctrl+click toggles a row and Shift+click selects the range up to it. "Delete selected (n)" (button and Delete key) removes the whole selection as one undo step. Protected points are never deleted; the message names them. The selection is dropped when the points change in a way that moves their numbers (undo, find, clean up, other photo pair), so it never points at other points. Without Shift/Ctrl everything works as before. Unit-tested; not tried by clicking through the GUI.
+
 ## [0.2.0] - 2026-11-07
 
 ### Changed
