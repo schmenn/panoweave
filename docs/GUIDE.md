@@ -146,7 +146,7 @@ The preview shows the whole panorama.
 - The brightness values are worked out in the background (after aligning, opening a project, turning the view in step 4 or changing these switches; up to about a second with the lens correction). Meanwhile the preview keeps the old brightness and **Export panorama** is greyed out for that moment.
 - **Use the sharpest photo where photos overlap**, **Sharper resampling**: detail options, on by default.
 - **Smart seams** (off by default, only with Smooth seams): searches, once for the whole panorama, where the photos agree, so close objects seen from two sides (poles, lamps, people) are not cut in two.
-- **Masks** ("🖌 Edit masks…" here, or "🖌 Masks" next to "Patch comparison" in step 3; only with Smooth seams): paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole. "Show seams" shows which photo wins where. Masks are saved in the project.
+- **Masks** ("🖌 Edit masks…" here, or "🖌 Masks" next to "Patch comparison" in step 3): paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole, or to take out a boat that moved. **Red** means the spot does not exist for that photo: nothing of it gets into the panorama, also not blurred by the blending, and another photo fills it. Where **every** photo is red there is nothing left: the panorama has a hole there (transparent in PNG and TIFF, black in JPEG). The preview and "Frame & crop" show such holes, and a warning says how big they are; "Auto crop" ignores them so a small hole does not cut the panorama down. **Green** steers the seams (Smooth seams only). "Show seams" shows which photo wins where, in a wide view under the photo. Masks are saved in the project.
 
 The export is made strip by strip and written straight to the file, so it works with little memory; the strip height never changes a pixel. **Cancel** stops it within about a second, and a cancelled or failed export never leaves a half-written file.
 
@@ -275,6 +275,7 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 | fine alignment changed nothing: no control areas … | "Add control areas" is off, so there was nothing to judge the rounds with. |
 | Project opened with N of M photos – missing: … | Some photo files were not found; the others were opened with their points. |
 | … failed with an internal error … | A program error in a background job; nothing was changed. |
+| Masks leave a hole (about N % of the picture) … | Every photo is masked red at some spot, so nothing covers it; it stays empty. Remove a red mask there or keep a photo that covers it. |
 | Patch N: the shifted spot lies outside photo B (patch list: "shifted by hand outside photo B") | A patch was dragged so far that its spot left photo B; it cannot be used and is marked rejected. Drag it back or reset it. |
 
 ---

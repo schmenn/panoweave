@@ -6,6 +6,11 @@ use std::hash::{Hash, Hasher};
 
 /// Width of the small panorama the seam preview is made for (pixels).
 const SEAM_PREVIEW_WIDTH: usize = 1600;
+/// The seam map under the photo: at most this tall, at most this share of the window's room, and
+/// the room its title and note take.
+const SEAM_PANEL_MAX_H: f32 = 360.0;
+const SEAM_PANEL_SHARE: f32 = 0.45;
+const SEAM_PANEL_TITLE_H: f32 = 52.0;
 
 /// The seam map of the active photos as a picture (every photo in its own colour, seams black).
 pub(super) fn seam_image(photos: Vec<RenderPhoto>, view: &PanoView, prefer_detail: bool) -> Result<egui::ColorImage, String> {
@@ -21,6 +26,13 @@ pub(super) fn seam_image(photos: Vec<RenderPhoto>, view: &PanoView, prefer_detai
 }
 
 impl PanoApp {
+    /// Height of the seam panel under the photo: the seam map at full width, at most `SEAM_PANEL_MAX_H`
+    /// and at most `SEAM_PANEL_SHARE` of the room, plus its title lines.
+    pub(super) fn seam_panel_height(&self, width: f32, room: f32) -> f32 {
+        let aspect = self.mk.seam_tex.as_ref().map(|t| t.size_vec2()).map(|s| s.x / s.y.max(1.0)).unwrap_or(self.view.aspect() as f32).max(0.5);
+        (width / aspect).min(SEAM_PANEL_MAX_H).min(room * SEAM_PANEL_SHARE) + SEAM_PANEL_TITLE_H
+    }
+
     /// Changes whenever the seams could look different (alignment, photos used, masks).
     pub(super) fn seam_key(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -81,7 +93,8 @@ impl PanoApp {
         }
         if let Some(t) = &self.mk.seam_tex {
             let s = t.size_vec2();
-            let w = ui.available_width().min(420.0);
+            // as wide as there is room, but not taller than its share of the window
+            let w = ui.available_width().min(SEAM_PANEL_MAX_H * s.x / s.y.max(1.0)).min(ui.available_height().max(80.0) * s.x / s.y.max(1.0));
             ui.add(egui::Image::new(egui::load::SizedTexture::new(t.id(), Vec2::new(w, w * s.y / s.x))).corner_radius(CornerRadius::same(RADIUS)));
         }
         if self.mk.seam_rx.is_some() {

@@ -91,6 +91,12 @@ impl eframe::App for PanoApp {
             }
             Mode::Exposure => self.ui_exposure(ui),
         }
+        // masks now change the picture (masked spots are left out): a new preview after every change
+        let sig = self.photos.iter().fold(self.photos.len() as u64, |h, p| h.wrapping_mul(1_000_003).wrapping_add(p.mask.rev));
+        if sig != self.mask_sig {
+            self.mask_sig = sig;
+            self.preview_dirty = true;
+        }
         if self.mode == Mode::Panorama && ctx.input(|i| i.key_pressed(egui::Key::F3)) {
             self.show_cp_list = !self.show_cp_list;
         }

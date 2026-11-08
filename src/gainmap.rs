@@ -233,7 +233,7 @@ fn build_layer(p: &RenderPhoto, m: &Mapper, w: usize, h: usize, cfg: &GainMapCon
     for py in 0..h {
         for px in 0..w {
             let Some(d) = m.dir(px, py) else { continue };
-            let Some((x, y, wt)) = p.lookup(d) else { continue };
+            let Some((x, y, wt)) = p.lookup_used(d) else { continue };
             if wt <= cfg.min_edge_weight {
                 continue;
             }

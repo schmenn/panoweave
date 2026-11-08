@@ -310,7 +310,12 @@ pub struct PanoApp {
     pub(super) preview_size: [usize; 2],
     pub(super) preview_gen: u64,
     pub(super) preview_shown_gen: u64,
-    pub(super) preview_rx: Option<Receiver<(u64, egui::ColorImage, PanoView)>>,
+    /// preview worker: (number, picture, view, share of the crop that masks leave empty)
+    pub(super) preview_rx: Option<Receiver<(u64, egui::ColorImage, PanoView, f32)>>,
+    /// share of the cropped panorama that red masks leave without any photo (see `stitch::mask_holes`)
+    pub(super) mask_hole_share: f32,
+    /// fingerprint of all masks when the preview was last asked for (a change makes a new preview)
+    pub(super) mask_sig: u64,
     /// brightness update being worked out on a worker thread (`update_gains`), with its number
     pub(super) gains_rx: Option<Receiver<(u64, super::pipeline::GainsUpdate)>>,
     pub(super) gains_gen: u64,

@@ -486,6 +486,9 @@ impl PanoApp {
                     ui.add_enabled(self.blend == Blend::Smooth, egui::Checkbox::new(&mut self.export_opts.smart_seams, "Smart seams – steer the seams around poles, lamps and people (slower, recommended)"))
                         .on_hover_text("Off (default): the photo with the most detail wins where photos overlap. On: the seams are searched so that they run where the photos agree, so a close object that two photos see from different sides is not cut in two. The export takes some seconds longer. Only for Smooth seams.");
                     self.mask_button(ui);
+                    if let Some(n) = self.mask_hole_note() {
+                        ui.label(RichText::new(format!("⚠ {n}")).color(WARN));
+                    }
                 });
                 ui.add_space(10.0);
                 let r = primary_button(ui, "Export panorama", !self.busy() && !self.gains_pending());
