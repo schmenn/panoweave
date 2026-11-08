@@ -199,7 +199,7 @@ Lays the two photos of the pair on screen over each other (blend, difference, ch
 
 ### Patch comparison
 
-Shows every patch the fine alignment measured: where it was, how well it matched, and why a patch was rejected. You can shift a patch by hand, disable it and restart the optimisation from there. Needs "Record patches for this window" in the fine alignment settings.
+Shows every patch the fine alignment measured: where it was, how well it matched, and why a patch was rejected. You can shift a patch by hand, disable it and restart the optimisation from there. A shift made while the alignment is still running is kept (the running round no longer overwrites it). Needs "Record patches for this window" in the fine alignment settings.
 
 ![Patch comparison](guide/patches.png)
 
@@ -273,6 +273,7 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 | fine alignment changed nothing: no control areas … | "Add control areas" is off, so there was nothing to judge the rounds with. |
 | Project opened with N of M photos – missing: … | Some photo files were not found; the others were opened with their points. |
 | … failed with an internal error … | A program error in a background job; nothing was changed. |
+| Patch N: the shifted spot lies outside photo B (patch list: "shifted by hand outside photo B") | A patch was dragged so far that its spot left photo B; it cannot be used and is marked rejected. Drag it back or reset it. |
 
 ---
 
