@@ -28,7 +28,7 @@ pub(super) enum Mode {
     Exposure,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum OutFormat {
     Jpeg,
     Png,
@@ -41,6 +41,15 @@ impl OutFormat {
             OutFormat::Jpeg => "jpg",
             OutFormat::Png => "png",
             OutFormat::Tiff => "tif",
+        }
+    }
+    /// Whether a file extension (any case, also "jpeg"/"tiff") belongs to this format.
+    pub(super) fn has_ext(&self, ext: &str) -> bool {
+        let e = ext.to_ascii_lowercase();
+        match self {
+            OutFormat::Jpeg => e == "jpg" || e == "jpeg",
+            OutFormat::Png => e == "png",
+            OutFormat::Tiff => e == "tif" || e == "tiff",
         }
     }
     pub(super) fn name(&self) -> &'static str {

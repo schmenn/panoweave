@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- TIFF export: the fourth channel is now marked as transparency (`ExtraSamples` = unassociated alpha); other programs may have shown the area outside the panorama black or as an unnamed extra channel.
+- JPEG/TIFF export: the end of the file is written and checked before the export reports success (before, an error at the very end, e.g. a full disk, was lost and a cut-off file kept). When the JPEG encoder fails, the message names the real cause (e.g. disk full) instead of "the JPEG encoder stopped unexpectedly".
+- Export: a typed file name whose extension does not fit the file type (e.g. "pano.png" with JPEG chosen) gets the right extension, and the dialog says so before the export; a JPEG is no longer written into a ".png" file. The dialog also says when an existing file will be replaced. Blended exposures: an unknown extension becomes ".jpg".
+
 ### Changed
 - Build: the Rust version is fixed in `rust-toolchain.toml` (1.99.1, with clippy) for local builds, the CI and the release build, so a new Rust release cannot turn the CI red without a change in the code. It is raised on purpose in its own PR.
 - GUI: step 1 shows the photos as a grid that wraps into rows (they ran out of the window to the right before, with no way to scroll). The export step, the connections window and the help window scroll when the window is too low; before, the lower settings could only be reached by making the window bigger. Frame & crop needs no scrolling (the buttons wrap, the preview fits the window). Unit test for the grid columns.

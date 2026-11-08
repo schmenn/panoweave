@@ -156,10 +156,14 @@ impl PanoApp {
         }
     }
 
-    /// Where the file will be written: the chosen path with the extension of the format.
-    fn target_path(&self) -> PathBuf {
+    /// Where the file will be written: the chosen path, with the extension of the format when it has none or
+    /// another one (a JPEG must not end up in "x.png"; the dialog shows the name that is used).
+    pub(super) fn target_path(&self) -> PathBuf {
         let path = PathBuf::from(self.out_path.trim());
-        if path.extension().is_none() { path.with_extension(self.out_format.ext()) } else { path }
+        match path.extension().and_then(|e| e.to_str()) {
+            Some(e) if self.out_format.has_ext(e) => path,
+            _ => path.with_extension(self.out_format.ext()),
+        }
     }
 
     /// (estimated file size, free space on the drive of the target) in bytes.
@@ -435,6 +439,14 @@ impl PanoApp {
                                 self.out_path = p.to_string_lossy().to_string();
                             }
                     });
+                    // say what is written where, before it happens
+                    let target = self.target_path();
+                    if !self.out_path.trim().is_empty() && target.as_path() != Path::new(self.out_path.trim()) {
+                        ui.label(RichText::new(format!("Will be saved as {} (the extension follows the file type).", target.display())).small().color(WARN));
+                    }
+                    if target.exists() && self.last_output.as_deref() != Some(target.as_path()) {
+                        ui.label(RichText::new("A file with this name already exists – it will be replaced.").small().color(WARN));
+                    }
                 });
                 ui.add_space(6.0);
                 card(ui, |ui| {
@@ -536,6 +548,22 @@ mod tests {
         let o = ExportOptions { enabled: false, size_mode: SizeMode::Width, target_width: 999, tiff_16bit: true, smart_seams: true };
         assert_eq!(output_width(4000.0, 50.0, &o), 2000);
         assert!(!o.sixteen_bit(OutFormat::Tiff));
+    }
+
+    #[test]
+    fn the_file_extension_follows_the_file_type() {
+        let mut app = super::super::masks_tests::app_with_photos(0);
+        for (path, fmt, want) in [
+            ("C:/x/pano.png", OutFormat::Jpeg, "C:/x/pano.jpg"),
+            ("C:/x/pano.JPEG", OutFormat::Jpeg, "C:/x/pano.JPEG"),
+            ("C:/x/pano", OutFormat::Tiff, "C:/x/pano.tif"),
+            ("C:/x/pano.tiff", OutFormat::Tiff, "C:/x/pano.tiff"),
+            ("C:/x/pano.jpg", OutFormat::Png, "C:/x/pano.png"),
+        ] {
+            app.out_path = path.into();
+            app.out_format = fmt;
+            assert_eq!(app.target_path(), PathBuf::from(want), "{path} as {fmt:?}");
+        }
     }
 
     #[test]
