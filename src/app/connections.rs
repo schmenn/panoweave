@@ -71,6 +71,7 @@ impl PanoApp {
     /// Show a point in the editor: open its pair, select it and zoom in on it.
     pub(super) fn jump_to_point(&mut self, k: usize) {
         let c = self.cps[k];
+        self.pe.sel.clear();
         self.step = Step::Points;
         self.pe.a = c.a;
         self.pe.b = c.b;
@@ -109,6 +110,11 @@ impl PanoApp {
         let mut open = self.show_cp_list;
         let mut jump: Option<usize> = None;
         let mut delete: Vec<usize> = Vec::new();
+        let mut sel_delete = false;
+        let mut shown_rows: Vec<usize> = Vec::new();
+        let mut shift_row: Option<usize> = None;
+        let mut ctrl_row: Option<usize> = None;
+        self.sync_selection();
         let mut removing_dups = false;
         let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None, undo_keys: true };
         let mut vp = std::mem::take(&mut self.vp);
@@ -126,6 +132,10 @@ impl PanoApp {
                     });
                 });
                 ui.checkbox(&mut self.cp_only_locked, "only protected (🔒)").on_hover_text("Protected points (key L in the point editor) are not touched by any bulk action.");
+                // points on sky or cloud (masks are made on a worker thread; nothing is removed without the button)
+                ui.horizontal_wrapped(|ui| self.sky_ui(ui, true));
+                let sky_on = self.sky_cfg.enabled;
+                let sky_of: HashMap<usize, f32> = self.sky_points().iter().map(|s| (s.point, s.score)).collect();
                 // points on top of each other (recomputed only when the points or the settings changed)
                 let dups = self.duplicates();
                 let dup_of: HashMap<usize, crate::duplicate_points::Duplicate> = dups.iter().map(|d| (d.point, *d)).collect();
@@ -153,7 +163,7 @@ impl PanoApp {
                     });
                 }
                 let cache_key = format!(
-                    "{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}",
+                    "{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}-{}",
                     self.cps.len(),
                     self.align_version,
                     self.cp_sort.0 as u8,
@@ -165,7 +175,10 @@ impl PanoApp {
                     self.cp_only_dups && self.dup_cfg.enabled,
                     self.cp_only_locked,
                     self.cps.iter().filter(|c| c.locked).count(),
-                    self.dup_cache.as_ref().map_or(0, |c| c.0)
+                    self.dup_cache.as_ref().map_or(0, |c| c.0),
+                    self.cp_only_sky && sky_on,
+                    self.sky_version,
+                    self.sky_cfg.threshold.to_bits() as u64 * u64::from(sky_on)
                 );
                 let cached = self.cp_rows_cache.as_ref().filter(|c| c.0 == cache_key).map(|c| (c.1.clone(), c.2.clone()));
                 let (rows, pair_no) = if let Some(c) = cached { c } else {
@@ -176,7 +189,8 @@ impl PanoApp {
                         let err_ok = !self.aligned || c.err >= self.cp_min_err;
                         let dup_ok = !(self.cp_only_dups && self.dup_cfg.enabled) || dup_of.contains_key(&k);
                         let lock_ok = !self.cp_only_locked || c.locked;
-                        pair_ok && err_ok && dup_ok && lock_ok
+                        let sky_ok = !(self.cp_only_sky && sky_on) || sky_of.contains_key(&k);
+                        pair_ok && err_ok && dup_ok && lock_ok && sky_ok
                     })
                     .collect();
                 // number of each point within its photo pair (the original's "P CP#" column)
@@ -206,6 +220,7 @@ impl PanoApp {
                 self.cp_rows_cache = Some((cache_key, rows.clone(), pair_no.clone()));
                 (rows, pair_no)
                 };
+                shown_rows = rows.clone();
                 let shown_err: Vec<f64> = rows.iter().map(|&k| self.cps[k].err).collect();
                 let mean = if shown_err.is_empty() { 0.0 } else { shown_err.iter().sum::<f64>() / shown_err.len() as f64 };
                 ui.label(
@@ -218,10 +233,13 @@ impl PanoApp {
                     .color(MUTED),
                 );
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(self.pe.selected.is_some(), egui::Button::new("🗑 Delete selected")).clicked() {
-                        if let Some(k) = self.pe.selected {
-                            delete.push(k);
-                        }
+                    let n_sel = self.selection_indices().len();
+                    if ui
+                        .add_enabled(n_sel > 0, egui::Button::new(format!("🗑 Delete selected ({n_sel})")))
+                        .on_hover_text("Shift+click selects a range of rows, Ctrl+click adds or removes one. Protected points are never deleted.")
+                        .clicked()
+                    {
+                        sel_delete = true;
                     }
                     if ui.add_enabled(!rows.is_empty(), egui::Button::new(format!("🗑 Delete all {} listed", rows.len()))).clicked() {
                         delete.extend(rows.iter().copied());
@@ -266,7 +284,7 @@ impl PanoApp {
                         let k = rows[r];
                         let c = self.cps[k];
                         let (rect, resp) = ui.allocate_exact_size(Vec2::new(total_w, row_h), Sense::click());
-                        let sel = self.pe.selected == Some(k);
+                        let sel = self.pe.selected == Some(k) || self.pe.sel.contains(&k);
                         let p = ui.painter();
                         let dup = dup_of.get(&k);
                         if sel {
@@ -275,6 +293,8 @@ impl PanoApp {
                             p.rect_filled(rect, 3.0, Color32::from_rgb(48, 52, 61));
                         } else if dup.is_some() {
                             p.rect_filled(rect, 0.0, Color32::from_rgb(64, 48, 24));
+                        } else if sky_of.contains_key(&k) {
+                            p.rect_filled(rect, 0.0, super::points_sky::SKY_ROW);
                         } else if r % 2 == 1 {
                             p.rect_filled(rect, 0.0, Color32::from_rgb(32, 34, 40));
                         }
@@ -320,16 +340,36 @@ impl PanoApp {
                             };
                             resp.clone().on_hover_text(format!("Point {} {} point {}", k + 1, what, d.other + 1));
                         }
+                        if let Some(s) = sky_of.get(&k) {
+                            let stays = if c.locked { " It is protected and stays." } else if c.manual { " It was placed by hand and stays." } else { "" };
+                            resp.clone().on_hover_text(format!("Point {} lies on sky or cloud ({:.0} % of its surroundings).{stays}", k + 1, s * 100.0));
+                        }
                         if resp.clicked() {
-                            jump = Some(k);
+                            let m = ui.input(|i| i.modifiers);
+                            if m.shift {
+                                shift_row = Some(k);
+                            } else if m.command {
+                                ctrl_row = Some(k);
+                            } else {
+                                jump = Some(k);
+                            }
                         }
                     }
                 });
             });
         self.vp = vp;
         self.show_cp_list = open;
+        if let Some(k) = shift_row {
+            self.select_rows_between(&shown_rows, k);
+        }
+        if let Some(k) = ctrl_row {
+            self.toggle_in_selection(k);
+        }
         if let Some(k) = jump {
             self.jump_to_point(k);
+        }
+        if sel_delete {
+            self.delete_selection();
         }
         if !delete.is_empty() {
             delete.sort_unstable();

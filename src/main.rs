@@ -2,6 +2,7 @@
 
 mod align;
 mod duplicate_points;
+mod sky_points;
 mod crashlog;
 mod app;
 mod engine;

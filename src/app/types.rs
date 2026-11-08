@@ -82,11 +82,15 @@ pub(super) enum JobMsg {
     Rendered(Result<(PathBuf, u128, usize, usize), String>),
     BracketLoaded(Vec<Result<(String, Source, Arc<RgbImage>, RgbImage, PhotoInfo), String>>),
     FusedSaved(Result<(PathBuf, u128), String>),
+    /// sky masks of the photos that had none: (key of the working image, the image, its mask)
+    SkyMasks(Vec<(usize, Arc<RgbImage>, Arc<crate::features::SkyMask>)>),
     PairPoints { a: usize, b: usize, cps: Vec<ControlPoint>, ms: u128, mode: &'static str },
     /// "Search again" for one pair from the connection view
     PairChecked { a: usize, b: usize, cps: Vec<ControlPoint>, reports: Vec<crate::pair_check::PairReport> },
     /// patch click mode result
     ClickMatched(Box<crate::click_match::ClickResult>),
+    /// "Snap selected" finished (see `points_snap.rs`)
+    Snapped(Box<super::points_snap::SnapDone>),
     /// the person pressed Cancel: the job's result is thrown away
     Cancelled,
 }
@@ -158,8 +162,10 @@ impl Default for PaneGeo {
 pub(super) enum PaneEvent {
     Fit(Pane),
     Zoom(Pane, Pos2, f32),
-    Click(Pane, Pos2),
-    DragStart(Pane, Pos2, bool),
+    /// pane, position, modifier keys held during the click (Shift/Ctrl = multiple selection)
+    Click(Pane, Pos2, egui::Modifiers),
+    /// pane, position, primary button, modifier keys
+    DragStart(Pane, Pos2, bool, egui::Modifiers),
     Drag(Pane, Pos2, Vec2),
     DragEnd,
 }
@@ -174,6 +180,12 @@ pub(super) enum PointTool {
     Add,
     /// Rough click pair refined by patch matching.
     PatchClick,
+    /// Drag a rectangle: selects the points inside.
+    SelectRect,
+    /// Drag a free outline: selects the points inside.
+    SelectLasso,
+    /// Paint over points to select them (Ctrl = take them out again).
+    SelectBrush,
 }
 
 impl PointTool {
@@ -182,6 +194,19 @@ impl PointTool {
     pub(super) fn toggle(current: PointTool, pressed: PointTool) -> PointTool {
         if current == pressed { PointTool::Edit } else { pressed }
     }
+
+    /// Tools that draw a selection shape with the mouse.
+    pub(super) fn is_select(self) -> bool {
+        matches!(self, PointTool::SelectRect | PointTool::SelectLasso | PointTool::SelectBrush)
+    }
+}
+
+/// A selection shape that is being dragged (photo pixels of the pane it started in).
+pub(super) struct SelDrag {
+    pub(super) pane: Pane,
+    pub(super) path: Vec<P2>,
+    /// keys held when the drag started
+    pub(super) mods: egui::Modifiers,
 }
 
 #[derive(Default)]
@@ -189,6 +214,14 @@ pub(super) struct PointEditor {
     pub(super) a: usize,
     pub(super) b: usize,
     pub(super) selected: Option<usize>,
+    /// Further selected points (Shift/Ctrl+click); indices into the point list, see `points_select.rs`.
+    pub(super) sel: std::collections::HashSet<usize>,
+    /// order fingerprint of the points when `sel` was last checked
+    pub(super) sel_fp: u64,
+    /// selection shape being dragged (rectangle, lasso, brush)
+    pub(super) sel_drag: Option<SelDrag>,
+    /// brush radius in screen pixels (0 = `select_shapes::BRUSH_PX_DEFAULT`)
+    pub(super) brush_px: f32,
     /// What a click into a photo does (radio-button style, see `PointTool::toggle`).
     pub(super) tool: PointTool,
     pub(super) pending: Option<(Pane, [f64; 2])>,
@@ -332,6 +365,13 @@ pub struct PanoApp {
     pub(super) cp_only_locked: bool,
     /// result of the duplicate check with a fingerprint of the points it was made for
     pub(super) dup_cache: Option<(u64, Vec<crate::duplicate_points::Duplicate>)>,
+    /// points on sky or cloud: settings, list filter, sky masks per photo (made on a worker thread, not saved
+    /// in the project; keyed by the working image they belong to) and the last result with its fingerprint
+    pub(super) sky_cfg: crate::sky_points::SkyConfig,
+    pub(super) cp_only_sky: bool,
+    pub(super) sky_masks: HashMap<usize, (Arc<RgbImage>, Arc<crate::features::SkyMask>)>,
+    pub(super) sky_version: u64,
+    pub(super) sky_cache: Option<(u64, Vec<crate::sky_points::SkyPoint>)>,
     /// sorted rows of the control point list and the number within each pair (cached)
     pub(super) cp_rows_cache: Option<(String, Vec<usize>, Vec<usize>)>,
     pub(super) render_started: bool,

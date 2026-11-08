@@ -19,8 +19,9 @@ A guided panorama stitcher written in Rust. PanoWeave aims to be a more intuitiv
 - **Guided workflow** with five steps: Photos, Points, Align, Frame, Export
 - **Formats:** JPEG, PNG, TIFF and RAW (via `imagepipe`, optional `raw` feature), EXIF rotation is respected
 - **Automatic control points:** multi-scale corner detection, rotation-aware descriptors, ratio-test matching, RANSAC and guided re-matching
-- **No points on sky or clouds** (can be switched off)
+- **No points on sky or clouds** (can be switched off); points that still sit there (placed by hand, from patch click or old projects) can be found and removed later with "Find points on sky or cloud" in the point editor or the point list (threshold, one undo step, protected points stay)
 - **Point editor:** place a few points by hand and let PanoWeave find more, with sub-pixel snapping, zoom levels and a sortable point list; the patch-click mode uses the rotation and zoom of nearby points (and of the alignment), so slightly turned photos are matched too
+- **Selecting many points:** Shift/Ctrl+click in the photos or the point list, or the selection shapes inside "Select / edit" (Click, Rectangle, Lasso, Brush). "Delete selected" removes them in one undo step, "Snap selected" lets them all snap to the exact spot in the background (protected points are left alone).
 - **Protected points:** lock a point (key L) and no bulk action (clean up, delete all in a pair, outlier removal, duplicate removal, a new search) removes or moves it; a locked point is also refused by single delete and drag until it is unlocked.
 - **Duplicate points:** points that lie on top of each other are marked in the point list and can be removed with one click (hand-placed points stay).
 - **Undo and redo** (Ctrl+Z, Ctrl+Y) for every change of the control points, in the main window and in the point list, overlap check, connection view and patch window.
@@ -92,6 +93,7 @@ Settings are stored in `%APPDATA%\PanoWeave\settings.json`.
 | `strip`, `strip_write`, `photo_cache` | Memory-independent export: strip planning and memory budget, streaming JPEG/PNG/TIFF writers, cache of decoded photos |
 | `lensphoto` | Optional per-lens response curve and vignetting model |
 | `overlap`, `duplicate_points` | Overlap check sampling; detection of points on top of each other |
+| `sky_points` | Points on sky or cloud: which points to mark and which may be removed |
 | `seams`, `masks` | Seam finder (graph cut) and the masks painted on photos |
 | `app` | The egui user interface, split into `types`, `state`, `jobs`, `demo`, `chrome`, `pipeline`, `points_*`, `photos`, `align`, `frame`, `export`, `exposure`, `connections` |
 | `main` | Arguments and headless test drivers |
