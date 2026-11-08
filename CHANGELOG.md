@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fine alignment: protected points are no longer moved, re-weighted or dropped (before, a protected point that was not placed by hand got a new position in photo B, and with "drop invalid points" it could be removed). They are still measured: when the spot found in photo B is more than `locked_warn_px` (3 px of the working image) from the point, or no match is found nearby, the status line and the fine-alignment summary say how many and how far, so the person can check them ("only protected" in the point list). A protected control area is kept too.
+- Fine alignment with "Add control areas" switched off measured nothing to judge the rounds with, stopped at once and wrote "remaining shift below the threshold – done". It now says that nothing was changed and why.
+
 ### Changed
 - GUI: step 1 shows the photos as a grid that wraps into rows (they ran out of the window to the right before, with no way to scroll). The export step, the connections window and the help window scroll when the window is too low; before, the lower settings could only be reached by making the window bigger. Frame & crop needs no scrolling (the buttons wrap, the preview fits the window). Unit test for the grid columns.
 - Code: `cargo clippy --all-targets -- -D warnings` passes and runs in the CI. About 100 warnings fixed (mostly nested `if`s written as one condition); four lints are switched off on purpose in `Cargo.toml` with the reason (many parameters, complex types, index loops, `!(a >= b)` that must fail on NaN). No functional change; all tests unchanged.
