@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Fixed
+- Fine alignment: protected points are no longer moved, re-weighted or dropped (before, a protected point that was not placed by hand got a new position in photo B, and with "drop invalid points" it could be removed). They are still measured: when the spot found in photo B is more than `locked_warn_px` (3 px of the working image) from the point, or no match is found nearby, the status line and the fine-alignment summary say how many and how far, so the person can check them ("only protected" in the point list); the note is also added to the "unconnected image groups" warning so it is not overwritten. A protected control area is kept too.
+- Fine alignment with "Add control areas" switched off measured nothing to judge the rounds with, stopped at once and wrote "remaining shift below the threshold – done". It now says that nothing was changed and why.
 - A job that failed with an internal error (a panic in the worker) left the program "busy" for ever with no message. Now the status line says which job failed and why, names the crash log, and nothing is changed; the next job works. A preview or blended preview whose worker ended without a picture no longer blocks every later preview.
 - The locks of the patch store, the export photo cache, the sky cache of the pair check and the JPEG writer keep working after a panic in another thread (before, one failure made every later access fail too).
 - The "use" tick in the photo list is locked while a job runs (an alignment that finished after a tick changed could duplicate or lose points).
