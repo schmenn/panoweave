@@ -196,7 +196,7 @@ pub fn similarity_weighted(seeds: &[(P2, P2)], center: Option<P2>, radius: f64) 
 
 /// Sample a square region around `c` of image `g` through the 2x2 transform `j`
 /// (region pixel offsets -> image pixel offsets). Pixels outside the image are invalid.
-fn sample_region(g: &Gray, c: P2, j: [f64; 4], size: usize) -> Region {
+pub(crate) fn sample_region(g: &Gray, c: P2, j: [f64; 4], size: usize) -> Region {
     let mut r = Region::new(size);
     let h = (size as f64 - 1.0) * 0.5;
     for y in 0..size {

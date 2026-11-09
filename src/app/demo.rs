@@ -175,6 +175,32 @@ impl PanoApp {
                         }
                     }
                 }
+                "area" => {
+                    self.step = Step::Points;
+                    self.pe.tool = PointTool::Area;
+                    if self.area.quad[0].is_none() && self.area.result.is_none() {
+                        // rectangles round a real point of the pair: the right one drawn a little off and too big
+                        let (a, b) = (2.min(self.photos.len() - 2), 3.min(self.photos.len() - 1));
+                        self.pe.a = a;
+                        self.pe.b = b;
+                        self.area_sync_pair();
+                        let best = self.cps.iter().filter(|c| c.a == a && c.b == b && c.kind == CpKind::Point).min_by(|x, y| x.err.partial_cmp(&y.err).unwrap()).copied();
+                        if let Some(c) = best {
+                            let (pa, pb) = (self.to_px(a, c.pa), self.to_px(b, c.pb));
+                            // PW_AREA_HALF = half side of the left rectangle in working pixels
+                            let half = std::env::var("PW_AREA_HALF").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(90.0);
+                            let r0 = ((pa.0 - half, pa.1 - half * 0.7), (pa.0 + half, pa.1 + half * 0.7));
+                            let r1 = ((pb.0 - half * 1.1 + 12.0, pb.1 - half * 0.77 - 9.0), (pb.0 + half * 1.1 + 12.0, pb.1 + half * 0.77 - 9.0));
+                            self.area.quad[0] = Some(crate::area_match::quad_from_rect(r0));
+                            // the right area is a hand-drawn quadrilateral with sloppy corners (the match corrects them)
+                            let mut q1 = crate::area_match::quad_from_rect(r1);
+                            q1[0] = (q1[0].0 + 10.0, q1[0].1 - 6.0);
+                            q1[2] = (q1[2].0 - 8.0, q1[2].1 + 9.0);
+                            self.area.quad[1] = Some(q1);
+                            self.run_area();
+                        }
+                    }
+                }
                 "patches" => self.step = Step::Align,
                 "patchdetail" => {
                     self.step = Step::Align;
