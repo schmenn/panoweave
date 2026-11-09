@@ -124,6 +124,8 @@ impl PanoApp {
             graph_photo: None,
             click: ClickState::default(),
             click_cfg: crate::click_match::ClickConfig::default(),
+            area: Default::default(),
+            area_cfg: crate::area_match::AreaConfig::default(),
             undo: super::history::History::new(UNDO_DEPTH),
             mk: Default::default(),
             vp: Default::default(),

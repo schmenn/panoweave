@@ -101,6 +101,8 @@ pub(super) enum JobMsg {
     PairChecked { a: usize, b: usize, cps: Vec<ControlPoint>, reports: Vec<crate::pair_check::PairReport> },
     /// patch click mode result
     ClickMatched(Box<crate::click_match::ClickResult>),
+    /// area mode result (see `points_area.rs`)
+    AreaMatched(Box<crate::area_match::AreaResult>),
     /// "Snap selected" finished (see `points_snap.rs`)
     Snapped(Box<super::points_snap::SnapDone>),
     /// the person pressed Cancel: the job's result is thrown away
@@ -182,6 +184,8 @@ pub(super) enum PaneEvent {
     DragStart(Pane, Pos2, bool, egui::Modifiers),
     Drag(Pane, Pos2, Vec2),
     DragEnd,
+    /// double click that closes the lasso being clicked
+    LassoClose,
 }
 
 /// The one tool of the point editor: what a click into a photo does.
@@ -194,6 +198,8 @@ pub(super) enum PointTool {
     Add,
     /// Rough click pair refined by patch matching.
     PatchClick,
+    /// Draw a rectangle round the same surface in both photos (see `points_area.rs`).
+    Area,
     /// Drag a rectangle: selects the points inside.
     SelectRect,
     /// Drag a free outline: selects the points inside.
@@ -234,11 +240,20 @@ pub(super) struct PointEditor {
     pub(super) sel_fp: u64,
     /// selection shape being dragged (rectangle, lasso, brush)
     pub(super) sel_drag: Option<SelDrag>,
+    /// the lasso being drawn (shared with the mask editor), the pane and pair it belongs to and the
+    /// keys held when it was started (Shift adds, Ctrl takes out)
+    pub(super) lasso: super::select_shapes::Lasso,
+    pub(super) lasso_ctx: Option<(Pane, (usize, usize), egui::Modifiers)>,
     /// brush radius in screen pixels (0 = `select_shapes::BRUSH_PX_DEFAULT`)
     pub(super) brush_px: f32,
     /// What a click into a photo does (radio-button style, see `PointTool::toggle`).
     pub(super) tool: PointTool,
     pub(super) pending: Option<(Pane, [f64; 2])>,
+    /// the point the add tool just placed (while it is still the selected one, a further click
+    /// moves its clicked half instead of starting a second point)
+    pub(super) fresh: Option<usize>,
+    /// Alt was held when the current drag started: no snapping at its end
+    pub(super) drag_no_snap: bool,
     pub(super) dragging: Option<(usize, Pane)>,
     pub(super) panning: Option<Pane>,
     pub(super) views: [PaneView; 2],
@@ -423,6 +438,9 @@ pub struct PanoApp {
     /// patch click mode of the point editor
     pub(super) click: ClickState,
     pub(super) click_cfg: crate::click_match::ClickConfig,
+    /// area mode of the point editor: the two rectangles, the last result and its settings
+    pub(super) area: super::points_area::AreaState,
+    pub(super) area_cfg: crate::area_match::AreaConfig,
     /// undo / redo of the control points (every window feeds the same one)
     pub(super) undo: super::history::History<CpSnapshot>,
     /// mask painting window

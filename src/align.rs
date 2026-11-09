@@ -319,8 +319,11 @@ fn robust_cost(rots: &[M3], lens_of: &[usize], lenses: &[Lens], cps: &[ControlPo
 /// How much more a protected point counts than a normal one in the optimisation (and that it is
 /// not down-weighted as an outlier): the person placed and protected it, so it is the reference
 /// against hundreds of automatic points and areas, some of them wrong (trees, smooth walls, parallax).
-/// 1.0 = protected points count like any other point (the behaviour before 0.3.1).
-pub const LOCKED_WEIGHT: f64 = 30.0;
+/// 1.0 = protected points count like any other point (the behaviour before 0.3.1). 5 is a compromise:
+/// on a real project with protected points on a near car, 30 fitted those points to 5 px but lost
+/// three times as many measuring spots of the rest of the picture (the rotation-only model cannot fit
+/// near and far at once); a higher value stays available as a switch in step 3.
+pub const LOCKED_WEIGHT: f64 = 5.0;
 
 /// Residual (normalised units) up to which a protected point is treated quadratically; a normal point
 /// only up to `ROBUST_K`. Beyond it the loss grows linearly (Huber), so a protected point that is
@@ -865,9 +868,12 @@ mod tests {
         // before: protected points counted like any other point, 8 against 120 wrong ones
         let old = rot_error(&place(&cps, false, 1.0), &truth);
         let new = rot_error(&place(&cps, true, LOCKED_WEIGHT), &truth);
-        println!("rotation error: protected like any point {old:.5}, protected weighted {new:.5}");
-        assert!(new < 0.002, "protected points must decide: {new}");
-        assert!(new < old * 0.25, "old {old} new {new}");
+        // a high weight (the switch in step 3) lets 8 protected points decide against 120 wrong ones
+        let high = rot_error(&place(&cps, true, 30.0), &truth);
+        println!("rotation error: protected like any point {old:.5}, default weight {new:.5}, weight 30 {high:.5}");
+        assert!(high < 0.002, "a high weight must let the protected points decide: {high}");
+        // the default (5, a compromise with the image content, see `LOCKED_WEIGHT`) still clearly helps
+        assert!(new < old * 0.5, "old {old} default {new}");
     }
 
     #[test]
