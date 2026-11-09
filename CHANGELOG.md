@@ -8,6 +8,9 @@
 - Point editor, add tool: a wrongly snapped side could not be corrected (every click went to the same spot, and clicking the first photo again made a second point). While the new point is still selected, a click in a photo moves exactly that side there; the snap only corrects within the small local search radius and never jumps back, a weak match keeps the click spot, Alt+click and Alt+drag do not snap at all, protected points are not moved. Esc or Ctrl+click starts a new point (hint line and status explain it). Unit-tested; not tried by clicking through the window.
 - Point editor: both photos are equal. It does not matter whether you start in the left or the right photo, a correction click, Alt, snapping and drag act on the clicked side only, and the match window of a new point follows the half placed second. The local tilt for a correction no longer counts the point being corrected. Unit-tested with both photos on either side.
 
+### Changed
+- One lasso in the whole program. The point editor and the mask editor now share one implementation (`select_shapes::Lasso`) and one way of drawing it. The point editor's lasso gains what the mask lasso had: besides dragging around an area, you can click corner by corner and close with a double click or Enter; Esc cancels it, Ctrl+Z takes the last corner back, a shaky click sets one corner. Both editors draw the same outline (dark halo, thin line, faint closing line, corner dots, brush circle with the same halo) and show the same help text; only the colour differs (violet for points, green/red for the kind of mask). With the lasso chosen in the point editor, a click on empty space now starts a corner instead of clearing the selection; a click on a point still selects it. Unit-tested; not tried by clicking through the window.
+
 ## [0.3.0] - 2026-11-09
 
 ### Added
