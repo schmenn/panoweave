@@ -204,10 +204,7 @@ impl PanoApp {
         let mut snapped = false;
         if snap {
             let pf = self.to_px(other, fixed_n);
-            let j = match self.predict(other, this, pf) {
-                Some(x) => x.1,
-                None => self.rotation_guess(other, pf, this, p),
-            };
+            let j = self.local_jacobian(other, this, pf, p);
             let r = self.local_radius(this);
             if let Some((q, _)) = self.finetune(other, pf, this, p, j, r).filter(|r| r.1 >= guided::FINETUNE_MIN_NCC) {
                 final_p = q;
@@ -325,6 +322,8 @@ impl PanoApp {
         self.cps.push(ControlPoint::new(a, b, pa, pb, true));
         self.pe.selected = Some(self.cps.len() - 1);
         self.pe.fresh = self.pe.selected;
+        // the half placed second is the one that followed, whichever photo it is in
+        self.pe.moving = Some(p1.other());
         self.needs_align = true;
         if self.auto_grow {
             let auto = self.cps.iter().filter(|c| !c.manual && ((c.a == a && c.b == b) || (c.a == b && c.b == a))).count();
@@ -332,6 +331,20 @@ impl PanoApp {
                 self.run_pair_points();
             }
         }
+    }
+
+    /// Local zoom/tilt between `fixed` and `moving` at `pf` for a snap, from the other points of
+    /// the pair (the point at `pf` itself is left out), else from the lenses and a measured
+    /// rotation around the guess `pm`. Works the same whichever of the two photos is on the left.
+    fn local_jacobian(&self, fixed: usize, moving: usize, pf: P2, pm: P2) -> [f64; 4] {
+        let seeds: Vec<(P2, P2)> = self.pair_seeds(fixed, moving).into_iter().filter(|s| (s.0 .0 - pf.0).hypot(s.0 .1 - pf.1) > 0.01).collect();
+        let (w, h) = self.work_dims(fixed);
+        if seeds.len() >= 2 {
+            guided::estimate(&seeds, self.scale_prior(fixed, moving), w.max(h) as f64).map(|t| guided::jacobian(&t, pf))
+        } else {
+            None
+        }
+        .unwrap_or_else(|| self.rotation_guess(fixed, pf, moving, pm))
     }
 
     /// After dragging a point: snap it onto its partner with sub-pixel accuracy.
@@ -345,15 +358,7 @@ impl PanoApp {
         let (fixed, moving, fixed_p, moving_p) = if pane == Pane::A { (b, a, pb, pa) } else { (a, b, pa, pb) };
         let pf = self.to_px(fixed, fixed_p);
         let pm = self.to_px(moving, moving_p);
-        // local zoom/tilt from the other points of the pair (without this one)
-        let seeds: Vec<(P2, P2)> = self.pair_seeds(fixed, moving).into_iter().filter(|s| (s.0 .0 - pf.0).hypot(s.0 .1 - pf.1) > 0.01).collect();
-        let (w, h) = self.work_dims(fixed);
-        let j = if seeds.len() >= 2 {
-            guided::estimate(&seeds, self.scale_prior(fixed, moving), w.max(h) as f64).map(|t| guided::jacobian(&t, pf))
-        } else {
-            None
-        }
-        .unwrap_or_else(|| self.rotation_guess(fixed, pf, moving, pm));
+        let j = self.local_jacobian(fixed, moving, pf, pm);
         let r = self.local_radius(moving);
         if let Some((q, v)) = self.finetune(fixed, pf, moving, pm, j, r)
             && v >= guided::FINETUNE_MIN_NCC {
@@ -671,6 +676,53 @@ mod undo_tests {
         app.undo_last();
         assert_eq!(app.cps[0].pb, app.to_norm(1, (30.0, 20.0)));
         assert_eq!(app.cps[0].pa, old_a);
+    }
+
+    /// The point's position in photo `idx` (whichever of its two sides that is).
+    fn side_of(c: &ControlPoint, idx: usize) -> [f64; 2] {
+        if c.a == idx { c.pa } else { c.pb }
+    }
+
+    #[test]
+    fn both_photos_behave_the_same_whichever_is_on_the_left() {
+        // the pair shown as (0, 1) or (1, 0), the click in the left or in the right pane
+        for (a, b) in [(0usize, 1usize), (1, 0)] {
+            for pane in [Pane::A, Pane::B] {
+                let mut app = setup();
+                app.cps.clear();
+                app.auto_grow = false;
+                app.pe.a = a;
+                app.pe.b = b;
+                app.pe.tool = PointTool::Add;
+                let idx = if pane == Pane::A { a } else { b };
+                let other = if pane == Pane::A { b } else { a };
+                // start in `pane` (Alt: no snapping, no partner search), finish in the other pane
+                app.add_point_click(pane, (10.0, 12.0), egui::Modifiers::ALT);
+                assert!(app.pe.pending.is_some(), "no partner is searched with Alt");
+                app.add_point_click(pane.other(), (40.0, 30.0), egui::Modifiers::ALT);
+                assert_eq!(app.cps.len(), 1);
+                assert_eq!(side_of(&app.cps[0], idx), app.to_norm(idx, (10.0, 12.0)), "pair ({a},{b}) first click in {pane:?}");
+                assert_eq!(side_of(&app.cps[0], other), app.to_norm(other, (40.0, 30.0)));
+                // the frame of the new point shows the first-placed half as the fixed one
+                assert_eq!(app.pe.moving, Some(pane.other()));
+                // a click in either pane moves exactly that side, the other stays
+                for click in [pane, pane.other()] {
+                    let ci = if click == Pane::A { a } else { b };
+                    let oi = if click == Pane::A { b } else { a };
+                    let keep = side_of(&app.cps[0], oi);
+                    app.add_point_click(click, (25.0, 33.0), egui::Modifiers::ALT);
+                    assert_eq!(app.cps.len(), 1);
+                    assert_eq!(side_of(&app.cps[0], ci), app.to_norm(ci, (25.0, 33.0)));
+                    assert_eq!(side_of(&app.cps[0], oi), keep);
+                    assert_eq!(app.pe.moving, Some(click));
+                    // snapping on: stays within the small local radius of the click
+                    app.add_point_click(click, (50.0, 40.0), egui::Modifiers::NONE);
+                    let (x, y) = app.to_px(ci, side_of(&app.cps[0], ci));
+                    assert!((x - 50.0).hypot(y - 40.0) <= app.local_radius(ci) + 1.0);
+                    assert_eq!(side_of(&app.cps[0], oi), keep);
+                }
+            }
+        }
     }
 
     #[test]
