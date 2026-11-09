@@ -9,6 +9,15 @@
 //! - `PW_ACC_PASSES` passes (default 3)
 //! - `PW_FINE_GRID` control-area grid cell (default 64), `PW_FINE_AREAS` areas per pair (200),
 //!   `PW_FINE_ITER` rounds (4), `PW_FINE_CONV` stop threshold in px (0.1)
+//! - `PW_FINE_MINSTRUCT` smallest structure (two-direction texture) of a patch, `PW_FINE_UNIQ` smallest uniqueness,
+//!   `PW_FINE_MINSCORE` smallest similarity, `PW_FINE_PICK=0` plain grid instead of placing areas where the photo has
+//!   structure, `PW_FINE_EDGE` share of the search radius kept from the photo border (1 = earlier versions). The quality
+//!   check itself always uses the earlier matcher settings (no structure test), so it measures the same thing whatever
+//!   is set here.
+//! - `PW_FOLIAGE=0` / `1` foliage rating (smaller weight for points and patches on trees) off / on (default on);
+//!   after every pass the share of points and patches the rating counts as foliage is printed (whatever the
+//!   switch says, so the two runs can be compared), `PW_FOLIAGE_OVERLAY=<folder>` writes the foliage map and the
+//!   points on the first three photos there as pictures (`foliage_<n>.jpg`)
 //! - `PW_ACC_NO_OUTLIERS=1` passes after the first keep every point (no outlier removal)
 //! - `PW_ACC_PAIRS=1` also prints the check per photo pair (worst first, with the lens of each photo)
 //! - `PW_ACC_FINE_SIZE` long side of the images the fine alignment works on (default 1600 = the
@@ -100,6 +109,14 @@ pub fn run(files: &[PathBuf]) {
         refine_iterations: env("PW_FINE_ITER", d.refine_iterations),
         converge_threshold: env("PW_FINE_CONV", d.converge_threshold),
         record_patches: false,
+        pick_textured: env("PW_FINE_PICK", 1u8) != 0,
+        edge_search_share: env("PW_FINE_EDGE", d.edge_search_share),
+        matcher: crate::patch_matcher::MatchConfig {
+            min_structure: env("PW_FINE_MINSTRUCT", d.matcher.min_structure),
+            min_uniqueness: env("PW_FINE_UNIQ", d.matcher.min_uniqueness),
+            min_score: env("PW_FINE_MINSCORE", d.matcher.min_score),
+            ..d.matcher.clone()
+        },
         ..d
     };
     let passes: usize = env("PW_ACC_PASSES", 3);
@@ -107,7 +124,7 @@ pub fn run(files: &[PathBuf]) {
     let pc_cfg = pair_check::PairCheckConfig::default();
     let used = vec![true; photos.len()];
     // the quality check: a small search (the alignment is already close) on fixed spots
-    let qcfg = crate::patch_matcher::MatchConfig { search_radius: 6.0, ..fine_cfg.matcher.clone() };
+    let qcfg = crate::patch_matcher::MatchConfig { search_radius: 6.0, min_structure: 0.0, min_uniqueness: 1.15, min_score: 0.6, ..fine_cfg.matcher.clone() };
     let mut cps = m.cps.clone();
     let mut spots = Vec::new();
     println!(
@@ -117,8 +134,14 @@ pub fn run(files: &[PathBuf]) {
     for pass in 0..passes {
         let t = std::time::Instant::now();
         let s = engine::AlignSettings { remove_outliers: pass == 0 || !keep_points, ..Default::default() };
-        let r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, &|_, _| {});
+        // the same foliage rating as "Align photos" in the app
+        let fol_v = if fine_cfg.foliage.enabled { fine_align::foliage_maps(&fa) } else { Vec::new() };
+        let fol: Vec<Option<&crate::foliage::FoliageMap>> = (0..fa.len()).map(|i| fol_v.get(i)).collect();
+        crate::foliage::rate(&mut cps, &fol, &fine_cfg.foliage);
+        let mut r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, &|_, _| {});
+        crate::foliage::rate(&mut r0.cps, &fol, &fine_cfg.foliage);
         let (mut r, _) = pair_check::run_rounds(&fa, &lens_of, &lenses, &long, r0, &s, &used, &pc_cfg, &fine_cfg.matcher, ms, &|_, _| {});
+        crate::foliage::rate(&mut r.cps, &fol, &fine_cfg.foliage);
         let removed = r.removed;
         if spots.is_empty() {
             let mut pairs: Vec<(usize, usize)> = r.cps.iter().map(|c| (c.a.min(c.b), c.a.max(c.b))).collect();
@@ -168,10 +191,50 @@ pub fn run(files: &[PathBuf]) {
                 println!("{t}");
             }
         }
+        report_foliage(&fa, &r.cps, pass);
         cps = r.cps;
         lenses = r.lenses;
         for (i, l) in lenses.iter().enumerate() {
             println!("lens {}: {:.2}° wide, k1 {:+.4}", i + 1, l.hfov_deg(), l.k1);
+        }
+    }
+}
+
+/// Share of points and patches that count as foliage (value >= 0.5, with and without the motion clue), judged
+/// with the default foliage settings whatever the switch says; optional overlay pictures.
+fn report_foliage(fa: &[fine_align::FaPhoto], cps: &[align::ControlPoint], pass: usize) {
+    use crate::foliage::{self, FoliageConfig};
+    let maps_v = foliage::maps_of(&fa.iter().map(|p| (&*p.rgb, &*p.gray)).collect::<Vec<_>>());
+    let maps: Vec<Option<&foliage::FoliageMap>> = maps_v.iter().map(Some).collect();
+    let cfg = FoliageConfig::default();
+    let with_motion = foliage::shares(cps, &maps, &cfg, 0.5);
+    let look_only = foliage::shares(cps, &maps, &FoliageConfig { static_share: 1.0, ..cfg }, 0.5);
+    let pct = |s: (usize, usize)| format!("{} of {} ({:.1} %)", s.0, s.1, 100.0 * s.0 as f32 / s.1.max(1) as f32);
+    println!(
+        "  foliage after pass {}: points {} | patches {} (colour and structure only: points {}, patches {}); photo area with foliage look: {:.1} %",
+        pass + 1,
+        pct(with_motion[0]),
+        pct(with_motion[1]),
+        pct(look_only[0]),
+        pct(look_only[1]),
+        100.0 * maps_v.iter().map(|m| m.share()).sum::<f32>() / maps_v.len().max(1) as f32
+    );
+    let mut rated = cps.to_vec();
+    let low = foliage::rate(&mut rated, &maps, &cfg);
+    let mean = rated.iter().map(|c| c.fol_w as f64).sum::<f64>() / rated.len().max(1) as f64;
+    println!("  weight factor: mean {mean:.3}, {low} of {} below 0.9", rated.len());
+    if let Ok(dir) = std::env::var("PW_FOLIAGE_OVERLAY")
+        && pass + 1 == env("PW_ACC_PASSES", 3usize)
+    {
+        let _ = std::fs::create_dir_all(&dir);
+        let v = foliage::values(cps, &maps, &cfg);
+        for i in 0..fa.len().min(3) {
+            let img = foliage::overlay(&fa[i].rgb, &maps_v[i], cps.iter().zip(&v).filter(|(c, _)| c.a == i || c.b == i).map(|(c, v)| (if c.a == i { c.pa } else { c.pb }, c.kind, *v)));
+            let path = std::path::Path::new(&dir).join(format!("foliage_{}.jpg", i + 1));
+            match img.save(&path) {
+                Ok(()) => println!("  overlay: {}", path.display()),
+                Err(e) => println!("  overlay {} failed: {e}", path.display()),
+            }
         }
     }
 }

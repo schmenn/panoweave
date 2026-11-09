@@ -59,6 +59,14 @@ impl FeatureSpace {
 /// ~5e-6, textured city/foliage patches are above ~1e-4.
 pub const MIN_TEXTURE_DEFAULT: f32 = 2.0e-5;
 
+/// Smaller eigenvalue of the mean structure tensor of the template (same units as the texture:
+/// squared grey gradient per pixel). It is large only when the patch has structure in two directions;
+/// a straight edge or a smooth ramp gives nearly zero. `0` switches the check off (earlier behaviour).
+/// Measured on a street series (19 photos, asphalt, trees, cars; first round of the fine alignment): below 1e-4
+/// only about 1 in 3 patches were accepted and those had the weakest uniqueness (median 1.3-1.5 against 1.8 above),
+/// which is where plain asphalt and a single lane edge got through; above it 78-93 % were accepted.
+pub const MIN_STRUCTURE_DEFAULT: f32 = 1.0e-4;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MatchConfig {
     /// edge length of the patch in pixels
@@ -74,6 +82,9 @@ pub struct MatchConfig {
     /// best peak / second-best peak (outside a 5x5 neighbourhood)
     pub min_uniqueness: f32,
     pub min_texture: f32,
+    /// smaller eigenvalue of the structure tensor (see `MIN_STRUCTURE_DEFAULT`); 0 = not checked
+    #[serde(default = "min_structure_default")]
+    pub min_structure: f32,
     /// forward-backward tolerance in pixels
     pub fb_tolerance: f32,
     pub forward_backward: bool,
@@ -81,6 +92,10 @@ pub struct MatchConfig {
     pub min_valid_fraction: f32,
     /// Gaussian pre-blur (matching only)
     pub blur_sigma: f32,
+}
+
+fn min_structure_default() -> f32 {
+    MIN_STRUCTURE_DEFAULT
 }
 
 impl Default for MatchConfig {
@@ -95,6 +110,7 @@ impl Default for MatchConfig {
             min_score: 0.6,
             min_uniqueness: 1.15,
             min_texture: MIN_TEXTURE_DEFAULT,
+            min_structure: MIN_STRUCTURE_DEFAULT,
             fb_tolerance: 0.5,
             forward_backward: true,
             min_valid_fraction: 0.8,
@@ -111,6 +127,10 @@ pub struct MatchResult {
     pub confidence: f32,
     pub valid: bool,
     pub reason: &'static str,
+    /// texture measure of the template and best / second-best peak (0 when not reached)
+    pub texture: f32,
+    pub min_eig: f32,
+    pub uniqueness: f32,
 }
 
 impl MatchResult {
@@ -186,8 +206,10 @@ fn masked_blur(v: &[f32], m: &[bool], s: usize, sigma: f32) -> Vec<f32> {
     o.iter().zip(&ow).map(|(a, w)| if *w > 1e-6 { a / w } else { 0.0 }).collect()
 }
 
-fn gradient(v: &[f32], m: &[bool], s: usize) -> (Vec<f32>, Vec<bool>) {
-    let mut g = vec![0.0; s * s];
+/// Sobel gradient components (per pixel, /8) and the mask of pixels whose 3x3 neighbourhood is valid.
+fn sobel(v: &[f32], m: &[bool], s: usize) -> (Vec<f32>, Vec<f32>, Vec<bool>) {
+    let mut gxs = vec![0.0; s * s];
+    let mut gys = vec![0.0; s * s];
     let mut gm = vec![false; s * s];
     for y in 1..s.saturating_sub(1) {
         for x in 1..s - 1 {
@@ -197,12 +219,17 @@ fn gradient(v: &[f32], m: &[bool], s: usize) -> (Vec<f32>, Vec<bool>) {
                 continue;
             }
             let p = |dx: isize, dy: isize| v[(y as isize + dy) as usize * s + (x as isize + dx) as usize];
-            let gx = ((p(1, -1) + 2.0 * p(1, 0) + p(1, 1)) - (p(-1, -1) + 2.0 * p(-1, 0) + p(-1, 1))) / 8.0;
-            let gy = ((p(-1, 1) + 2.0 * p(0, 1) + p(1, 1)) - (p(-1, -1) + 2.0 * p(0, -1) + p(1, -1))) / 8.0;
-            g[i] = (gx * gx + gy * gy).sqrt();
+            gxs[i] = ((p(1, -1) + 2.0 * p(1, 0) + p(1, 1)) - (p(-1, -1) + 2.0 * p(-1, 0) + p(-1, 1))) / 8.0;
+            gys[i] = ((p(-1, 1) + 2.0 * p(0, 1) + p(1, 1)) - (p(-1, -1) + 2.0 * p(0, -1) + p(1, -1))) / 8.0;
             gm[i] = true;
         }
     }
+    (gxs, gys, gm)
+}
+
+fn gradient(v: &[f32], m: &[bool], s: usize) -> (Vec<f32>, Vec<bool>) {
+    let (gx, gy, gm) = sobel(v, m, s);
+    let g = gx.iter().zip(&gy).map(|(a, b)| (a * a + b * b).sqrt()).collect();
     (g, gm)
 }
 
@@ -223,30 +250,103 @@ fn features(r: &Region, cfg: &MatchConfig, force_gradient: bool) -> Feat {
     }
 }
 
-/// Quick check before the (more expensive) search: does the template have enough texture?
-pub fn has_texture(r: &Region, cfg: &MatchConfig) -> bool {
-    texture(r, cfg) >= cfg.min_texture
+/// Why the template is not worth searching with (None = it has enough structure).
+pub fn texture_reason(r: &Region, cfg: &MatchConfig) -> Option<&'static str> {
+    let (energy, min_eig) = structure(r, cfg);
+    if energy < cfg.min_texture {
+        Some("too little texture")
+    } else if min_eig < cfg.min_structure {
+        Some("structure in one direction only")
+    } else {
+        None
+    }
 }
 
-/// Mean squared gradient of the template (texture measure).
-fn texture(r: &Region, cfg: &MatchConfig) -> f32 {
+/// Texture of the centre patch: mean squared gradient, and the smaller eigenvalue of the mean
+/// structure tensor [[gx^2, gx gy], [gx gy, gy^2]] (both in grey 0..1 per pixel, after the pre-blur).
+pub fn structure(r: &Region, cfg: &MatchConfig) -> (f32, f32) {
     let s = r.size;
     let b = masked_blur(&r.data, &r.mask, s, cfg.blur_sigma);
-    let (g, gm) = gradient(&b, &r.mask, s);
+    let (gx, gy, gm) = sobel(&b, &r.mask, s);
     let c = s / 2;
     let h = cfg.patch_size / 2;
-    let mut sum = 0.0;
+    let (mut sxx, mut syy, mut sxy) = (0.0f32, 0.0f32, 0.0f32);
     let mut n = 0;
     for y in c.saturating_sub(h)..(c + h).min(s) {
         for x in c.saturating_sub(h)..(c + h).min(s) {
             let i = y * s + x;
             if gm[i] {
-                sum += g[i] * g[i];
+                sxx += gx[i] * gx[i];
+                syy += gy[i] * gy[i];
+                sxy += gx[i] * gy[i];
                 n += 1;
             }
         }
     }
-    if n == 0 { 0.0 } else { sum / n as f32 }
+    if n == 0 {
+        return (0.0, 0.0);
+    }
+    let k = 1.0 / n as f32;
+    let (sxx, syy, sxy) = (sxx * k, syy * k, sxy * k);
+    let min_eig = 0.5 * (sxx + syy - ((sxx - syy).powi(2) + 4.0 * sxy * sxy).sqrt());
+    (sxx + syy, min_eig.max(0.0))
+}
+
+/// The structure tensor of a whole photo as integral images, so the structure of any square window
+/// (the same measure as [`structure`]: smaller eigenvalue of the mean tensor) costs a few additions.
+/// Used to put control areas where a photo has structure in two directions.
+pub struct StructMap {
+    w: usize,
+    h: usize,
+    xx: Vec<f64>,
+    yy: Vec<f64>,
+    xy: Vec<f64>,
+}
+
+impl StructMap {
+    pub fn new(g: &crate::imgutil::Gray, blur_sigma: f32) -> Self {
+        let b = crate::imgutil::blur(g, blur_sigma);
+        let (w, h) = (g.w, g.h);
+        let n = (w + 1) * (h + 1);
+        let (mut xx, mut yy, mut xy) = (vec![0.0f64; n], vec![0.0f64; n], vec![0.0f64; n]);
+        for y in 0..h {
+            let (mut rx, mut ry, mut rxy) = (0.0f64, 0.0f64, 0.0f64);
+            for x in 0..w {
+                if x > 0 && y > 0 && x + 1 < w && y + 1 < h {
+                    let p = |dx: usize, dy: usize| b.data[(y + dy - 1) * w + x + dx - 1];
+                    let gx = ((p(2, 0) + 2.0 * p(2, 1) + p(2, 2)) - (p(0, 0) + 2.0 * p(0, 1) + p(0, 2))) / 8.0;
+                    let gy = ((p(0, 2) + 2.0 * p(1, 2) + p(2, 2)) - (p(0, 0) + 2.0 * p(1, 0) + p(2, 0))) / 8.0;
+                    rx += (gx * gx) as f64;
+                    ry += (gy * gy) as f64;
+                    rxy += (gx * gy) as f64;
+                }
+                let i = (y + 1) * (w + 1) + x + 1;
+                xx[i] = xx[i - (w + 1)] + rx;
+                yy[i] = yy[i - (w + 1)] + ry;
+                xy[i] = xy[i - (w + 1)] + rxy;
+            }
+        }
+        StructMap { w, h, xx, yy, xy }
+    }
+
+    /// (mean squared gradient, smaller eigenvalue of the mean structure tensor) of the square window of
+    /// half side `half` around (cx, cy), in pixel coordinates; (0, 0) when the window leaves the photo.
+    pub fn at(&self, cx: f64, cy: f64, half: f64) -> (f32, f32) {
+        let (x0, y0) = ((cx - half).round() as isize, (cy - half).round() as isize);
+        let (x1, y1) = ((cx + half).round() as isize, (cy + half).round() as isize);
+        if x0 < 0 || y0 < 0 || x1 > self.w as isize || y1 > self.h as isize || x1 <= x0 || y1 <= y0 {
+            return (0.0, 0.0);
+        }
+        let sum = |v: &Vec<f64>| {
+            let k = self.w + 1;
+            let (x0, y0, x1, y1) = (x0 as usize, y0 as usize, x1 as usize, y1 as usize);
+            v[y1 * k + x1] - v[y0 * k + x1] - v[y1 * k + x0] + v[y0 * k + x0]
+        };
+        let n = ((x1 - x0) * (y1 - y0)) as f64;
+        let (a, c, b) = (sum(&self.xx) / n, sum(&self.yy) / n, sum(&self.xy) / n);
+        let min_eig = 0.5 * (a + c - ((a - c).powi(2) + 4.0 * b * b).sqrt());
+        ((a + c) as f32, min_eig.max(0.0) as f32)
+    }
 }
 
 fn down(f: &Feat) -> Feat {
@@ -578,6 +678,8 @@ pub struct MatchDetail {
     pub uniqueness: f32,
     /// mean squared gradient of the template
     pub texture: f32,
+    /// smaller eigenvalue of the structure tensor of the template
+    pub min_eig: f32,
 }
 
 fn search(a: &Region, b: &Region, cfg: &MatchConfig, mut tr: Option<&mut SearchTrace>) -> Result<Search, &'static str> {
@@ -791,7 +893,10 @@ pub fn match_patch(a: &Region, b: &Region, cfg: &MatchConfig) -> MatchResult {
 /// tested. The result is exactly the same as `match_patch`.
 pub fn match_patch_detailed(a: &Region, b: &Region, cfg: &MatchConfig, trace: Option<&mut SearchTrace>) -> (MatchResult, MatchDetail) {
     let mut detail = MatchDetail::default();
-    let r = match_inner(a, b, cfg, trace, &mut detail);
+    let mut r = match_inner(a, b, cfg, trace, &mut detail);
+    r.texture = detail.texture;
+    r.min_eig = detail.min_eig;
+    r.uniqueness = detail.uniqueness;
     (r, detail)
 }
 
@@ -815,10 +920,14 @@ fn match_inner(a: &Region, b: &Region, cfg: &MatchConfig, trace: Option<&mut Sea
     if (ok as f32) < cfg.min_valid_fraction * tot as f32 {
         return MatchResult::invalid("patch outside the photo");
     }
-    let tex = texture(a, cfg);
+    let (tex, min_eig) = structure(a, cfg);
     detail.texture = tex;
+    detail.min_eig = min_eig;
     if tex < cfg.min_texture {
         return MatchResult::invalid("too little texture");
+    }
+    if min_eig < cfg.min_structure {
+        return MatchResult::invalid("structure in one direction only");
     }
     let fwd = match search(a, b, cfg, trace) {
         Ok(f) => f,
@@ -870,11 +979,6 @@ fn match_inner(a: &Region, b: &Region, cfg: &MatchConfig, trace: Option<&mut Sea
 
 // ---------------------------------------------------------------------------------------
 // helpers for the patch comparison window (display only, never used by the matching)
-
-/// Texture measure of a region's centre patch (same as the matcher's check).
-pub fn texture_of(r: &Region, cfg: &MatchConfig) -> f32 {
-    texture(r, cfg)
-}
 
 /// The matching features of a region (after pre-blur): brightness or gradient magnitude.
 /// With `FeatureSpace::Both` the gradient channel is returned.
@@ -1075,5 +1179,47 @@ mod tests {
         let r = match_patch(&a, &b, &cfg);
         assert!(r.valid, "{:?}", r);
         assert!((r.dx - 1.5).abs() < 0.15 && (r.dy + 0.5).abs() < 0.15, "{:?}", r);
+    }
+
+    /// A straight edge has plenty of gradient but only in one direction: it slides along the edge, so with the
+    /// structure check on it is refused with its own reason; texture passes, plain surfaces fail the old check.
+    #[test]
+    fn structure_check_refuses_single_edges_and_keeps_texture() {
+        let cfg = MatchConfig { min_structure: 1.0e-4, ..MatchConfig::default() };
+        let tex = region((0.0, 0.0), &texture_value);
+        let edge = region((0.0, 0.0), &|x, _| if x > 60.0 { 0.8 } else { 0.2 });
+        let flat = region((0.0, 0.0), &|x, y| 0.5 + 0.0005 * ((x * 12.9898 + y * 78.233).sin() * 43758.5).fract());
+        let (e_tex, m_tex) = structure(&tex, &cfg);
+        let (e_edge, m_edge) = structure(&edge, &cfg);
+        assert!(m_tex > 1.0e-4 && e_tex >= m_tex, "texture: {e_tex} {m_tex}");
+        assert!(e_edge > cfg.min_texture && m_edge < 1.0e-6, "edge: {e_edge} {m_edge}");
+        assert_eq!(texture_reason(&tex, &cfg), None);
+        assert_eq!(texture_reason(&edge, &cfg), Some("structure in one direction only"));
+        assert_eq!(texture_reason(&flat, &cfg), Some("too little texture"));
+        // the shift search itself reports the same reason, and with the check off (0) the edge is not refused here
+        let b = region((0.0, 0.0), &|x, _| if x > 60.0 { 0.8 } else { 0.2 });
+        assert_eq!(match_patch(&edge, &b, &cfg).reason, "structure in one direction only");
+        let off = MatchConfig { min_structure: 0.0, ..cfg };
+        assert_ne!(match_patch(&edge, &b, &off).reason, "structure in one direction only");
+    }
+
+    /// The whole-photo map gives the same structure as the matcher's own measure of the same window.
+    #[test]
+    fn structure_map_agrees_with_the_matcher_measure() {
+        let cfg = MatchConfig::default();
+        let s = Region::size_for(&cfg);
+        let mut g = crate::imgutil::Gray::new(s, s);
+        for y in 0..s {
+            for x in 0..s {
+                g.data[y * s + x] = texture_value(x as f32, y as f32);
+            }
+        }
+        let r = region((0.0, 0.0), &texture_value);
+        let (e, m) = structure(&r, &cfg);
+        let map = StructMap::new(&g, cfg.blur_sigma);
+        let c = (s / 2) as f64;
+        let (e2, m2) = map.at(c, c, (cfg.patch_size / 2) as f64);
+        assert!((e - e2).abs() < 0.1 * e && (m - m2).abs() < 0.1 * m, "{e} {m} against {e2} {m2}");
+        assert_eq!(map.at(1.0, 1.0, 30.0), (0.0, 0.0), "a window outside the photo has no structure");
     }
 }
