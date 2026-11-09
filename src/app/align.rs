@@ -35,7 +35,7 @@ impl PanoApp {
         let lenses = self.lenses.clone();
         let cps: Vec<ControlPoint> = self.cps.iter().filter(|c| active.contains(&c.a) && active.contains(&c.b)).copied().collect();
         let s = AlignSettings { ..self.align_settings };
-        let s = AlignSettings { fine_tune_fov: s.fine_tune_fov, distortion: s.distortion, remove_outliers: s.remove_outliers, level: s.level, locked_weight: s.locked_weight };
+        let s = AlignSettings { fine_tune_fov: s.fine_tune_fov, distortion: s.distortion, remove_outliers: s.remove_outliers, level: s.level, locked_weight: s.locked_weight, outliers_skip_areas: s.outliers_skip_areas };
         let fine_cfg = fine_align::FineConfig { locked_weight: self.align_settings.locked_weight, ..self.fine_cfg.clone() };
         let par_cfg = self.parallax_cfg.clone();
         let fa: Vec<fine_align::FaPhoto> = self.photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
@@ -44,7 +44,14 @@ impl PanoApp {
         let used: Vec<bool> = (0..self.photos.len()).map(|i| active.contains(&i)).collect();
         self.start_job("Aligning photos", move |report, _| {
             let (focal, dist) = (s.fine_tune_fov, s.distortion);
-            let r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, report);
+            // foliage (moves between the shots) gets a smaller weight: first from colour and structure and the
+            // errors of the last alignment, then again from the errors of this one
+            let fol_v = if fine_cfg.foliage.enabled { fine_align::foliage_maps(&fa) } else { Vec::new() };
+            let fol: Vec<Option<&crate::foliage::FoliageMap>> = (0..fa.len()).map(|i| fol_v.get(i)).collect();
+            let mut cps = cps;
+            crate::foliage::rate(&mut cps, &fol, &fine_cfg.foliage);
+            let mut r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, report);
+            crate::foliage::rate(&mut r0.cps, &fol, &fine_cfg.foliage);
             // geometric pair check: overlapping pairs without enough points are searched again
             let (mut r, summary) = if pc_cfg.enabled {
                 crate::pair_check::run_rounds(&fa, &lens_of, &lenses, &long, r0, &s, &used, &pc_cfg, &fine_cfg.matcher, msettings, report)
@@ -56,6 +63,7 @@ impl PanoApp {
                 eprintln!("pair check: {l}");
             }
             r.pairs = Some(summary);
+            crate::foliage::rate(&mut r.cps, &fol, &fine_cfg.foliage);
             if fine_cfg.enabled {
                 let (rots, lenses2, cps2, st) = fine_align::run(&fa, &lens_of, &long, &r.lenses, &r.rots, &r.cps, focal, dist, &fine_cfg, report);
                 r.rots = rots;
@@ -107,7 +115,7 @@ impl PanoApp {
             let errs: Vec<f64> = cps2.iter().filter(|c| c.kind == CpKind::Point).map(|c| c.err).collect();
             let (mean_err, max_err) = if errs.is_empty() { (0.0, 0.0) } else { (errs.iter().sum::<f64>() / errs.len() as f64, errs.iter().cloned().fold(0.0, f64::max)) };
             let fields = if par_cfg.enabled { fine_align::parallax_fields(&fa, &lens_of, &lenses2, &rots, &cps2, &fine_cfg, &par_cfg) } else { old_fields };
-            JobMsg::Aligned(AlignResult { rots, lenses: lenses2, cps: cps2, removed: 0, ms: t0.elapsed().as_millis(), mean_err, max_err, fine: Some(st), fields, pairs: None })
+            JobMsg::Aligned(AlignResult { rots, lenses: lenses2, cps: cps2, removed: 0, removal_passes: 0, ms: t0.elapsed().as_millis(), mean_err, max_err, fine: Some(st), fields, pairs: None })
         });
     }
 
@@ -151,6 +159,7 @@ impl PanoApp {
         self.aligned = true;
         self.needs_align = false;
         self.last_align = Some((a.mean_err, a.max_err, a.removed, a.ms));
+        self.last_align_passes = a.removal_passes;
         let was_chain = self.auto_chain;
         if was_chain || self.view.bounds == PanoView::default().bounds {
             self.choose_projection();
@@ -173,7 +182,7 @@ impl PanoApp {
                 "Aligned in {}: average error {:.2} px ({q}){}.{}{fine_note}",
                 fmt_ms(a.ms),
                 a.mean_err,
-                if a.removed > 0 { format!(", {} bad points removed automatically", a.removed) } else { String::new() },
+                if a.removed > 0 { format!(", {}", removed_text(a.removed, a.removal_passes)) } else { String::new() },
                 pair_note.unwrap_or_default()
             ),
             if a.mean_err < 3.0 && fine_note.is_empty() { GOOD } else { WARN },
@@ -244,7 +253,7 @@ impl PanoApp {
                         ui.add_space(12.0);
                         ui.vertical(|ui| {
                             ui.label(format!("Average error {mean:.2} px · worst point {max:.1} px"));
-                            ui.label(RichText::new(format!("{} points used · {removed} wrong matches removed automatically · {}", self.cps.len(), fmt_ms(ms))).small().color(MUTED));
+                            ui.label(RichText::new(format!("{} points used · {} · {}", self.cps.len(), removed_text(removed, self.last_align_passes), fmt_ms(ms))).small().color(MUTED));
                         });
                     });
                     if mean >= 3.0 {
@@ -332,6 +341,8 @@ impl PanoApp {
                         .small()
                         .color(MUTED),
                 );
+                ui.checkbox(&mut self.fine_cfg.foliage.enabled, "Count points and patches on foliage less (trees and bushes move between the shots)")
+                    .on_hover_text("Colour (green to brown), very fine irregular structure and restless residual errors after aligning mark foliage; those points and patches get a smaller weight (not removed), areas are placed away from foliage if possible. Protected points and points placed by hand are never touched. Off = exactly as before.");
                 ui.add_enabled_ui(self.fine_cfg.enabled, |ui| {
                     ui.checkbox(&mut self.fine_cfg.refine_points, "Refine control points");
                     ui.checkbox(&mut self.fine_cfg.areas, "Add control areas in the overlaps (denser along the seams)");
@@ -429,6 +440,10 @@ impl PanoApp {
                             ui.label("Points that fail the check");
                             ui.checkbox(&mut f.drop_invalid_points, "remove (otherwise keep with low weight)");
                             ui.end_row();
+                            ui.label("Control area placement");
+                            ui.checkbox(&mut f.pick_textured, "Where the photo has structure")
+                                .on_hover_text("On: each area sits at the spot with structure in two directions near its grid point, plain surfaces get none. Off: plain grid");
+                            ui.end_row();
                             ui.label("Patch comparison window");
                             ui.checkbox(&mut f.record_patches, "Record patches for this window")
                                 .on_hover_text("Off: faster and less memory, the alignment is the same, the window stays empty");
@@ -452,6 +467,9 @@ impl PanoApp {
                     ui.label(fine_summary(st));
                     if st.rolled_back {
                         ui.label(RichText::new("The last round was undone because it made the result worse.").color(WARN));
+                    }
+                    if st.cells_skipped > 0 {
+                        ui.label(format!("{} grid cells without structure were left out", st.cells_skipped));
                     }
                     egui::CollapsingHeader::new(format!("Why {} patches were not used", st.patches_total - st.patches_valid)).id_salt("fine_reasons").show(ui, |ui| {
                         for (k, v) in &st.reasons {

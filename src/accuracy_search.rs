@@ -402,7 +402,7 @@ fn with_fine(base: &AlignResult, spec: &PathSpec, env: &Env) -> Option<AlignResu
     let (rots, lenses, cps, st) = fine(&base.rots, &base.lenses, &base.cps, w);
     let errs: Vec<f64> = cps.iter().filter(|c| c.kind == CpKind::Point).map(|c| c.err).collect();
     let (mean_err, max_err) = if errs.is_empty() { (base.mean_err, base.max_err) } else { (errs.iter().sum::<f64>() / errs.len() as f64, errs.iter().cloned().fold(0.0, f64::max)) };
-    Some(AlignResult { rots, lenses, cps, removed: base.removed, ms: base.ms + t.elapsed().as_millis(), mean_err, max_err, fine: Some(st), fields: Vec::new(), pairs: None })
+    Some(AlignResult { rots, lenses, cps, removed: base.removed, removal_passes: base.removal_passes, ms: base.ms + t.elapsed().as_millis(), mean_err, max_err, fine: Some(st), fields: Vec::new(), pairs: None })
 }
 
 fn row(spec: PathSpec, outcome: Outcome) -> Row {
@@ -879,7 +879,7 @@ mod tests {
             lenses: std::slice::from_ref(&lens),
             long: &long,
             cps: &cps,
-            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0 },
+            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0, outliers_skip_areas: true },
             measure: &measure,
             fine: None,
             current: None,
@@ -930,7 +930,7 @@ mod tests {
             lenses: std::slice::from_ref(&lens),
             long: &long,
             cps: &cps,
-            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false, locked_weight: 1.0 },
+            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false, locked_weight: 1.0, outliers_skip_areas: true },
             measure: &measure,
             fine: None,
             current: None,
@@ -963,7 +963,7 @@ mod tests {
             lenses: std::slice::from_ref(&lens),
             long: &long,
             cps: &cps,
-            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0 },
+            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0, outliers_skip_areas: true },
             measure: &measure,
             fine: None,
             current: None,
@@ -987,7 +987,7 @@ mod tests {
             lenses: std::slice::from_ref(&lens),
             long: &long,
             cps: &cps,
-            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0 },
+            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0, outliers_skip_areas: true },
             measure: &measure,
             fine: Some(&fine),
             current: None,
@@ -1016,7 +1016,7 @@ mod tests {
             lenses: std::slice::from_ref(&lens),
             long: &long,
             cps: &cps,
-            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0 },
+            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0, outliers_skip_areas: true },
             measure: &measure,
             fine: None,
             current: None,
@@ -1042,7 +1042,7 @@ mod tests {
             lenses: std::slice::from_ref(&lens),
             long: &long,
             cps: &cps,
-            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0 },
+            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, locked_weight: 30.0, outliers_skip_areas: true },
             measure: &measure,
             fine: None,
             // a crooked current alignment
@@ -1082,7 +1082,7 @@ mod tests {
             lenses: std::slice::from_ref(&lens),
             long: &long,
             cps: &cps,
-            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false, locked_weight: 30.0 },
+            settings: AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false, locked_weight: 30.0, outliers_skip_areas: true },
             measure: &measure,
             fine: None,
             current: None,

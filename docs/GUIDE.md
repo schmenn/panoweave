@@ -85,13 +85,14 @@ Matching points (control points) are spots that show the same thing in two photo
 - **Remove points worse than … px → Clean up** deletes points with a large alignment error (after aligning). Protected points stay.
 - **Delete all in this pair** deletes the points of the pair on screen (protected points stay).
 - **Find points on sky or cloud** finds points that still sit on sky (placed by hand, from the patch click, from old projects). The photos are checked once ("Check N photos"); the threshold sets how much sky around a point counts. **Remove N** removes them as one undo step. Points placed by hand are only removed with "include points placed by hand"; protected points never. When nothing can be removed, the button says why.
+- **Foliage** (shown while "Count points and patches on foliage less" is on): the same for points on foliage. The threshold is the foliage value (0 to 1) from which a point counts; restless errors after aligning decide, so align first. "Check N photos" looks at the photos once; **Remove N** removes the automatic points on foliage as one undo step (hand-placed only with "include points placed by hand", protected never). Nothing is removed unless you press the button: by default foliage is only counted less.
 
 ### Step 3: Align
 
 **📐 Align photos** works out in which direction each photo was taken, the field of view of each lens and its distortion. The result shows the **average error** (in pixels of the original photos) and the **worst point**:
 
 - below 1.5 px: excellent; below 3 px: good; above: check the points.
-- "wrong matches removed automatically": points that did not fit were taken out. Undo (Ctrl+Z) brings them back.
+- "N points removed in M passes": points that did not fit were taken out (only real points; control areas are rebuilt by the fine alignment and not counted). The check runs again each time the pair check adds points, so M can be more than 1. Undo (Ctrl+Z) brings them back.
 - The average error is measured on the points that are left. Aligning again removes more points each time, so the number keeps dropping even when the panorama does not get any better (measured: 0.60 → 0.54 px after three runs, the real fit unchanged). Judge the result by the seams in **Check overlap** or in the export, not by this number alone. To measure the real fit, see "Measuring the fit" in the pitfalls.
 
 ![Alignment result and options](align.png)
@@ -113,8 +114,11 @@ Next to **📐 Align photos**: **🔬 Patch comparison** (the patches of the fin
 
 - **Refine control points**: moves automatic points to the exact spot. Points placed by hand stay where you put them; protected points are never moved, but if one is more than 3 px off (or cannot be found nearby) the status line says so.
 - **Add control areas in the overlaps**: adds measured patches along the seams. The rounds are judged on these areas; without them the fine alignment changes nothing (and says so).
+- **Control area placement - Where the photo has structure** (on by default): each area is put at the spot with structure in **two directions** (a corner, gravel, leaves, a texture) near its grid point, instead of on a bare grid, so areas no longer line up in rows on trees or sit on smooth asphalt. Plain cells (smooth road, wall, a single straight edge) get no area; the number is shown under the summary ("N grid cells without structure were left out") and in the log. Patches that are measured but rejected for the same reason say "too little texture" or "structure in one direction only" in the list of reasons and in the patch comparison. Off = the plain grid of earlier versions.
 - **Parallax mode** (off by default): a local correction near the seams for close objects. It is saved in the project.
 - **Record patches for this window**: keeps the measured patches for the **🔬 Patch comparison** window. Switching it off saves time and memory and does not change the result.
+
+- **Count points and patches on foliage less** (on by default, step 3, above the fine alignment switches): leaves move between the shots, so points and patches on trees and bushes pull the photos apart. They are recognised by colour (green to brown), very fine irregular structure and, above all, by restless remaining errors after aligning (the neighbours of a point disagree with each other); they get a smaller weight (down to a quarter) in the alignment instead of being removed. Colour and structure alone only lower the weight a little, so a green sign, a green wall or a lawn that holds still keep their influence. Control areas are put away from foliage where the photo allows it. Protected points and points placed by hand are never touched. Off = exactly as before.
 
 The many numbers under "Fine alignment" are for difficult cases; **Reset to defaults** brings them back.
 
@@ -237,7 +241,7 @@ The **Exposure blend** mode (top of the window) merges photos of the same view t
 Some photos have no points to the others. Common reasons: too little overlap, very different zoom, a featureless overlap (sky, water, a white wall). Open the **Connections** window, use **Join photos …** or the patch click mode to place a few points between the groups by hand, then align again. A photo that does not belong to the panorama can be unticked ("use").
 
 **Points on clouds, water or moving people**
-They pull the photos apart, because those things moved between shots. Keep "Ignore sky & clouds" on, use **Find points on sky or cloud** to remove old ones, and delete points on people or waves by hand (select them with the lasso or brush and press Delete).
+They pull the photos apart, because those things moved between shots. Keep "Ignore sky & clouds" on, use **Find points on sky or cloud** to remove old ones, and delete points on people or waves by hand (select them with the lasso or brush and press Delete). Trees and bushes move too: they get a smaller weight automatically ("Count points and patches on foliage less"), and **Foliage → Remove** in the point editor deletes their points if you want them gone.
 
 **Seams or double edges on close objects (parallax)**
 The photos were not taken around the lens. Try the **Parallax mode** in the fine alignment, **Smart seams** and masks in the export, and avoid points on close objects (they cannot fit both the near and the far parts).
@@ -278,10 +282,12 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 | Message | Meaning |
 |---|---|
 | no overlap found (photo list) | The photo has no points to the main group. |
-| N wrong matches removed automatically | The alignment dropped points that did not fit; Ctrl+Z brings them back. |
+| N points removed in M passes | The alignment dropped N points that did not fit, over M alignment passes; Ctrl+Z brings them back. |
 | Something changed – align again to update. | Points or photos changed after aligning. |
 | The last round was undone because it made the result worse. | Fine alignment kept the better earlier state. |
-| N protected point(s) are off by more than 3 px … / could not be confirmed | The fine alignment found a protected point elsewhere, or not at all; the point was left alone. |
+| N protected point(s) are off by more than 3 px … | The fine alignment found a protected point elsewhere; the point was left alone. |
+| N protected point(s) could not be confirmed (3 repeating pattern, 1 too close to the photo edge, …) | The patches around the point do not look alike at the point's own spot. The reason is given per count: repeating pattern, too close to the photo edge, too little texture, too little similarity. Not a sign that the point is wrong; it was left alone. |
+| N grid cells without structure were left out | Smooth surfaces (asphalt, a wall) and single straight edges cannot tell a shift along them, so no control area is tried there. Normal on streets; turn off "Where the photo has structure" to get the plain grid back. |
 | fine alignment changed nothing: no control areas … | "Add control areas" is off, so there was nothing to judge the rounds with. |
 | Project opened with N of M photos – missing: … | Some photo files were not found; the others were opened with their points. |
 | … failed with an internal error … | A program error in a background job; nothing was changed. |

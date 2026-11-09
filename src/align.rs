@@ -56,6 +56,14 @@ pub struct ControlPoint {
     /// removes or changes it; deleting or dragging it one by one needs unlocking first
     #[serde(default)]
     pub locked: bool,
+    /// weight factor of the foliage rating (1 = not foliage); multiplied with `weight` by the optimiser,
+    /// see `foliage.rs`. Never below 1 for protected points and points placed by hand.
+    #[serde(default = "fol_one")]
+    pub fol_w: f32,
+}
+
+fn fol_one() -> f32 {
+    1.0
 }
 
 fn one() -> f64 {
@@ -76,7 +84,7 @@ pub enum CpKind {
 
 impl ControlPoint {
     pub fn new(a: usize, b: usize, pa: [f64; 2], pb: [f64; 2], manual: bool) -> Self {
-        ControlPoint { a, b, pa, pb, err: 0.0, manual, weight: 1.0, kind: CpKind::Point, conf: 0.0, shift: [0.0; 2], score: 0.0, locked: false }
+        ControlPoint { a, b, pa, pb, err: 0.0, manual, weight: 1.0, kind: CpKind::Point, conf: 0.0, shift: [0.0; 2], score: 0.0, locked: false, fol_w: 1.0 }
     }
 }
 
@@ -287,7 +295,7 @@ pub fn total_cost(rots: &[M3], lens_of: &[usize], lenses: &[Lens], cps: &[Contro
     cps.iter()
         .map(|cp| {
             let r = cp_residual(cp, &rots[cp.a], &rots[cp.b], &lenses[lens_of[cp.a]], &lenses[lens_of[cp.b]]);
-            cp.weight * r.iter().map(|v| v * v).sum::<f64>()
+            cp.weight * cp.fol_w as f64 * r.iter().map(|v| v * v).sum::<f64>()
         })
         .sum()
 }
@@ -424,7 +432,7 @@ pub fn optimize(
             let k = if boost { LOCKED_ROBUST_K } else { ROBUST_K };
             // protected points are never put on the Cauchy loss, which would let go of them far out
             let robust = if opts.cauchy && !boost { 1.0 / (1.0 + (rn / k) * (rn / k)) } else if rn < k { 1.0 } else { k / rn };
-            let wgt = robust * cp.weight * if boost { opts.locked_weight } else { 1.0 };
+            let wgt = robust * cp.weight * cp.fol_w as f64 * if boost { opts.locked_weight } else { 1.0 };
             let mut cols: Vec<(usize, [f64; 4])> = Vec::with_capacity(10);
             for (img, which) in [(cp.a, 0), (cp.b, 1)] {
                 let pi = rot_idx[img];

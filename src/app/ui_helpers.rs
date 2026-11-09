@@ -147,6 +147,12 @@ pub(super) fn fine_summary(st: &fine_align::FineStats) -> String {
     ) + &fine_attention(st)
 }
 
+/// "12 points removed in 3 passes" (only real points; the control areas are rebuilt and not counted).
+pub(super) fn removed_text(removed: usize, passes: usize) -> String {
+    let passes = passes.max(1);
+    format!("{removed} point{} removed in {passes} pass{}", if removed == 1 { "" } else { "s" }, if passes == 1 { "" } else { "es" })
+}
+
 /// What of a fine-alignment run needs the person's attention (empty when nothing does).
 pub(super) fn fine_attention(st: &fine_align::FineStats) -> String {
     let mut s = String::new();
@@ -159,7 +165,7 @@ pub(super) fn fine_attention(st: &fine_align::FineStats) -> String {
         );
     }
     if st.locked_unmatched > 0 {
-        s += &format!(" · {} protected point(s) could not be confirmed (no match nearby – maybe far off) and were left as they are", st.locked_unmatched);
+        s += &format!(" · {} protected point(s) could not be confirmed ({}) and were left as they are – that does not mean they are wrong", st.locked_unmatched, fine_align::reasons_text(&st.locked_unmatched_reasons));
     }
     if st.no_test_spots {
         s += " · fine alignment changed nothing: no control areas to judge it with (switch on “Add control areas”)";
@@ -208,6 +214,12 @@ pub(super) fn dashed_rect(p: &egui::Painter, r: Rect, col: Color32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removed_message_counts_points_and_passes() {
+        assert_eq!(removed_text(12, 3), "12 points removed in 3 passes");
+        assert_eq!(removed_text(1, 1), "1 point removed in 1 pass");
+    }
 
     #[test]
     fn style_uses_central_constants() {

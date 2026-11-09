@@ -95,15 +95,20 @@ pub struct Removal {
 /// Splits the found points into those that may be removed and those that stay: protected points
 /// always, points placed by hand unless `include_manual`.
 pub fn removable(cps: &[ControlPoint], found: &[SkyPoint], include_manual: bool) -> Removal {
+    removable_idx(cps, found.iter().map(|s| s.point), include_manual)
+}
+
+/// The same for any list of found point indices (also used by the foliage check).
+pub fn removable_idx(cps: &[ControlPoint], found: impl Iterator<Item = usize>, include_manual: bool) -> Removal {
     let mut r = Removal::default();
-    for s in found {
-        let Some(c) = cps.get(s.point) else { continue };
+    for point in found {
+        let Some(c) = cps.get(point) else { continue };
         if c.locked {
             r.skipped_protected += 1;
         } else if c.manual && !include_manual {
             r.skipped_manual += 1;
         } else {
-            r.remove.push(s.point);
+            r.remove.push(point);
         }
     }
     r
@@ -126,9 +131,14 @@ pub fn button_text(r: &Removal) -> String {
 
 /// Text for the status line after a removal.
 pub fn removal_note(r: &Removal) -> String {
+    removal_note_for(r, "sky or cloud")
+}
+
+/// The same for another kind of finding (`what` = "foliage", ...).
+pub fn removal_note_for(r: &Removal, what: &str) -> String {
     let mut s = String::new();
     if r.skipped_protected > 0 {
-        s += &format!(" {} protected on sky or cloud kept (protected points are never removed).", r.skipped_protected);
+        s += &format!(" {} protected on {what} kept (protected points are never removed).", r.skipped_protected);
     }
     if r.skipped_manual > 0 {
         s += &format!(" {} placed by hand kept (tick \"include points placed by hand\" to remove them too).", r.skipped_manual);
@@ -158,6 +168,7 @@ mod tests {
             shift: [0.0; 2],
             score: 0.0,
             locked: false,
+            fol_w: 1.0,
         }
     }
 
