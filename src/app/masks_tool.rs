@@ -104,7 +104,9 @@ pub(super) struct MaskTool {
 
 impl Default for MaskTool {
     fn default() -> Self {
-        Self { tool: Tool::BrushPositive, radius: DEFAULT_BRUSH, stroke: None, corners: Vec::new(), lasso_drag: None }
+        // red first: taking something out (a boat, a person) is the common case, and a green stroke by
+        // mistake forces a photo in where it was not wanted
+        Self { tool: Tool::BrushNegative, radius: DEFAULT_BRUSH, stroke: None, corners: Vec::new(), lasso_drag: None }
     }
 }
 
@@ -273,6 +275,11 @@ mod tests {
         assert!(at(&mut t, &mut m, Ptr::Up));
         assert_eq!(m.strokes[0].points.len(), 1);
         assert_eq!(m.buf.as_ref().unwrap().at(100.0, 50.0, 200.0, 100.0), NEGATIVE);
+    }
+
+    #[test]
+    fn the_editor_starts_with_the_red_brush() {
+        assert_eq!(MaskTool::default().tool, Tool::BrushNegative);
     }
 
     #[test]

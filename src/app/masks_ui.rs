@@ -162,8 +162,14 @@ impl PanoApp {
     fn mask_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             for t in Tool::ALL {
-                let txt = RichText::new(t.label()).color(tool_color(t));
-                if ui.selectable_label(self.mk.tool.tool == t, txt).clicked() && self.mk.tool.tool != t {
+                // the active tool is filled with its own colour, so green and red cannot be mixed up
+                let active = self.mk.tool.tool == t;
+                let b = if active {
+                    egui::Button::new(RichText::new(format!("● {}", t.label())).strong().color(Color32::WHITE)).fill(tool_color(t).gamma_multiply(0.55))
+                } else {
+                    egui::Button::new(RichText::new(t.label()).color(tool_color(t))).frame(false)
+                };
+                if ui.add(b).clicked() && self.mk.tool.tool != t {
                     self.mk.tool.cancel();
                     self.mk.tool.tool = t;
                 }
