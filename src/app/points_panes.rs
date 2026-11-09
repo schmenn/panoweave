@@ -74,6 +74,7 @@ impl PanoApp {
         self.paint_points(&painter, &d, pts);
         self.paint_selection_frames(&painter, &d, lay.frame, pts);
         self.paint_click_marks(&painter, &d, a, b);
+        self.paint_area(&painter, pane, origin, scale);
         self.paint_pending(&painter, &d);
         self.paint_select_shape(&painter, &d, &resp);
         painter.text(rect.left_top() + Vec2::new(10.0, 8.0), Align2::LEFT_TOP, format!("Photo {}", idx + 1), FontId::proportional(14.0), Color32::WHITE);
@@ -291,33 +292,24 @@ impl PanoApp {
         if !tool.is_select() {
             return;
         }
-        let stroke = Stroke::new(1.6, ACCENT);
-        let halo = Stroke::new(3.2, Color32::BLACK);
+        let stroke = Stroke::new(select_shapes::SHAPE_LINE_W, ACCENT);
+        let halo = Stroke::new(select_shapes::SHAPE_HALO_W, Color32::BLACK);
         if tool == PointTool::SelectBrush
             && let Some(hp) = resp.hover_pos() {
-                painter.circle_stroke(hp, self.brush_radius(), halo);
-                painter.circle_stroke(hp, self.brush_radius(), stroke);
+                select_shapes::paint_brush_ring(painter, hp, self.brush_radius(), ACCENT);
             }
-        let Some(sd) = self.pe.sel_drag.as_ref().filter(|s| s.pane == d.pane) else { return };
-        let pts: Vec<Pos2> = sd.path.iter().map(|p| d.to_screen(*p)).collect();
-        match tool {
-            PointTool::SelectRect => {
-                if let (Some(a), Some(b)) = (pts.first(), pts.last()) {
-                    let r = Rect::from_two_pos(*a, *b);
-                    painter.rect_filled(r, 0.0, ACCENT.gamma_multiply(0.15));
-                    painter.rect_stroke(r, 0.0, halo, StrokeKind::Middle);
-                    painter.rect_stroke(r, 0.0, stroke, StrokeKind::Middle);
-                }
-            }
-            PointTool::SelectLasso
-                if pts.len() > 1 => {
-                    let mut closed = pts.clone();
-                    closed.push(pts[0]);
-                    painter.add(egui::Shape::line(closed.clone(), halo));
-                    painter.add(egui::Shape::line(closed, stroke));
-                }
-            _ => {}
+        if tool == PointTool::SelectLasso && self.pe.lasso_ctx.is_some_and(|c| c.0 == d.pane) {
+            let pts: Vec<Pos2> = self.pe.lasso.corners.iter().map(|p| d.to_screen(*p)).collect();
+            select_shapes::paint_lasso(painter, &pts, resp.hover_pos(), self.pe.lasso.dragging(), ACCENT);
         }
+        let Some(sd) = self.pe.sel_drag.as_ref().filter(|s| s.pane == d.pane) else { return };
+        if tool == PointTool::SelectRect
+            && let (Some(a), Some(b)) = (sd.path.first(), sd.path.last()) {
+                let r = Rect::from_two_pos(d.to_screen(*a), d.to_screen(*b));
+                painter.rect_filled(r, 0.0, ACCENT.gamma_multiply(0.15));
+                painter.rect_stroke(r, 0.0, halo, StrokeKind::Middle);
+                painter.rect_stroke(r, 0.0, stroke, StrokeKind::Middle);
+            }
     }
 
     /// Loupe while placing points.
@@ -351,7 +343,11 @@ impl PanoApp {
                 }
         }
         if resp.double_clicked() {
-            events.push(PaneEvent::Fit(pane));
+            // a double click closes a lasso that is being clicked, otherwise it fits the photo
+            let closing = self.pe.tool == PointTool::SelectLasso
+                && self.pe.lasso_ctx.is_some_and(|c| c.0 == pane)
+                && self.pe.lasso.corners.len() >= select_shapes::LASSO_MIN_CORNERS;
+            events.push(if closing { PaneEvent::LassoClose } else { PaneEvent::Fit(pane) });
         } else if resp.clicked()
             && let Some(p) = resp.interact_pointer_pos() {
                 let mods = ui.input(|i| i.modifiers);
@@ -359,7 +355,10 @@ impl PanoApp {
             }
         if resp.drag_started() {
             let primary = resp.drag_started_by(egui::PointerButton::Primary);
-            if let Some(p) = resp.interact_pointer_pos() {
+            // egui reports a drag only after the mouse has moved a few pixels; the Area tool wants its
+            // corner where the button went down, not where the threshold was passed
+            let press = if self.pe.tool == PointTool::Area { ui.input(|i| i.pointer.press_origin()) } else { None };
+            if let Some(p) = drag_start_pos(press, resp.interact_pointer_pos()) {
                 let mods = ui.input(|i| i.modifiers);
                 events.push(PaneEvent::DragStart(pane, p, primary, mods));
             }
@@ -371,5 +370,23 @@ impl PanoApp {
         if resp.drag_stopped() {
             events.push(PaneEvent::DragEnd);
         }
+    }
+}
+
+/// Where a drag starts: the press position when it is wanted and known, else the current position.
+fn drag_start_pos(press: Option<Pos2>, now: Option<Pos2>) -> Option<Pos2> {
+    press.or(now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_drag_starts_where_the_button_went_down() {
+        let (down, after_threshold) = (Pos2::new(100.0, 100.0), Pos2::new(105.0, 103.0));
+        assert_eq!(drag_start_pos(Some(down), Some(after_threshold)), Some(down));
+        assert_eq!(drag_start_pos(None, Some(after_threshold)), Some(after_threshold));
+        assert_eq!(drag_start_pos(None, None), None);
     }
 }

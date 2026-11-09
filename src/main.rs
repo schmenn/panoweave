@@ -14,6 +14,7 @@ mod gainmap;
 mod gainmap_solve;
 mod geometry;
 mod guided;
+mod area_match;
 mod click_match;
 mod pair_check;
 mod patch_matcher;
