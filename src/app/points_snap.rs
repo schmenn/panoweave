@@ -185,6 +185,8 @@ impl PanoApp {
                     Some((p, _)) => {
                         let nn = s.to_norm(o.moving, p);
                         let c = &mut s.cps[o.k];
+                        // reworked by the person's request: counts as placed by hand (a new search keeps it)
+                        c.manual = true;
                         if c.a == o.moving {
                             c.pa = nn;
                         } else {
@@ -280,6 +282,7 @@ mod tests {
         let before0 = a.cps[0].pb;
         a.on_snapped(SnapDone { fp, protected: 1, outcomes });
         assert_ne!(a.cps[0].pb, before0);
+        assert!(a.cps[0].manual, "a snapped point counts as reworked by hand and survives a new search");
         assert_eq!(a.cps[3].pb, moved);
         assert!(a.status.contains("1 snapped, 1 unchanged (match too low), 1 protected skipped"), "{}", a.status);
         assert!(a.status.contains("1 changed while"), "{}", a.status);

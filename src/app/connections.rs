@@ -98,6 +98,8 @@ impl PanoApp {
         let mut shown_rows: Vec<usize> = Vec::new();
         let mut shift_row: Option<usize> = None;
         let mut ctrl_row: Option<usize> = None;
+        // protect (true) or unlock (false) these points, applied after the window was drawn
+        let mut lock_action: Option<(Vec<usize>, bool)> = None;
         self.sync_selection();
         let mut removing_dups = false;
         let spec = WinSpec { key: "cp_list", title: "All control points".into(), size: [760.0, 520.0], min_size: [420.0, 260.0], fill: None, undo_keys: true };
@@ -228,6 +230,29 @@ impl PanoApp {
                     if ui.add_enabled(!rows.is_empty(), egui::Button::new(format!("🗑 Delete all {} listed", rows.len()))).clicked() {
                         delete.extend(rows.iter().copied());
                     }
+                    let sel_idx = self.selection_indices();
+                    let (sel_locked, listed_locked) = (sel_idx.iter().filter(|&&k| self.cps[k].locked).count(), rows.iter().filter(|&&k| self.cps[k].locked).count());
+                    if ui
+                        .add_enabled(sel_locked > 0, egui::Button::new(format!("🔓 Unlock selected ({sel_locked})")))
+                        .on_hover_text("Takes the protection off the selected points so they can be deleted or moved. Ctrl+Z puts it back.")
+                        .clicked()
+                    {
+                        lock_action = Some((sel_idx.clone(), false));
+                    }
+                    if ui
+                        .add_enabled(listed_locked > 0, egui::Button::new(format!("🔓 Unlock all listed ({listed_locked})")))
+                        .on_hover_text("Unlocks every protected point in the list (use the filter “only protected” to see just those).")
+                        .clicked()
+                    {
+                        lock_action = Some((rows.clone(), false));
+                    }
+                    if ui
+                        .add_enabled(sel_idx.len() > sel_locked, egui::Button::new(format!("🔒 Protect selected ({})", sel_idx.len() - sel_locked)))
+                        .on_hover_text("Protected points are not touched by any bulk action and can't be deleted or moved until unlocked.")
+                        .clicked()
+                    {
+                        lock_action = Some((sel_idx, true));
+                    }
                     if ui
                         .add_enabled(self.aligned, egui::Button::new("🧹 Remove outliers (mean + 2σ)"))
                         .on_hover_text("Removes points whose error is larger than average + 2 × spread, first per photo pair, then for the whole project.")
@@ -239,7 +264,7 @@ impl PanoApp {
                 });
                 ui.separator();
                 // header
-                let widths = [60.0f32, 150.0, 150.0, 60.0, 90.0, 70.0, 90.0, 210.0];
+                let widths = [60.0f32, 150.0, 150.0, 60.0, 90.0, 70.0, 116.0, 210.0];
                 let titles = ["#", "Photo A", "Photo B", "Pair #", "Error", "Match", "Type", "Position A → B (px)"];
                 let cols = [CpCol::Index, CpCol::PhotoA, CpCol::PhotoB, CpCol::PairIndex, CpCol::Error, CpCol::Match, CpCol::Kind];
                 ui.horizontal(|ui| {
@@ -305,7 +330,7 @@ impl PanoApp {
                                         (_, true) => "by hand",
                                         _ => "auto",
                                     },
-                                    if c.locked { " 🔒" } else { "" }
+                                    ""
                                 ),
                                 if c.manual { ACCENT } else { MUTED },
                             ),
@@ -316,6 +341,22 @@ impl PanoApp {
                             let clip = Rect::from_min_size(Pos2::new(x, rect.min.y), Vec2::new(widths[i] - 6.0, row_h));
                             p.with_clip_rect(clip).text(Pos2::new(x, rect.center().y), Align2::LEFT_CENTER, t, FontId::proportional(13.0), *col);
                             x += widths[i];
+                        }
+                        // lock button at the end of the "Type" cell: one click protects or unlocks the row
+                        // (all selected rows when this one is part of the selection)
+                        let lock_rect = Rect::from_min_size(Pos2::new(rect.min.x + widths[..6].iter().sum::<f32>() + widths[6] - 26.0, rect.min.y), Vec2::new(22.0, row_h));
+                        let lock_resp = ui.interact(lock_rect, resp.id.with("cp_lock"), Sense::click());
+                        if c.locked || resp.hovered() || lock_resp.hovered() {
+                            let (icon, col) = if c.locked { ("🔒", ACCENT) } else { ("🔓", MUTED) };
+                            ui.painter().text(lock_rect.center(), Align2::CENTER_CENTER, icon, FontId::proportional(13.0), col);
+                        }
+                        lock_resp.clone().on_hover_text(if c.locked { "Protected: click to unlock it so it can be deleted or moved." } else { "Click to protect this point (no bulk action touches it)." });
+                        if lock_resp.clicked() {
+                            let mut idx = if sel && self.pe.sel.len() + usize::from(self.pe.selected.is_some()) > 1 { self.selection_indices() } else { vec![k] };
+                            if !idx.contains(&k) {
+                                idx = vec![k];
+                            }
+                            lock_action = Some((idx, !c.locked));
                         }
                         if let Some(d) = dup {
                             let what = match d.kind {
@@ -328,7 +369,7 @@ impl PanoApp {
                             let stays = if c.locked { " It is protected and stays." } else if c.manual { " It was placed by hand and stays." } else { "" };
                             resp.clone().on_hover_text(format!("Point {} lies on sky or cloud ({:.0} % of its surroundings).{stays}", k + 1, s * 100.0));
                         }
-                        if resp.clicked() {
+                        if resp.clicked() && !lock_resp.hovered() {
                             let m = ui.input(|i| i.modifiers);
                             if m.shift {
                                 shift_row = Some(k);
@@ -351,6 +392,10 @@ impl PanoApp {
         }
         if let Some(k) = jump {
             self.jump_to_point(k);
+        }
+        if let Some((idx, lock)) = lock_action {
+            let n = self.lock_points(idx, lock);
+            self.lock_status(n, lock);
         }
         if sel_delete {
             self.delete_selection();
