@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_brush_stroke_is_made_from_press_drag_release() {
-        let (mut t, mut m) = (MaskTool::default(), PhotoMask::default());
+        let (mut t, mut m) = (MaskTool { tool: Tool::BrushPositive, ..Default::default() }, PhotoMask::default());
         assert!(!at(&mut t, &mut m, Ptr::Down(p(110.0, 120.0))));
         at(&mut t, &mut m, Ptr::Move(p(112.0, 120.0))); // too close: skipped
         at(&mut t, &mut m, Ptr::Move(p(210.0, 120.0)));
