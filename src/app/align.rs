@@ -409,6 +409,10 @@ impl PanoApp {
                             ui.label("Points that fail the check");
                             ui.checkbox(&mut f.drop_invalid_points, "remove (otherwise keep with low weight)");
                             ui.end_row();
+                            ui.label("Control area placement");
+                            ui.checkbox(&mut f.pick_textured, "Where the photo has structure")
+                                .on_hover_text("On: each area sits at the spot with structure in two directions near its grid point, plain surfaces get none. Off: plain grid");
+                            ui.end_row();
                             ui.label("Patch comparison window");
                             ui.checkbox(&mut f.record_patches, "Record patches for this window")
                                 .on_hover_text("Off: faster and less memory, the alignment is the same, the window stays empty");
@@ -432,6 +436,9 @@ impl PanoApp {
                     ui.label(fine_summary(st));
                     if st.rolled_back {
                         ui.label(RichText::new("The last round was undone because it made the result worse.").color(WARN));
+                    }
+                    if st.cells_skipped > 0 {
+                        ui.label(format!("{} grid cells without structure were left out", st.cells_skipped));
                     }
                     egui::CollapsingHeader::new(format!("Why {} patches were not used", st.patches_total - st.patches_valid)).id_salt("fine_reasons").show(ui, |ui| {
                         for (k, v) in &st.reasons {

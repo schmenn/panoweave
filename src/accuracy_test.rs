@@ -9,6 +9,11 @@
 //! - `PW_ACC_PASSES` passes (default 3)
 //! - `PW_FINE_GRID` control-area grid cell (default 64), `PW_FINE_AREAS` areas per pair (200),
 //!   `PW_FINE_ITER` rounds (4), `PW_FINE_CONV` stop threshold in px (0.1)
+//! - `PW_FINE_MINSTRUCT` smallest structure (two-direction texture) of a patch, `PW_FINE_UNIQ` smallest uniqueness,
+//!   `PW_FINE_MINSCORE` smallest similarity, `PW_FINE_PICK=0` plain grid instead of placing areas where the photo has
+//!   structure, `PW_FINE_EDGE` share of the search radius kept from the photo border (1 = earlier versions). The quality
+//!   check itself always uses the earlier matcher settings (no structure test), so it measures the same thing whatever
+//!   is set here.
 //! - `PW_ACC_NO_OUTLIERS=1` passes after the first keep every point (no outlier removal)
 //! - `PW_ACC_PAIRS=1` also prints the check per photo pair (worst first, with the lens of each photo)
 //! - `PW_ACC_FINE_SIZE` long side of the images the fine alignment works on (default 1600 = the
@@ -100,6 +105,14 @@ pub fn run(files: &[PathBuf]) {
         refine_iterations: env("PW_FINE_ITER", d.refine_iterations),
         converge_threshold: env("PW_FINE_CONV", d.converge_threshold),
         record_patches: false,
+        pick_textured: env("PW_FINE_PICK", 1u8) != 0,
+        edge_search_share: env("PW_FINE_EDGE", d.edge_search_share),
+        matcher: crate::patch_matcher::MatchConfig {
+            min_structure: env("PW_FINE_MINSTRUCT", d.matcher.min_structure),
+            min_uniqueness: env("PW_FINE_UNIQ", d.matcher.min_uniqueness),
+            min_score: env("PW_FINE_MINSCORE", d.matcher.min_score),
+            ..d.matcher.clone()
+        },
         ..d
     };
     let passes: usize = env("PW_ACC_PASSES", 3);
@@ -107,7 +120,7 @@ pub fn run(files: &[PathBuf]) {
     let pc_cfg = pair_check::PairCheckConfig::default();
     let used = vec![true; photos.len()];
     // the quality check: a small search (the alignment is already close) on fixed spots
-    let qcfg = crate::patch_matcher::MatchConfig { search_radius: 6.0, ..fine_cfg.matcher.clone() };
+    let qcfg = crate::patch_matcher::MatchConfig { search_radius: 6.0, min_structure: 0.0, min_uniqueness: 1.15, min_score: 0.6, ..fine_cfg.matcher.clone() };
     let mut cps = m.cps.clone();
     let mut spots = Vec::new();
     println!(

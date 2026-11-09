@@ -110,6 +110,7 @@ Next to **📐 Align photos**: **🔬 Patch comparison** (the patches of the fin
 
 - **Refine control points**: moves automatic points to the exact spot. Points placed by hand stay where you put them; protected points are never moved, but if one is more than 3 px off (or cannot be found nearby) the status line says so.
 - **Add control areas in the overlaps**: adds measured patches along the seams. The rounds are judged on these areas; without them the fine alignment changes nothing (and says so).
+- **Control area placement - Where the photo has structure** (on by default): each area is put at the spot with structure in **two directions** (a corner, gravel, leaves, a texture) near its grid point, instead of on a bare grid, so areas no longer line up in rows on trees or sit on smooth asphalt. Plain cells (smooth road, wall, a single straight edge) get no area; the number is shown under the summary ("N grid cells without structure were left out") and in the log. Patches that are measured but rejected for the same reason say "too little texture" or "structure in one direction only" in the list of reasons and in the patch comparison. Off = the plain grid of earlier versions.
 - **Parallax mode** (off by default): a local correction near the seams for close objects. It is saved in the project.
 - **Record patches for this window**: keeps the measured patches for the **🔬 Patch comparison** window. Switching it off saves time and memory and does not change the result.
 
@@ -272,6 +273,7 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 | Something changed – align again to update. | Points or photos changed after aligning. |
 | The last round was undone because it made the result worse. | Fine alignment kept the better earlier state. |
 | N protected point(s) are off by more than 3 px … / could not be confirmed | The fine alignment found a protected point elsewhere, or not at all; the point was left alone. |
+| N grid cells without structure were left out | Smooth surfaces (asphalt, a wall) and single straight edges cannot tell a shift along them, so no control area is tried there. Normal on streets; turn off "Where the photo has structure" to get the plain grid back. |
 | fine alignment changed nothing: no control areas … | "Add control areas" is off, so there was nothing to judge the rounds with. |
 | Project opened with N of M photos – missing: … | Some photo files were not found; the others were opened with their points. |
 | … failed with an internal error … | A program error in a background job; nothing was changed. |

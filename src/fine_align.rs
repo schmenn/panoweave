@@ -77,8 +77,30 @@ pub struct FineConfig {
     /// (pixels of the working image) it is counted and reported, so the person can look at it.
     #[serde(default = "locked_warn_default")]
     pub locked_warn_px: f32,
+    /// Place each control area where the photo has structure instead of on the bare grid: inside every grid cell
+    /// the spot with the strongest two-direction structure is taken, cells without any are left out (and counted
+    /// as "no structure in the grid cell"). Off = the plain grid of earlier versions.
+    #[serde(default = "pick_textured_default")]
+    pub pick_textured: bool,
+    /// How far from the grid point a better spot is looked for, as a share of the grid step (0.5 = up to half a step).
+    #[serde(default = "pick_reach_default")]
+    pub pick_reach: f32,
+    /// Distance of an automatic area from the photo border: half the patch plus this share of the search
+    /// radius (1.0 = half the patch plus the whole search radius, as in earlier versions). Lower values give areas
+    /// closer to the border, where the lens distortion shows most.
+    #[serde(default = "edge_search_share_default")]
+    pub edge_search_share: f32,
 }
 
+fn pick_textured_default() -> bool {
+    true
+}
+fn pick_reach_default() -> f32 {
+    0.5
+}
+fn edge_search_share_default() -> f32 {
+    0.5
+}
 fn point_template_default() -> usize {
     21
 }
@@ -120,6 +142,9 @@ impl Default for FineConfig {
             point_template: point_template_default(),
             point_search: point_search_default(),
             point_min_score: point_min_score_default(),
+            pick_textured: pick_textured_default(),
+            pick_reach: pick_reach_default(),
+            edge_search_share: edge_search_share_default(),
         }
     }
 }
@@ -147,6 +172,8 @@ pub struct FineStats {
     pub diff_before: f32,
     pub diff_after: f32,
     pub areas: usize,
+    /// grid cells of the first round where the photo had no structure (no control area was tried there)
+    pub cells_skipped: usize,
     pub points_refined: usize,
     /// points whose fine-tuning failed (correlation too low or no clear peak)
     pub points_not_updated: usize,
@@ -358,11 +385,12 @@ pub fn measure_ex(
             STORE.finish_patch(data, state, focused);
         }
     };
-    if !patch_matcher::has_texture(&ra, cfg) {
+    if let Some(why) = patch_matcher::texture_reason(&ra, cfg) {
         // plain area: no need to look at photo b at all
-        let result = MatchResult { reason: "too little texture", ..Default::default() };
+        let (texture, min_eig) = patch_matcher::structure(&ra, cfg);
+        let result = MatchResult { reason: why, texture, min_eig, ..Default::default() };
         if rec.is_some() {
-            let detail = patch_matcher::MatchDetail { uniqueness: 0.0, texture: patch_matcher::texture_of(&ra, cfg) };
+            let detail = patch_matcher::MatchDetail { uniqueness: 0.0, texture, min_eig };
             store(&result, detail, None, &SearchTrace::default(), f32::NAN);
         }
         return Some(PatchMeasure { id, result, dir_b: d, diff: f32::NAN });
@@ -475,6 +503,7 @@ struct RoundOutcome {
     locked_far: usize,
     locked_far_max: f32,
     locked_unmatched: usize,
+    skipped_cells: usize,
 }
 
 /// One measuring round: refine points, re-measure manual areas, rebuild automatic areas.
@@ -508,7 +537,8 @@ fn measure_round(
     // area candidates first, so the number of patches of this round is known up front
     let size = Region::size_for(mcfg);
     let half_plane = size as f64 * 0.5;
-    let cand_lists: Vec<Vec<((f64, f64), bool, (usize, usize))>> = if cfg.areas {
+    // (candidates per pair, grid cells left out because the photo has no structure there)
+    let cand_all: Vec<(Vec<((f64, f64), bool, (usize, usize))>, usize)> = if cfg.areas {
         pairs
             .par_iter()
             .map(|&(a, b)| {
@@ -517,30 +547,83 @@ fn measure_round(
                 // grid in photo a, spacing in plane pixels converted to a's pixels
                 let to_a = scale / ga.pixel_angle();
                 let fine_step = (cfg.grid_cell as f64 * 0.5 * to_a).max(4.0);
-                let margin_a = half_plane * to_a;
+                // distance from the border: half the patch plus a share of the search radius (the rest of the
+                // search area may reach beyond the photo, the matcher then only searches inwards)
+                let edge = (mcfg.patch_size as f64 * 0.5 + cfg.edge_search_share as f64 * mcfg.search_radius as f64).min(half_plane);
+                let margin_a = edge * to_a;
+                let margin_b = edge * scale / gb.pixel_angle();
+                let smap = cfg.pick_textured.then(|| patch_matcher::StructMap::new(imgs.get(a, geos, b).0, mcfg.blur_sigma));
+                let half_win = mcfg.patch_size as f64 * 0.5 * to_a;
+                let mut skipped = 0usize;
+                let mut picked: Vec<(f64, usize, (f64, f64))> = Vec::new(); // (structure, cell index, position)
                 let coarse_w = ga.w.max(gb.w / (scale / gb.pixel_angle()));
                 let band = (2.0 * cfg.seam_band as f64 / coarse_w).clamp(0.0, 1.0);
+                let in_b = |p: (f64, f64)| ga.inside(p, margin_a) && gb.dir_to_px(ga.px_to_dir(p)).is_some_and(|q| gb.inside(q, margin_b));
+                let band_at = |p: (f64, f64)| {
+                    let q = gb.dir_to_px(ga.px_to_dir(p)).unwrap_or(p);
+                    let (wa, wb) = (ga.centre_weight(p), gb.centre_weight(q));
+                    (wa - wb).abs() / (wa + wb + 1e-9) < band
+                };
                 let mut cands: Vec<((f64, f64), bool, (usize, usize))> = Vec::new();
                 let (nx, ny) = ((ga.w / fine_step) as usize, (ga.h / fine_step) as usize);
                 for gy in 0..=ny {
                     for gx in 0..=nx {
-                        let p = (gx as f64 * fine_step, gy as f64 * fine_step);
-                        if !ga.inside(p, margin_a) {
+                        let p0 = (gx as f64 * fine_step, gy as f64 * fine_step);
+                        if !ga.inside(p0, margin_a) {
                             continue;
                         }
-                        let d = ga.px_to_dir(p);
-                        let Some(q) = gb.dir_to_px(d) else { continue };
-                        if !gb.inside(q, half_plane * scale / gb.pixel_angle()) {
+                        if !in_b(p0) {
                             continue;
                         }
-                        let (wa, wb) = (ga.centre_weight(p), gb.centre_weight(q));
-                        let in_band = (wa - wb).abs() / (wa + wb + 1e-9) < band;
+                        let in_band0 = band_at(p0);
                         // outside the seam band only every second grid point (no overlap)
-                        if !in_band && (gx % 2 == 1 || gy % 2 == 1) {
+                        if !in_band0 && (gx % 2 == 1 || gy % 2 == 1) {
                             continue;
                         }
+                        if let Some(m) = &smap {
+                            // the spot with the most two-direction structure within reach of the grid point
+                            let reach = (cfg.pick_reach as f64 * fine_step).floor() as i32;
+                            let step = (reach / 4).max(2);
+                            let mut best = (m.at(p0.0, p0.1, half_win).1, p0);
+                            let mut oy = -reach;
+                            while oy <= reach {
+                                let mut ox = -reach;
+                                while ox <= reach {
+                                    let q = (p0.0 + ox as f64, p0.1 + oy as f64);
+                                    let sc = m.at(q.0, q.1, half_win).1;
+                                    if sc > best.0 && in_b(q) {
+                                        best = (sc, q);
+                                    }
+                                    ox += step;
+                                }
+                                oy += step;
+                            }
+                            if best.0 < mcfg.min_structure.max(f32::MIN_POSITIVE) {
+                                skipped += 1;
+                                continue;
+                            }
+                            picked.push((best.0 as f64, gy * (nx + 1) + gx, best.1));
+                            continue;
+                        }
+                        let big = (((p0.0 / ga.w) * 4.0) as usize).min(3) + 4 * (((p0.1 / ga.h) * 4.0) as usize).min(3);
+                        cands.push((p0, in_band0, (big, 0)));
+                    }
+                }
+                if smap.is_some() {
+                    // strongest first; a spot within 0.45 grid steps of a better one is dropped (neighbouring cells
+                    // would otherwise take the same structure twice); back in grid order for the even thinning below
+                    picked.sort_by(|x, y| y.0.total_cmp(&x.0));
+                    let min_d = 0.45 * fine_step;
+                    let mut kept: Vec<(usize, (f64, f64))> = Vec::new();
+                    for (_, cell, p) in picked {
+                        if kept.iter().all(|k| (k.1 .0 - p.0).hypot(k.1 .1 - p.1) >= min_d) {
+                            kept.push((cell, p));
+                        }
+                    }
+                    kept.sort_by_key(|k| k.0);
+                    for (_, p) in kept {
                         let big = (((p.0 / ga.w) * 4.0) as usize).min(3) + 4 * (((p.1 / ga.h) * 4.0) as usize).min(3);
-                        cands.push((p, in_band, (big, 0)));
+                        cands.push((p, band_at(p), (big, 0)));
                     }
                 }
                 // keep at most a few times the area limit, spread evenly, seam band first
@@ -561,12 +644,14 @@ fn measure_round(
                 }
                 // patches shifted by hand are not matched again
                 cands.retain(|&(p, _, _)| manual_of(&patch_store::key_of(a, b, norm(ga, p))).is_none());
-                cands
+                (cands, skipped)
             })
             .collect()
     } else {
         Vec::new()
     };
+    let skipped_cells: usize = cand_all.iter().map(|c| c.1).sum();
+    let cand_lists: Vec<Vec<((f64, f64), bool, (usize, usize))>> = cand_all.into_iter().map(|c| c.0).collect();
     let n_points = cps.iter().filter(|c| point_measured(c)).count();
     STORE.begin_round(n_points + cand_lists.iter().map(|v| v.len()).sum::<usize>(), label, cfg.record_patches);
     // 1) points and hand-drawn areas
@@ -812,13 +897,14 @@ fn measure_round(
         locked_far,
         locked_far_max,
         locked_unmatched,
+        skipped_cells,
     }
 }
 
 /// How many candidates per pair are measured, as a multiple of `max_areas_per_pair`.
 const CANDIDATE_FACTOR: usize = 2;
 
-const REASONS: [&str; 9] = [
+const REASONS: [&str; 10] = [
     "ok",
     "region smaller than the patch",
     "patch outside the photo",
@@ -828,6 +914,7 @@ const REASONS: [&str; 9] = [
     "similarity too low",
     "ambiguous (repeating pattern)",
     "forward-backward check failed",
+    "structure in one direction only",
 ];
 
 fn reason_code(r: &str) -> i32 {
@@ -1015,7 +1102,11 @@ pub fn run(
     let mut rs: Vec<(String, usize)> = o.reasons.iter().map(|(k, v)| (k.to_string(), *v)).collect();
     rs.sort_by_key(|a| std::cmp::Reverse(a.1));
     stats.reasons = rs;
+    stats.cells_skipped = o.skipped_cells;
     stats.log.push(format!("measured {} patches, {} valid, {} control areas kept", o.total, o.valid, o.areas));
+    if o.skipped_cells > 0 {
+        stats.log.push(format!("{} grid cells left out: no structure in two directions (plain surface, single edge)", o.skipped_cells));
+    }
     stats.locked_far = o.locked_far;
     stats.locked_far_max = o.locked_far_max;
     stats.locked_warn_px = cfg.locked_warn_px;
@@ -1480,5 +1571,73 @@ mod quality_tests {
         let turned = [IDENTITY, rodrigues([0.0, 1.5 * g.pixel_angle(), 0.0])];
         let q = quality(&photos, &lens_of, &lenses, &turned, &spots, &mcfg);
         assert!(q.valid * 2 > q.spots && (q.median - 1.5).abs() < 0.2, "{q:?}");
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+
+    /// Two identical photos: textured on the left, a plain surface with a faint ramp and noise on the right.
+    fn pair(half_plain: bool) -> (Vec<FaPhoto>, [f64; 2]) {
+        let (w, h) = (480u32, 360u32);
+        let mut rng = crate::geometry::Rng(7);
+        let img = RgbImage::from_fn(w, h, |x, y| {
+            let (xf, yf) = (x as f32, y as f32);
+            let v = if half_plain && x >= w / 2 {
+                120.0 + 0.01 * xf + rng.unit() as f32 * 1.5
+            } else {
+                128.0 + 50.0 * (xf * 0.21).sin() * (yf * 0.17).cos() + 40.0 * ((xf + 2.0 * yf) * 0.093).sin() + 30.0 * ((3.0 * xf - yf) * 0.051).cos()
+            };
+            image::Rgb([v as u8; 3])
+        });
+        let gray = Arc::new(crate::imgutil::to_gray(&img));
+        let rgb = Arc::new(img);
+        let photos = vec![FaPhoto { gray: gray.clone(), rgb: rgb.clone() }, FaPhoto { gray, rgb }];
+        (photos, [-0.25, 0.0])
+    }
+
+    fn areas(photos: &[FaPhoto], cfg: &FineConfig) -> (Vec<ControlPoint>, FineStats) {
+        let lenses = [Lens::from_hfov_deg(60.0)];
+        let p = [-0.25, 0.0];
+        let seed = ControlPoint::new(0, 1, p, p, false);
+        // photo b is turned by two pixels, so the first round has something to correct and its areas are kept
+        let g = Geo { lens: lenses[0], rot: IDENTITY, w: 480.0, h: 360.0 };
+        let rots = [IDENTITY, rodrigues([0.0, 2.0 * g.pixel_angle(), 0.0])];
+        let (_, _, cps, st) = run(photos, &[0, 0], &[480.0, 480.0], &lenses, &rots, &[seed], false, false, cfg, &|_, _| {});
+        (cps.into_iter().filter(|c| c.kind == CpKind::Area).collect(), st)
+    }
+
+    #[test]
+    fn areas_sit_on_structure_and_plain_cells_are_left_out_and_reported() {
+        let (photos, _) = pair(true);
+        let on = FineConfig { record_patches: false, ..FineConfig::default() };
+        let (a, st) = areas(&photos, &on);
+        assert!(a.len() >= 10, "{} areas", a.len());
+        // no area whose patch (half 32 px = 0.067 of the long side) lies wholly on the plain right half, and the
+        // skipped cells are counted and logged
+        assert!(a.iter().all(|c| c.pa[0] < 0.08), "an area lies on the plain surface");
+        assert!(st.cells_skipped > 0, "plain cells must be reported as left out");
+        assert!(st.log.iter().any(|l| l.contains("grid cells left out")));
+        // switched off: the plain grid, nothing is skipped (plain patches are then rejected by the matcher)
+        let off = FineConfig { record_patches: false, pick_textured: false, ..FineConfig::default() };
+        let (_, st) = areas(&photos, &off);
+        assert_eq!(st.cells_skipped, 0);
+    }
+
+    #[test]
+    fn areas_may_come_closer_to_the_border_than_the_whole_search_radius() {
+        let (photos, _) = pair(false);
+        let min_dist = |share: f32| {
+            let cfg = FineConfig { record_patches: false, edge_search_share: share, pick_textured: false, grid_cell: 24, max_areas_per_pair: 2000, ..FineConfig::default() };
+            let (a, _) = areas(&photos, &cfg);
+            assert!(a.len() >= 100, "{} areas", a.len());
+            a.iter().map(|c| ((c.pa[0] * 480.0 + 240.0 - 0.5).min(479.0 - (c.pa[0] * 480.0 + 240.0 - 0.5))).min((c.pa[1] * 480.0 + 180.0 - 0.5).min(359.0 - (c.pa[1] * 480.0 + 180.0 - 0.5)))).fold(f64::MAX, f64::min)
+        };
+        let old = min_dist(1.0);
+        let new = min_dist(0.5);
+        // half the patch (32) plus the search radius (24) before; plus half of it now
+        assert!(old >= 55.0, "old limit {old}");
+        assert!(new < old - 5.0 && new >= 43.0, "new limit {new} against {old}");
     }
 }

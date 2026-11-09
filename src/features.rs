@@ -32,6 +32,59 @@ pub const MIN_CORNER_RESPONSE: f32 = 1.5e-3;
 /// Smaller / larger eigenvalue: below this the spot is an edge (slides along it) rather than a corner.
 pub const MIN_CORNER_RATIO: f32 = 0.15;
 const MARGIN: usize = 21;
+/// Move every keypoint onto the vertex of the edges around it (see `snap_to_corner`). The peak of the
+/// blurred corner response lies a little inside the corner (about 0.9 px at full size, more on the
+/// coarser levels), so points sat beside the feature instead of on it. `PW_CORNER_SNAP=0` = earlier behaviour.
+fn corner_snap() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("PW_CORNER_SNAP").map(|v| v != "0").unwrap_or(true))
+}
+/// Window of the snapping (radius in level pixels) and the largest move it may make.
+const SNAP_RADIUS: i32 = 6;
+const SNAP_MAX_MOVE: f32 = 3.0;
+
+/// Least-squares intersection of the edge lines around (x, y): the point p that minimises
+/// sum of (g . (q - p))^2 over the window, g being the gradient at pixel q (Gaussian weights).
+/// For a corner this is its vertex; for an isolated blob its centre. Falls back to the input when the
+/// window has structure in one direction only or the move would be larger than `SNAP_MAX_MOVE`.
+pub fn snap_to_corner(img: &Gray, x: f32, y: f32) -> (f32, f32) {
+    let (cx, cy) = (x.round() as i32, y.round() as i32);
+    let r = SNAP_RADIUS;
+    if cx - r - 1 < 0 || cy - r - 1 < 0 || cx + r + 1 >= img.w as i32 || cy + r + 1 >= img.h as i32 {
+        return (x, y);
+    }
+    let sig2 = 2.0f32 * (SNAP_RADIUS as f32 / 2.5).powi(2);
+    let (mut a, mut b, mut c) = (0.0f64, 0.0f64, 0.0f64);
+    let (mut bx, mut by) = (0.0f64, 0.0f64);
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let (px, py) = ((cx + dx) as usize, (cy + dy) as usize);
+            let gx = 0.5 * (img.at(px + 1, py) - img.at(px - 1, py));
+            let gy = 0.5 * (img.at(px, py + 1) - img.at(px, py - 1));
+            // weight around the detected point, not around the pixel
+            let (ex, ey) = (px as f32 - x, py as f32 - y);
+            let w = (-(ex * ex + ey * ey) / sig2).exp() as f64;
+            let (gxx, gyy, gxy) = (w * (gx * gx) as f64, w * (gy * gy) as f64, w * (gx * gy) as f64);
+            a += gxx;
+            b += gxy;
+            c += gyy;
+            let (ox, oy) = (ex as f64, ey as f64);
+            bx += gxx * ox + gxy * oy;
+            by += gxy * ox + gyy * oy;
+        }
+    }
+    let det = a * c - b * b;
+    // both directions must carry structure (det relative to the squared trace)
+    if !(det > 0.02 * (a + c) * (a + c) * 0.25) {
+        return (x, y);
+    }
+    let (mx, my) = ((c * bx - b * by) / det, (a * by - b * bx) / det);
+    let (mx, my) = (mx as f32, my as f32);
+    if mx.hypot(my) > SNAP_MAX_MOVE {
+        return (x, y);
+    }
+    (x + mx, y + my)
+}
 
 fn pattern() -> &'static Vec<[f32; 4]> {
     static P: OnceLock<Vec<[f32; 4]>> = OnceLock::new();
@@ -61,7 +114,7 @@ pub fn detect(gray: &Gray, max_points: usize) -> Features {
         .map(|&s| {
             let quota = ((max_points as f32) * s * s / total).round() as usize;
             let img = if s >= 0.999 { gray.clone() } else { resize_gray(gray, s) };
-            detect_level(&img, s, quota.max(10))
+            detect_level(&img, s, quota.max(10), (gray.w, gray.h))
         })
         .collect();
 
@@ -74,7 +127,7 @@ pub fn detect(gray: &Gray, max_points: usize) -> Features {
     Features { w: gray.w, h: gray.h, kps, desc }
 }
 
-fn detect_level(img: &Gray, s: f32, quota: usize) -> (Vec<Keypoint>, Vec<[u64; 4]>) {
+fn detect_level(img: &Gray, s: f32, quota: usize, full: (usize, usize)) -> (Vec<Keypoint>, Vec<[u64; 4]>) {
     let (w, h) = (img.w, img.h);
     if w < 2 * MARGIN + 4 || h < 2 * MARGIN + 4 {
         return (vec![], vec![]);
@@ -188,7 +241,12 @@ fn detect_level(img: &Gray, s: f32, quota: usize) -> (Vec<Keypoint>, Vec<[u64; 4
     let mut kps = Vec::with_capacity(chosen.len());
     let mut descs = Vec::with_capacity(chosen.len());
     let rad = 12i32;
+    // level pixel -> full-size pixel with the real size ratio of this level (its size is rounded,
+    // so the ratio is not exactly 1/s; with 1/s a point at the far edge would be off by a pixel or more)
+    let snap_on = corner_snap();
+    let (rx, ry) = (full.0 as f32 / w as f32, full.1 as f32 / h as f32);
     for (x, y, r) in chosen {
+        let (x, y) = if snap_on { snap_to_corner(img, x, y) } else { (x, y) };
         // intensity centroid orientation
         let (cx, cy) = (x.round() as i32, y.round() as i32);
         let mut m10 = 0.0f32;
@@ -216,8 +274,8 @@ fn detect_level(img: &Gray, s: f32, quota: usize) -> (Vec<Keypoint>, Vec<[u64; 4
             }
         }
         kps.push(Keypoint {
-            x: (x + 0.5) / s - 0.5,
-            y: (y + 0.5) / s - 0.5,
+            x: (x + 0.5) * rx - 0.5,
+            y: (y + 0.5) * ry - 0.5,
             score: r,
             scale: 1.0 / s,
         });
@@ -694,6 +752,34 @@ mod tests {
         assert_eq!(hamming(&a, &[1, 0, 0, 0]), 1);
         assert_eq!(hamming(&[u64::MAX; 4], &a), 256);
         assert_eq!(hamming(&[0b1010, 0, 0, 1 << 63], &[0b0110, 0, 0, 0]), 3);
+    }
+
+    /// Keypoints of a bright rectangle on a dark ground must sit on its corners (pixel-edge coordinates,
+    /// pixel centres at integers), at every pyramid level, not beside them.
+    #[test]
+    fn keypoints_sit_on_corners() {
+        let (w, h) = (400usize, 300usize);
+        let mut g = crate::imgutil::Gray::new(w, h);
+        for y in 100..200 {
+            for x in 120..300 {
+                g.data[y * w + x] = 0.9;
+            }
+        }
+        // the rectangle covers pixels 120..=299 x 100..=199, so its corners lie at 119.5/299.5 and 99.5/199.5
+        let corners = [(119.5f32, 99.5f32), (299.5, 99.5), (119.5, 199.5), (299.5, 199.5)];
+        let f = detect(&g, 400);
+        let mut worst = 0.0f32;
+        let mut n = 0;
+        for k in &f.kps {
+            let d = corners.iter().map(|c| (k.x - c.0).hypot(k.y - c.1)).fold(f32::MAX, f32::min);
+            if d < 8.0 * k.scale {
+                // allow one pixel of the level the point was found on
+                worst = worst.max(d / k.scale);
+                n += 1;
+            }
+        }
+        assert!(n >= 4, "only {n} keypoints near the corners");
+        assert!(worst < 0.5, "a keypoint is {worst:.2} level pixels from the corner");
     }
 
     #[test]
