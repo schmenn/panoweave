@@ -95,6 +95,14 @@ pub struct FineConfig {
     /// optimiser and areas are not preferably placed on it. `enabled = false` = exactly as before.
     #[serde(default)]
     pub foliage: FoliageConfig,
+    /// weight factor of protected points in the optimisation (`align::LOCKED_WEIGHT`; 1 = like any point).
+    /// The app sets it from the alignment options.
+    #[serde(default = "locked_weight_default")]
+    pub locked_weight: f64,
+}
+
+fn locked_weight_default() -> f64 {
+    align::LOCKED_WEIGHT
 }
 
 fn pick_textured_default() -> bool {
@@ -129,6 +137,7 @@ impl Default for FineConfig {
             enabled: true,
             record_patches: record_patches_default(),
             locked_warn_px: locked_warn_default(),
+            locked_weight: locked_weight_default(),
             matcher: MatchConfig::default(),
             refine_points: true,
             drop_invalid_points: false,
@@ -1092,14 +1101,26 @@ pub fn quality_spots(photos: &[FaPhoto], lens_of: &[usize], lenses: &[Lens], rot
     out
 }
 
-/// Measure the remaining shift on fixed spots (see `Quality`).
-pub fn quality(photos: &[FaPhoto], lens_of: &[usize], lenses: &[Lens], rots: &[M3], spots: &[(usize, usize, (f64, f64))], mcfg: &MatchConfig) -> Quality {
-    let geos: Vec<Geo> = (0..photos.len()).map(|i| Geo { lens: lenses[lens_of[i]], rot: rots[i], w: photos[i].gray.w as f64, h: photos[i].gray.h as f64 }).collect();
+/// Every spot measured once: the match (None = spot outside photo b or no patch).
+fn measure_spots(photos: &[FaPhoto], geos: &[Geo], spots: &[(usize, usize, (f64, f64))], mcfg: &MatchConfig) -> Vec<Option<PatchMeasure>> {
     let mut pairs: Vec<(usize, usize)> = spots.iter().map(|s| (s.0, s.1)).collect();
     pairs.sort();
     pairs.dedup();
-    let imgs = Images::prepare(photos, &geos, &pairs, false);
-    let r: Vec<Option<PatchMeasure>> = spots.par_iter().map(|&(a, b, p)| measure(&geos[a], &geos[b], imgs.get(a, &geos, b), imgs.get(b, &geos, a), geos[a].px_to_dir(p), mcfg)).collect();
+    let imgs = Images::prepare(photos, geos, &pairs, false);
+    spots.par_iter().map(|&(a, b, p)| measure(&geos[a], &geos[b], imgs.get(a, geos, b), imgs.get(b, geos, a), geos[a].px_to_dir(p), mcfg)).collect()
+}
+
+/// The remaining shift (check-image pixels) at each spot, `None` where there was no valid match. The same
+/// spots can be measured for several alignments and compared spot by spot (see `accuracy_search`).
+pub fn spot_shifts(photos: &[FaPhoto], lens_of: &[usize], lenses: &[Lens], rots: &[M3], spots: &[(usize, usize, (f64, f64))], mcfg: &MatchConfig) -> Vec<Option<f32>> {
+    let geos: Vec<Geo> = (0..photos.len()).map(|i| Geo { lens: lenses[lens_of[i]], rot: rots[i], w: photos[i].gray.w as f64, h: photos[i].gray.h as f64 }).collect();
+    measure_spots(photos, &geos, spots, mcfg).into_iter().map(|m| m.filter(|m| m.result.valid).map(|m| (m.result.dx.powi(2) + m.result.dy.powi(2)).sqrt())).collect()
+}
+
+/// Measure the remaining shift on fixed spots (see `Quality`).
+pub fn quality(photos: &[FaPhoto], lens_of: &[usize], lenses: &[Lens], rots: &[M3], spots: &[(usize, usize, (f64, f64))], mcfg: &MatchConfig) -> Quality {
+    let geos: Vec<Geo> = (0..photos.len()).map(|i| Geo { lens: lenses[lens_of[i]], rot: rots[i], w: photos[i].gray.w as f64, h: photos[i].gray.h as f64 }).collect();
+    let r = measure_spots(photos, &geos, spots, mcfg);
     let mut shifts: Vec<f32> = Vec::new();
     let mut bins: [Vec<f32>; 3] = Default::default();
     let (mut df, mut nd) = (0.0f32, 0usize);
@@ -1169,7 +1190,7 @@ pub fn run(
         cnt[c.b] += 1;
     }
     let anchor = (0..n).max_by_key(|&i| cnt[i]).unwrap_or(0);
-    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy };
+    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy, locked_weight: cfg.locked_weight };
     let mut pairs: Vec<(usize, usize)> = cps.iter().map(|c| (c.a.min(c.b), c.a.max(c.b))).collect();
     pairs.sort();
     pairs.dedup();
@@ -1373,7 +1394,7 @@ pub fn reoptimize(
         cnt[c.b] += 1;
     }
     let anchor = (0..n).max_by_key(|&i| cnt[i]).unwrap_or(0);
-    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy };
+    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy, locked_weight: cfg.locked_weight };
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
     stats.err_before = err_stats(&cps);
     // the list holds the patches as they were measured; the foliage weights are set again here

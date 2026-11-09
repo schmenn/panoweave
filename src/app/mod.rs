@@ -1,5 +1,6 @@
 //! The window: a guided, step-by-step panorama studio plus an exposure-blending mode.
 
+mod accuracy;
 mod align;
 mod chrome;
 mod connections;

@@ -41,9 +41,30 @@ fn radius_text(q: &fine_align::Quality) -> String {
     format!("<0.25: {:.3} ({}), 0.25-0.4: {:.3} ({}), >0.4: {:.3} ({})", a.1, a.0, b.1, b.0, c.1, c.0)
 }
 
-pub fn run(files: &[PathBuf]) {
+/// Photos, points and lenses of a headless run: from a project file (points, protected ones included, lenses and
+/// lens assignment as they are) or from photos (points found, lenses from EXIF like the app).
+pub struct Setup {
+    pub files: Vec<PathBuf>,
+    pub photos: Vec<engine::LoadedPhoto>,
+    pub cps: Vec<align::ControlPoint>,
+    pub lens_of: Vec<usize>,
+    pub lenses: Vec<align::Lens>,
+    pub long: Vec<f64>,
+    pub ms: engine::MatchSettings,
+}
+
+pub fn setup(files_in: &[PathBuf]) -> Setup {
     use rayon::prelude::*;
     let t = std::time::Instant::now();
+    // a project file instead of photos: its photos, lenses and points (protected ones included) are used as they are
+    let proj = match files_in {
+        [f] if f.extension().is_some_and(|e| e.eq_ignore_ascii_case("pwproj")) => Some(crate::project::load(f).expect("project")),
+        _ => None,
+    };
+    let files: Vec<PathBuf> = match &proj {
+        Some(p) => p.photos.iter().map(|ph| ph.path.clone()).collect(),
+        None => files_in.to_vec(),
+    };
     let photos: Vec<engine::LoadedPhoto> = files
         .par_iter()
         .map(|f| engine::load(engine::Source::File(f.clone()), f.file_name().unwrap().to_string_lossy().to_string()).unwrap())
@@ -53,8 +74,11 @@ pub fn run(files: &[PathBuf]) {
     let works: Vec<_> = photos.iter().map(|p| p.work.clone()).collect();
     // PW_THIN_OLD=1: the former row by row thinning (for comparing)
     let ms = engine::MatchSettings { even_thinning: std::env::var("PW_THIN_OLD").map(|v| v != "1").unwrap_or(true), ..Default::default() };
-    let m = engine::find_points(&works, &grays, &[], ms, &|_, _| {});
-    println!("points: {} cps in {} pairs", m.cps.len(), m.pairs.len());
+    let m = match &proj {
+        Some(p) => engine::MatchResult { cps: p.cps.clone(), pairs: Vec::new(), detect_ms: 0, match_ms: 0, keypoints: 0, sky_removed: 0 },
+        None => engine::find_points(&works, &grays, &[], ms, &|_, _| {}),
+    };
+    println!("points: {} cps in {} pairs, {} protected", m.cps.len(), m.pairs.len(), m.cps.iter().filter(|c| c.locked).count());
     {
         // share of the points by image row (eighths, top to bottom)
         let mut rows = [0usize; 8];
@@ -84,6 +108,17 @@ pub fn run(files: &[PathBuf]) {
         })
         .collect();
     let long: Vec<f64> = photos.iter().map(|p| p.w.max(p.h) as f64).collect();
+    let (lens_of, lenses) = match &proj {
+        Some(p) => (p.photos.iter().map(|ph| ph.lens).collect::<Vec<_>>(), p.lenses.clone()),
+        None => (lens_of, lenses),
+    };
+    Setup { files, photos, cps: m.cps, lens_of, lenses, long, ms }
+}
+
+pub fn run(files_in: &[PathBuf]) {
+    use rayon::prelude::*;
+    let Setup { files, photos, cps: cps0, lens_of, mut lenses, long, ms } = setup(files_in);
+    let files = &files[..];
     let fa_at = |size: u32| -> Vec<fine_align::FaPhoto> {
         if size == engine::WORK_SIZE {
             return photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
@@ -120,6 +155,7 @@ pub fn run(files: &[PathBuf]) {
         refine_iterations: env("PW_FINE_ITER", d.refine_iterations),
         converge_threshold: env("PW_FINE_CONV", d.converge_threshold),
         record_patches: false,
+        locked_weight: env("PW_ACC_LOCKED_WEIGHT", d.locked_weight),
         pick_textured: env("PW_FINE_PICK", 1u8) != 0,
         edge_search_share: env("PW_FINE_EDGE", d.edge_search_share),
         matcher: crate::patch_matcher::MatchConfig {
@@ -136,7 +172,7 @@ pub fn run(files: &[PathBuf]) {
     let used = vec![true; photos.len()];
     // the quality check: a small search (the alignment is already close) on fixed spots
     let qcfg = crate::patch_matcher::MatchConfig { search_radius: 6.0, min_structure: 0.0, min_uniqueness: 1.15, min_score: 0.6, ..fine_cfg.matcher.clone() };
-    let mut cps = m.cps.clone();
+    let mut cps = cps0;
     let mut spots = Vec::new();
     println!(
         "settings: passes {passes}, fine on {fine_size} px, check on {check_size} px, grid {}, areas/pair {}, rounds {}, stop {} px, outliers after pass 1 {}",
@@ -145,16 +181,27 @@ pub fn run(files: &[PathBuf]) {
     for pass in 0..passes {
         let t = std::time::Instant::now();
         // PW_OUTLIER_AREAS=1: the clean-up also removes control areas (the former behaviour, for comparing)
-        let s = engine::AlignSettings { remove_outliers: pass == 0 || !keep_points, outliers_skip_areas: std::env::var("PW_OUTLIER_AREAS").map(|v| v != "1").unwrap_or(true), ..Default::default() };
+        let s = engine::AlignSettings { remove_outliers: pass == 0 || !keep_points, outliers_skip_areas: std::env::var("PW_OUTLIER_AREAS").map(|v| v != "1").unwrap_or(true), locked_weight: fine_cfg.locked_weight, ..Default::default() };
         // the same foliage rating as "Align photos" in the app
         let fol_v = if fine_cfg.foliage.enabled { fine_align::foliage_maps(&fa) } else { Vec::new() };
         let fol: Vec<Option<&crate::foliage::FoliageMap>> = (0..fa.len()).map(|i| fol_v.get(i)).collect();
         crate::foliage::rate(&mut cps, &fol, &fine_cfg.foliage);
         let mut r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, &|_, _| {});
         crate::foliage::rate(&mut r0.cps, &fol, &fine_cfg.foliage);
-        let (mut r, _) = pair_check::run_rounds(&fa, &lens_of, &lenses, &long, r0, &s, &used, &pc_cfg, &fine_cfg.matcher, ms, &|_, _| {});
+        let (mut r, psum) = pair_check::run_rounds(&fa, &lens_of, &lenses, &long, r0, &s, &used, &pc_cfg, &fine_cfg.matcher, ms, &|_, _| {});
         crate::foliage::rate(&mut r.cps, &fol, &fine_cfg.foliage);
         let removed = r.removed;
+        {
+            // overlapping pairs (estimated from the geometry) that still have too few points
+            let counts = pair_check::pair_counts(&r.cps);
+            let weak: Vec<String> = psum
+                .overlaps
+                .iter()
+                .filter(|o| counts.get(&(o.a, o.b)).copied().unwrap_or(0) < pc_cfg.min_points)
+                .map(|o| format!("{}-{} ({:.0} %, {} pts)", o.a, o.b, o.share * 100.0, counts.get(&(o.a, o.b)).copied().unwrap_or(0)))
+                .collect();
+            println!("  pair check: {} overlapping pairs, {} with fewer than {} points: {}", psum.overlaps.len(), weak.len(), pc_cfg.min_points, weak.join(", "));
+        }
         if spots.is_empty() {
             let mut pairs: Vec<(usize, usize)> = r.cps.iter().map(|c| (c.a.min(c.b), c.a.max(c.b))).collect();
             pairs.sort();
@@ -188,6 +235,43 @@ pub fn run(files: &[PathBuf]) {
             q.diff,
             radius_text(&q)
         );
+        // protected points: how well the alignment fits them (px of the original photos), per pair
+        {
+            let mut per: std::collections::BTreeMap<(usize, usize), Vec<f64>> = Default::default();
+            for c in r.cps.iter().filter(|c| c.locked) {
+                per.entry((c.a.min(c.b), c.a.max(c.b))).or_default().push(c.err);
+            }
+            let all: Vec<f64> = per.values().flatten().copied().collect();
+            if !all.is_empty() {
+                let mut sorted = all.clone();
+                sorted.sort_by(f64::total_cmp);
+                println!(
+                    "  protected points: {} in {} pairs, error mean {:.2} median {:.2} max {:.2} px",
+                    all.len(),
+                    per.len(),
+                    all.iter().sum::<f64>() / all.len() as f64,
+                    sorted[sorted.len() / 2],
+                    sorted[sorted.len() - 1]
+                );
+                if std::env::var("PW_ACC_PAIRS").is_ok_and(|v| v == "1") {
+                    for ((a, b), v) in &per {
+                        // the best two photos alone can do with only these points (lens as found): what is left is
+                        // the limit of the model (parallax, hand points that contradict each other), not of the weighting
+                        let own: Vec<align::ControlPoint> = r.cps.iter().filter(|c| c.locked && (c.a.min(c.b), c.a.max(c.b)) == (*a, *b)).copied().collect();
+                        let inp = align::AlignInput { n: photos.len(), lens_of: &lens_of, long_side: &long };
+                        let mut ls = r.lenses.clone();
+                        let mut rots = vec![crate::geometry::IDENTITY; photos.len()];
+                        rots[*a] = r.rots[*a];
+                        rots[*b] = r.rots[*b];
+                        align::optimize(&inp, &mut rots, &mut ls, &own, *a, &align::OptimizeOptions { locked_weight: 1.0, ..Default::default() }, 60);
+                        let mut own = own;
+                        align::cp_errors(&inp, &rots, &ls, &mut own);
+                        let alone = own.iter().map(|c| c.err).sum::<f64>() / own.len() as f64;
+                        println!("    pair {:2}-{:2}: {} protected, mean {:.2} max {:.2} px (alone, these points only: {alone:.2} px)", a, b, v.len(), v.iter().sum::<f64>() / v.len() as f64, v.iter().cloned().fold(0.0, f64::max));
+                    }
+                }
+            }
+        }
         if std::env::var("PW_ACC_PAIRS").is_ok_and(|v| v == "1") {
             let mut pairs: Vec<(usize, usize)> = spots.iter().map(|s| (s.0, s.1)).collect();
             pairs.dedup();

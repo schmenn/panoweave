@@ -226,10 +226,12 @@ pub fn overlaps(geos: &[Geo], used: &[bool], grid: usize, min_share: f32) -> Vec
     out
 }
 
-/// Points between two photos (any kind, any direction).
+/// Points between two photos (any direction). Control areas (measured patches along the seams, up to 200
+/// per pair) are not counted: a pair that is only held together by areas has no points, and counting
+/// the areas made it look well connected, so it was never searched again and the connection view showed it green.
 pub fn pair_counts(cps: &[ControlPoint]) -> HashMap<(usize, usize), usize> {
     let mut m = HashMap::new();
-    for c in cps {
+    for c in cps.iter().filter(|c| c.kind != CpKind::Area) {
         *m.entry((c.a.min(c.b), c.a.max(c.b))).or_insert(0) += 1;
     }
     m
@@ -791,6 +793,50 @@ mod tests {
                 assert!((e[i][j] - r[i][j]).abs() < 1e-6);
             }
         }
+    }
+
+    /// Three photos stacked vertically, 60 % overlap between neighbours (20 % between the outer two),
+    /// points only between A-B and B-C. After aligning, A-C must be recognised as overlapping and get
+    /// points (found through the geometry and photo B), not be left unconnected.
+    #[test]
+    fn outer_photos_of_a_stack_are_found_through_the_middle_one() {
+        let pitches = [-36.0, -18.5, -1.0];
+        let shots: Vec<image::RgbImage> = pitches.iter().map(|&p| crate::sample::shoot(-100.0, p, 0.0, 62.0, 960, 640, 0.0, 1.0)).collect();
+        let grays: Vec<Arc<Gray>> = shots.iter().map(|s| Arc::new(crate::imgutil::to_gray(s))).collect();
+        let works: Vec<Arc<image::RgbImage>> = shots.into_iter().map(Arc::new).collect();
+        let m = engine::find_points(&works, &grays, &[], MatchSettings::default(), &|_, _| {});
+        let mut cps: Vec<ControlPoint> = m.cps.iter().filter(|c| (c.a.min(c.b), c.a.max(c.b)) != (0, 2)).copied().collect();
+        let counts = pair_counts(&cps);
+        assert!(counts.get(&(0, 1)).copied().unwrap_or(0) >= 8 && counts.get(&(1, 2)).copied().unwrap_or(0) >= 8, "the finder gave {counts:?}");
+        // the person's points: the finder's A-C points are left out on purpose
+        cps.retain(|c| (c.a, c.b) != (0, 2));
+        let lens = Lens { from_exif: true, ..Lens::from_hfov_deg(62.0) };
+        let (lens_of, long) = (vec![0usize; 3], vec![960.0f64; 3]);
+        let s = engine::AlignSettings { fine_tune_fov: false, distortion: false, level: false, ..Default::default() };
+        let r0 = engine::align_all(&lens_of, &[lens], &long, &cps, &s, &|_, _| {});
+        let fa: Vec<FaPhoto> = (0..3).map(|i| FaPhoto { gray: grays[i].clone(), rgb: works[i].clone() }).collect();
+        let cfg = PairCheckConfig::default();
+        let matcher = crate::fine_align::FineConfig::default().matcher;
+        let (r, sum) = run_rounds(&fa, &lens_of, &[lens], &long, r0, &s, &[true; 3], &cfg, &matcher, MatchSettings::default(), &|_, _| {});
+        for l in &sum.log {
+            println!("{l}");
+        }
+        let ov = sum.overlaps.iter().find(|o| (o.a, o.b) == (0, 2)).map(|o| o.share);
+        println!("A-C overlap {ov:?}");
+        assert!(ov.is_some_and(|o| o > 0.1), "A-C must be recognised as overlapping: {ov:?}");
+        let n = pair_counts(&r.cps).get(&(0, 2)).copied().unwrap_or(0);
+        assert!(n >= cfg.min_points, "A-C got {n} points");
+    }
+
+    #[test]
+    fn control_areas_do_not_make_a_pair_look_connected() {
+        let mut cps: Vec<ControlPoint> = (0..5).map(|i| ControlPoint::new(0, 1, [0.01 * i as f64, 0.0], [0.0; 2], false)).collect();
+        cps.extend((0..50).map(|i| ControlPoint { kind: CpKind::Area, ..ControlPoint::new(0, 2, [0.01 * i as f64, 0.1], [0.0; 2], false) }));
+        cps.push(ControlPoint { kind: CpKind::AreaManual, ..ControlPoint::new(1, 2, [0.0; 2], [0.0; 2], false) });
+        let m = pair_counts(&cps);
+        assert_eq!(m.get(&(0, 1)), Some(&5));
+        assert_eq!(m.get(&(0, 2)), None, "50 areas are no points");
+        assert_eq!(m.get(&(1, 2)), Some(&1), "a hand-drawn area counts");
     }
 
     #[test]

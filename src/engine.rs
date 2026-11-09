@@ -366,6 +366,7 @@ pub fn statistical_outliers_ex(cps: &[ControlPoint], skip_areas: bool) -> Vec<bo
 
 const IDENTITY_ROT: M3 = crate::geometry::IDENTITY;
 
+#[derive(Clone)]
 pub struct AlignResult {
     pub rots: Vec<M3>,
     pub lenses: Vec<Lens>,
@@ -384,18 +385,21 @@ pub struct AlignResult {
     pub pairs: Option<crate::pair_check::PairSummary>,
 }
 
+#[derive(Clone, Copy)]
 pub struct AlignSettings {
     pub fine_tune_fov: bool,
     pub distortion: bool,
     pub remove_outliers: bool,
     pub level: bool,
+    /// weight factor of protected points in the optimisation (`align::LOCKED_WEIGHT`; 1.0 = like any point)
+    pub locked_weight: f64,
     /// leave the automatic control areas out of the outlier clean-up (fine alignment rebuilds them anyway)
     pub outliers_skip_areas: bool,
 }
 
 impl Default for AlignSettings {
     fn default() -> Self {
-        AlignSettings { fine_tune_fov: true, distortion: true, remove_outliers: true, level: true, outliers_skip_areas: true }
+        AlignSettings { fine_tune_fov: true, distortion: true, remove_outliers: true, level: true, locked_weight: align::LOCKED_WEIGHT, outliers_skip_areas: true }
     }
 }
 
@@ -405,6 +409,21 @@ pub fn align_all(
     long_side: &[f64],
     cps_in: &[ControlPoint],
     s: &AlignSettings,
+    report: &(dyn Fn(f32, &str) + Sync),
+) -> AlignResult {
+    align_all_from(lens_of, lenses_in, long_side, cps_in, s, None, report)
+}
+
+/// Like `align_all`; with `start` the optimisation starts from these rotations instead of the closed-form
+/// spanning-tree placement (used by the "Maximum accuracy" search, which tries other ways of placing the photos).
+/// `None` = exactly `align_all`.
+pub fn align_all_from(
+    lens_of: &[usize],
+    lenses_in: &[Lens],
+    long_side: &[f64],
+    cps_in: &[ControlPoint],
+    s: &AlignSettings,
+    start: Option<Vec<M3>>,
     report: &(dyn Fn(f32, &str) + Sync),
 ) -> AlignResult {
     let t0 = Instant::now();
@@ -425,10 +444,13 @@ pub fn align_all(
         return AlignResult { rots: vec![IDENTITY_ROT; n], lenses, cps, removed: 0, removal_passes: 0, ms: 0, mean_err: 0.0, max_err: 0.0, fine: None, fields: Vec::new(), pairs: None };
     }
     report(0.3, "Placing photos");
-    let mut rots = align::initial_rotations(&inp, &lenses, &cps, anchor);
-    align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &OptimizeOptions { focal: false, distortion: false, cauchy: false }, 25);
+    let mut rots = match start {
+        Some(r) if r.len() == n => r,
+        _ => align::initial_rotations_ex(&inp, &lenses, &cps, anchor, s.locked_weight > 1.0),
+    };
+    align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &OptimizeOptions { locked_weight: s.locked_weight, ..Default::default() }, 25);
     report(0.5, "Fine-tuning");
-    let opts = OptimizeOptions { focal: s.fine_tune_fov, distortion: s.distortion, cauchy: false };
+    let opts = OptimizeOptions { focal: s.fine_tune_fov, distortion: s.distortion, cauchy: false, locked_weight: s.locked_weight };
     align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &opts, 60);
     let mut removed = 0;
     if s.remove_outliers {
@@ -629,7 +651,7 @@ mod tests {
                 ControlPoint::new(0, 1, p, p, false)
             })
             .collect();
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false, outliers_skip_areas: true };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false, ..Default::default() };
         let lens = Lens { from_exif: true, ..lens };
         let r = align_all(&[0, 0], &[lens], &[1000.0, 1000.0], &cps, &s, &|_, _| {});
         for i in 0..2 {
@@ -679,7 +701,7 @@ mod tests {
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
         let lens = Lens::from_hfov_deg(50.0);
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, outliers_skip_areas: true };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, ..Default::default() };
         let r = align_all(&lens_of, &[lens], &long, &mr.cps, &s, &|_, _| {});
         assert!(r.mean_err < 2.0, "mean error {} px", r.mean_err);
         // equal shifts mean equal rotations between neighbours, and about twice that between 0 and 2
@@ -703,7 +725,7 @@ mod tests {
         let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, outliers_skip_areas: true };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, ..Default::default() };
         let r = align_all(&lens_of, &[Lens::from_hfov_deg(50.0)], &long, &mr.cps, &s, &|_, _| {});
         let fa: Vec<FaPhoto> = views.iter().zip(&grays).map(|(v, g)| FaPhoto { gray: g.clone(), rgb: Arc::new(v.clone()) }).collect();
         let run = |record: bool| {
@@ -749,7 +771,7 @@ mod tests {
         let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, outliers_skip_areas: true };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, ..Default::default() };
         let r = align_all(&lens_of, &[Lens::from_hfov_deg(50.0)], &long, &mr.cps, &s, &|_, _| {});
         let fa: Vec<FaPhoto> = views.iter().zip(&grays).map(|(v, g)| FaPhoto { gray: g.clone(), rgb: Arc::new(v.clone()) }).collect();
         let cfg = FineConfig { drop_invalid_points: true, ..FineConfig::default() };
