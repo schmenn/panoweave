@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Point editor: new **Area** tool. Draw a rough rectangle round the same surface (a sign, a number plate, a wall) in the left and in the right photo, in either order (drag inside a rectangle to move it, outside to draw it again, Esc clears). "Match the areas" then compares the two areas exactly on a worker thread: start guess from the two rectangles (plus the rotation of nearby points or of the alignment), spots with real structure (corners and edges in both directions, not plain surfaces or a single straight edge) are picked in the left area, matched with the patch matcher (ZNCC, pyramid, sub-pixel) through a local affine map that is fitted again from the matches, and misfits are dropped. The proposed points are shown with their scores (weak ones marked and not ticked) and are only added after "Accept" as hand-placed points, in one undo step; "Discard" drops them. A plain area, rectangles that do not show the same thing, or a tiny rectangle give a clear message. Switch and settings in `AreaConfig` (`enabled`, `max_points`, `min_texture`, `min_zncc`, `weak_zncc`, ...; `PW_AREA=0` switches the tool off); `--demo area`. Unit-tested on synthetic photos (shifted, zoomed and turned areas: points within 0.3 to 0.5 px of the truth); not tried by clicking through the window on real photos.
+
 ## [0.3.0] - 2026-11-09
 
 ### Added

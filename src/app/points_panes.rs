@@ -74,6 +74,7 @@ impl PanoApp {
         self.paint_points(&painter, &d, pts);
         self.paint_selection_frames(&painter, &d, lay.frame, pts);
         self.paint_click_marks(&painter, &d, a, b);
+        self.paint_area(&painter, pane, origin, scale);
         self.paint_pending(&painter, &d);
         self.paint_select_shape(&painter, &d, &resp);
         painter.text(rect.left_top() + Vec2::new(10.0, 8.0), Align2::LEFT_TOP, format!("Photo {}", idx + 1), FontId::proportional(14.0), Color32::WHITE);

@@ -61,6 +61,7 @@ The release `.exe` is not code-signed, so Windows SmartScreen may say "Windows p
 - **Automatic control points:** multi-scale corner detection, rotation-aware descriptors, ratio-test matching, RANSAC and guided re-matching
 - **No points on sky or clouds** (can be switched off); points that still sit there (placed by hand, from patch click or old projects) can be found and removed later with "Find points on sky or cloud" in the point editor or the point list (threshold, one undo step, protected points stay)
 - **Point editor:** place a few points by hand and let PanoWeave find more, with sub-pixel snapping, zoom levels and a sortable point list; the patch-click mode uses the rotation and zoom of nearby points (and of the alignment), so slightly turned photos are matched too
+- **Area tool:** draw a rough rectangle round the same surface (sign, number plate, wall) in both photos; the areas are compared exactly (patch matching, sub-pixel, local affine map) and points are proposed only where there is real structure, with a score each, added after your click as one undo step
 - **Selecting many points:** Shift/Ctrl+click in the photos or the point list, or the selection shapes inside "Select / edit" (Click, Rectangle, Lasso, Brush). "Delete selected" removes them in one undo step, "Snap selected" lets them all snap to the exact spot in the background (protected points are left alone).
 - **Protected points:** lock a point (key L) and no bulk action (clean up, delete all in a pair, outlier removal, duplicate removal, a new search, the fine alignment) removes or moves it; the fine alignment still measures it and says when one is more than 3 px off or cannot be found nearby; a locked point is also refused by single delete and drag until it is unlocked.
 - **Duplicate points:** points that lie on top of each other are marked in the point list and can be removed with one click (hand-placed points stay).
@@ -108,7 +109,7 @@ flowchart LR
 | `engine` | Pipeline glue: find points, candidate pairs, align, cancel |
 | `align`, `geometry` | Camera model and bundle adjustment |
 | `patch_matcher`, `fine_align` | Patch matching and refinement |
-| `pair_check`, `click_match` | Pair verification and patch-click mode |
+| `pair_check`, `click_match`, `area_match` | Pair verification, patch-click mode and area mode |
 | `patch_store`, `patch_viz`, `patch_window` | Patch records, heatmaps, "Patch comparison" window |
 | `stitch`, `fusion` | Projection, blending, exposure fusion |
 | `strip`, `strip_write`, `photo_cache` | Memory-independent export: strip planning and memory budget, streaming JPEG/PNG/TIFF writers, cache of decoded photos |

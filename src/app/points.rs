@@ -16,6 +16,7 @@ impl PanoApp {
             // other photos on screen (switch, swap sides, photo removed): the clicks were made in the old ones
             self.click = ClickState { pair: (self.pe.a, self.pe.b), ..Default::default() };
         }
+        self.area_sync_pair();
         let ctx = ui.ctx().clone();
         self.points_toolbar_all(ui);
         let (a, b) = (self.pe.a, self.pe.b);
@@ -82,7 +83,9 @@ impl PanoApp {
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc cancels a half-placed point first, otherwise it leaves the tool
             self.pe.sel_drag = None;
-            if self.pe.pending.take().is_none() {
+            if self.area_escape() {
+                // the area tool took the key (cancelled a drag or cleared the rectangles)
+            } else if self.pe.pending.take().is_none() {
                 self.pe.tool = PointTool::Edit;
             }
         }
@@ -183,6 +186,7 @@ impl PanoApp {
                 self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::PatchClick);
                 self.pe.pending = None;
             }
+            self.area_tool_button(ui);
             if ui.add_enabled(self.undo.can_undo(), egui::Button::new("↶ Undo")).on_hover_text(self.undo.undo_label().map(|w| format!("Undo {w} (Ctrl+Z)")).unwrap_or_default()).clicked() {
                 self.undo_last();
             }
@@ -290,6 +294,8 @@ impl PanoApp {
         };
         if self.pe.tool == PointTool::PatchClick {
             self.click_panel(ui);
+        } else if self.pe.tool == PointTool::Area {
+            self.area_panel(ui);
         } else {
             ui.label(RichText::new(hint).small().color(if adding { ACCENT } else { MUTED }));
         }

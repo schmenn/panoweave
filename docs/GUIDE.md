@@ -173,6 +173,10 @@ The point editor (step 2) shows two photos side by side.
 
 ![Patch click with suggestions](guide/patchclick.png)
 
+**▭ Area:** for a surface with detail (a sign, a number plate, a facade, a wall with posters). Drag a rough rectangle round it in one photo, then round the same surface in the other photo (the order does not matter). Drag inside a rectangle to move it, drag outside to draw it again, **Esc** clears both. The right mouse button still moves the photo and the wheel zooms. Then press **▶ Match the areas**: PanoWeave compares the two areas exactly (also when the photos are zoomed or turned a little differently) and proposes up to a dozen points, placed only where there is real structure (corners, edges in both directions), never on a plain surface. Every point shows its match score; weak ones (below 0.90) are marked yellow and not ticked. Check them and press **✔ Accept** (one undo step, the points count as hand-placed) or **✖ Discard** (nothing changes). If nothing matches, the message says why: a plain area, rectangles that do not show the same thing, or rectangles that are too far apart. Aligning again (step 3) uses the new points.
+
+![Area with suggestions](guide/area.png)
+
 **🔒 Protect** (key **L**): a protected point is never removed or moved by any automatic or bulk action (clean up, delete all in a pair, outlier removal, duplicate removal, a new search, the fine alignment). Single delete and drag are refused until you unprotect it.
 
 **Undo / Redo** (Ctrl+Z / Ctrl+Y) work for every change of the points, also from the other windows.
@@ -308,7 +312,8 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Brush: click or paint | Select the points under the brush; Ctrl takes out |
 | Delete or Backspace | Delete the selected point(s); protected points stay and are named |
 | L | Protect / unprotect the selected point (the one clicked last, not a multiple selection) |
-| Esc | **Add point**: cancel a half-placed point (the first click); pressed again, or in any other tool, back to **Select / edit** |
+| Esc | **Add point**: cancel a half-placed point (the first click); pressed again, or in any other tool, back to **Select / edit**. **Area**: cancel the drag, then clear the rectangles, then back to **Select / edit** |
+| Area: drag | Draw a rectangle (outside one) or move it (inside one); right mouse button moves the photo |
 
 **All points list (F3)**
 
