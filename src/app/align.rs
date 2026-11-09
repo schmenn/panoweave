@@ -282,6 +282,8 @@ impl PanoApp {
                 });
             });
             ui.add_space(6.0);
+            self.ui_accuracy(ui);
+            ui.add_space(6.0);
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Pair check (overlapping photos without points)").strong());

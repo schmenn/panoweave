@@ -347,6 +347,7 @@ pub fn statistical_outliers(cps: &[ControlPoint]) -> Vec<bool> {
 
 const IDENTITY_ROT: M3 = crate::geometry::IDENTITY;
 
+#[derive(Clone)]
 pub struct AlignResult {
     pub rots: Vec<M3>,
     pub lenses: Vec<Lens>,
@@ -363,6 +364,7 @@ pub struct AlignResult {
     pub pairs: Option<crate::pair_check::PairSummary>,
 }
 
+#[derive(Clone, Copy)]
 pub struct AlignSettings {
     pub fine_tune_fov: bool,
     pub distortion: bool,
@@ -386,6 +388,21 @@ pub fn align_all(
     s: &AlignSettings,
     report: &(dyn Fn(f32, &str) + Sync),
 ) -> AlignResult {
+    align_all_from(lens_of, lenses_in, long_side, cps_in, s, None, report)
+}
+
+/// Like `align_all`; with `start` the optimisation starts from these rotations instead of the closed-form
+/// spanning-tree placement (used by the "Maximum accuracy" search, which tries other ways of placing the photos).
+/// `None` = exactly `align_all`.
+pub fn align_all_from(
+    lens_of: &[usize],
+    lenses_in: &[Lens],
+    long_side: &[f64],
+    cps_in: &[ControlPoint],
+    s: &AlignSettings,
+    start: Option<Vec<M3>>,
+    report: &(dyn Fn(f32, &str) + Sync),
+) -> AlignResult {
     let t0 = Instant::now();
     let n = lens_of.len();
     let inp = AlignInput { n, lens_of, long_side };
@@ -404,7 +421,10 @@ pub fn align_all(
         return AlignResult { rots: vec![IDENTITY_ROT; n], lenses, cps, removed: 0, ms: 0, mean_err: 0.0, max_err: 0.0, fine: None, fields: Vec::new(), pairs: None };
     }
     report(0.3, "Placing photos");
-    let mut rots = align::initial_rotations_ex(&inp, &lenses, &cps, anchor, s.locked_weight > 1.0);
+    let mut rots = match start {
+        Some(r) if r.len() == n => r,
+        _ => align::initial_rotations_ex(&inp, &lenses, &cps, anchor, s.locked_weight > 1.0),
+    };
     align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &OptimizeOptions { locked_weight: s.locked_weight, ..Default::default() }, 25);
     report(0.5, "Fine-tuning");
     let opts = OptimizeOptions { focal: s.fine_tune_fov, distortion: s.distortion, cauchy: false, locked_weight: s.locked_weight };

@@ -32,7 +32,19 @@ fn radius_text(q: &fine_align::Quality) -> String {
     format!("<0.25: {:.3} ({}), 0.25-0.4: {:.3} ({}), >0.4: {:.3} ({})", a.1, a.0, b.1, b.0, c.1, c.0)
 }
 
-pub fn run(files_in: &[PathBuf]) {
+/// Photos, points and lenses of a headless run: from a project file (points, protected ones included, lenses and
+/// lens assignment as they are) or from photos (points found, lenses from EXIF like the app).
+pub struct Setup {
+    pub files: Vec<PathBuf>,
+    pub photos: Vec<engine::LoadedPhoto>,
+    pub cps: Vec<align::ControlPoint>,
+    pub lens_of: Vec<usize>,
+    pub lenses: Vec<align::Lens>,
+    pub long: Vec<f64>,
+    pub ms: engine::MatchSettings,
+}
+
+pub fn setup(files_in: &[PathBuf]) -> Setup {
     use rayon::prelude::*;
     let t = std::time::Instant::now();
     // a project file instead of photos: its photos, lenses and points (protected ones included) are used as they are
@@ -44,7 +56,6 @@ pub fn run(files_in: &[PathBuf]) {
         Some(p) => p.photos.iter().map(|ph| ph.path.clone()).collect(),
         None => files_in.to_vec(),
     };
-    let files = &files[..];
     let photos: Vec<engine::LoadedPhoto> = files
         .par_iter()
         .map(|f| engine::load(engine::Source::File(f.clone()), f.file_name().unwrap().to_string_lossy().to_string()).unwrap())
@@ -77,10 +88,17 @@ pub fn run(files_in: &[PathBuf]) {
         })
         .collect();
     let long: Vec<f64> = photos.iter().map(|p| p.w.max(p.h) as f64).collect();
-    let (lens_of, mut lenses) = match &proj {
+    let (lens_of, lenses) = match &proj {
         Some(p) => (p.photos.iter().map(|ph| ph.lens).collect::<Vec<_>>(), p.lenses.clone()),
         None => (lens_of, lenses),
     };
+    Setup { files, photos, cps: m.cps, lens_of, lenses, long, ms }
+}
+
+pub fn run(files_in: &[PathBuf]) {
+    use rayon::prelude::*;
+    let Setup { files, photos, cps: cps0, lens_of, mut lenses, long, ms } = setup(files_in);
+    let files = &files[..];
     let fa_at = |size: u32| -> Vec<fine_align::FaPhoto> {
         if size == engine::WORK_SIZE {
             return photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
@@ -126,7 +144,7 @@ pub fn run(files_in: &[PathBuf]) {
     let used = vec![true; photos.len()];
     // the quality check: a small search (the alignment is already close) on fixed spots
     let qcfg = crate::patch_matcher::MatchConfig { search_radius: 6.0, ..fine_cfg.matcher.clone() };
-    let mut cps = m.cps.clone();
+    let mut cps = cps0;
     let mut spots = Vec::new();
     println!(
         "settings: passes {passes}, fine on {fine_size} px, check on {check_size} px, grid {}, areas/pair {}, rounds {}, stop {} px, outliers after pass 1 {}",

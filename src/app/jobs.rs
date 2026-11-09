@@ -16,7 +16,7 @@ impl PanoApp {
                 let was_cancelled = job.cancel.load(Ordering::Relaxed) || engine::cancelled();
                 self.job = None;
                 engine::CANCEL.store(false, Ordering::Relaxed);
-                let msg = if was_cancelled && !matches!(msg, JobMsg::Rendered(_) | JobMsg::FusedSaved(_) | JobMsg::Failed(_)) { JobMsg::Cancelled } else { msg };
+                let msg = if was_cancelled && !matches!(msg, JobMsg::Rendered(_) | JobMsg::FusedSaved(_) | JobMsg::Failed(_) | JobMsg::AccuracySearch(_)) { JobMsg::Cancelled } else { msg };
                 match msg {
                     JobMsg::Failed(e) => {
                         self.auto_chain = false;
@@ -41,6 +41,7 @@ impl PanoApp {
                     JobMsg::Loaded(r) => self.on_loaded(ctx, r),
                     JobMsg::Matched(m) => self.on_matched(m),
                     JobMsg::Aligned(a) => self.on_aligned(a),
+                    JobMsg::AccuracySearch(r) => self.on_accuracy_search(r),
                     JobMsg::Rendered(r) => match r {
                         Ok((p, ms, w, h)) => {
                             match self.mask_hole_note() {
