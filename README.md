@@ -146,7 +146,7 @@ Start the program with image files (or a `.pwproj` project) on the command line 
 | `--loadtest` | Measure load time and memory |
 | `--kpdebug`, `--pairtest` | Point detection and pair debugging |
 | `--paircheck <photos>` | Pair check and triangle test |
-| `--accuracy <photos>` | Measure how well the photos really fit after aligning: remaining shift on spots that are neither points nor control areas (removing points cannot improve it), per pass, optionally per pair. Use it to judge changes to the alignment; it measures on 3200 px copies of the photos (on the 1600 px working images part of the result is measuring noise); options `PW_ACC_PASSES`, `PW_ACC_PAIRS=1`, `PW_ACC_CHECK_SIZE` (default 3200), `PW_ACC_FINE_SIZE`, `PW_ACC_NO_OUTLIERS=1`, `PW_FINE_GRID`, `PW_FINE_AREAS`, `PW_FINE_ITER`, `PW_FINE_CONV` (see `src/accuracy_test.rs`) |
+| `--accuracy <photos>` | Measure how well the photos really fit after aligning: remaining shift on spots that are neither points nor control areas (removing points cannot improve it), per pass, optionally per pair. Use it to judge changes to the alignment; it measures on 3200 px copies of the photos (on the 1600 px working images part of the result is measuring noise); options `PW_ACC_PASSES`, `PW_ACC_PAIRS=1`, `PW_ACC_CHECK_SIZE` (default 3200), `PW_ACC_FINE_SIZE`, `PW_ACC_NO_OUTLIERS=1`, `PW_THIN_OLD=1`, `PW_OUTLIER_AREAS=1`, `PW_FINE_GRID`, `PW_FINE_AREAS`, `PW_FINE_ITER`, `PW_FINE_CONV` (see `src/accuracy_test.rs`) |
 | `--screenshot <file.png>` | Save a screenshot after about 120 frames and exit |
 | `--demo <name>` | Open a demo view (`photos`, `points`, `align`, `export`, `exposure`, `patches`, `connections`, ...) |
 

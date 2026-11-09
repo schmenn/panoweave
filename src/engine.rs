@@ -140,12 +140,14 @@ pub struct MatchSettings {
     pub points_per_pair: usize,
     /// leave out sky and clouds (clouds move between shots)
     pub ignore_sky: bool,
+    /// spread the kept points evenly over the whole overlap (false = former row by row order, top rows first)
+    pub even_thinning: bool,
 }
 
 impl Default for MatchSettings {
     fn default() -> Self {
         // points per pair: default 20
-        MatchSettings { points_per_photo: 3500, points_per_pair: 20, ignore_sky: true }
+        MatchSettings { points_per_photo: 3500, points_per_pair: 20, ignore_sky: true, even_thinning: true }
     }
 }
 
@@ -255,7 +257,7 @@ pub fn find_points(
                 if checked.len() < MIN_VERIFIED {
                     return None;
                 }
-                pm.corrs = features::thin(checked, grays[i].w, grays[i].h, settings.points_per_pair);
+                pm.corrs = features::thin_mode(checked, grays[i].w, grays[i].h, settings.points_per_pair, settings.even_thinning);
                 Some(pm)
             });
             let k = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -305,6 +307,23 @@ fn mean_sd(v: &[f64]) -> (f64, f64) {
 /// pair, then worse than mean + 2 sigma of all remaining points. Points placed by hand are kept,
 /// and a pair never drops below 3 points (PanoWeave's own safety rules).
 pub fn statistical_outliers(cps: &[ControlPoint]) -> Vec<bool> {
+    statistical_outliers_ex(cps, false)
+}
+
+/// `statistical_outliers`; with `skip_areas` the automatic control areas are neither measured nor removed
+/// (fine alignment builds them anew, so removing them only inflates the count). The result still has one
+/// entry per point.
+pub fn statistical_outliers_ex(cps: &[ControlPoint], skip_areas: bool) -> Vec<bool> {
+    if skip_areas && cps.iter().any(|c| c.kind == crate::align::CpKind::Area) {
+        let idx: Vec<usize> = (0..cps.len()).filter(|&k| cps[k].kind != crate::align::CpKind::Area).collect();
+        let sub: Vec<ControlPoint> = idx.iter().map(|&k| cps[k]).collect();
+        let rm_sub = statistical_outliers_ex(&sub, false);
+        let mut rm = vec![false; cps.len()];
+        for (j, &k) in idx.iter().enumerate() {
+            rm[k] = rm_sub[j];
+        }
+        return rm;
+    }
     let n = cps.len();
     let mut rm = vec![false; n];
     let mut pairs: std::collections::HashMap<(usize, usize), Vec<usize>> = std::collections::HashMap::new();
@@ -352,6 +371,8 @@ pub struct AlignResult {
     pub lenses: Vec<Lens>,
     pub cps: Vec<ControlPoint>,
     pub removed: usize,
+    /// in how many alignment passes points were removed (the check runs again after new points are added)
+    pub removal_passes: usize,
     pub ms: u128,
     pub mean_err: f64,
     pub max_err: f64,
@@ -368,11 +389,13 @@ pub struct AlignSettings {
     pub distortion: bool,
     pub remove_outliers: bool,
     pub level: bool,
+    /// leave the automatic control areas out of the outlier clean-up (fine alignment rebuilds them anyway)
+    pub outliers_skip_areas: bool,
 }
 
 impl Default for AlignSettings {
     fn default() -> Self {
-        AlignSettings { fine_tune_fov: true, distortion: true, remove_outliers: true, level: true }
+        AlignSettings { fine_tune_fov: true, distortion: true, remove_outliers: true, level: true, outliers_skip_areas: true }
     }
 }
 
@@ -399,7 +422,7 @@ pub fn align_all(
     report(0.1, "Estimating the lens");
     align::guess_fov(&inp, &mut lenses, &cps, anchor);
     if cancelled() {
-        return AlignResult { rots: vec![IDENTITY_ROT; n], lenses, cps, removed: 0, ms: 0, mean_err: 0.0, max_err: 0.0, fine: None, fields: Vec::new(), pairs: None };
+        return AlignResult { rots: vec![IDENTITY_ROT; n], lenses, cps, removed: 0, removal_passes: 0, ms: 0, mean_err: 0.0, max_err: 0.0, fine: None, fields: Vec::new(), pairs: None };
     }
     report(0.3, "Placing photos");
     let mut rots = align::initial_rotations(&inp, &lenses, &cps, anchor);
@@ -412,7 +435,7 @@ pub fn align_all(
         // the original's "Clean control points": points worse than mean + 2 sigma,
         // first within each photo pair, then over the whole project
         align::cp_errors(&inp, &rots, &lenses, &mut cps);
-        let rm = statistical_outliers(&cps);
+        let rm = statistical_outliers_ex(&cps, s.outliers_skip_areas);
         let before = cps.len();
         cps = cps.iter().zip(&rm).filter(|(_, r)| !**r).map(|(c, _)| *c).collect();
         removed = before - cps.len();
@@ -428,12 +451,38 @@ pub fn align_all(
     }
     let mean_err = if cps.is_empty() { 0.0 } else { cps.iter().map(|c| c.err).sum::<f64>() / cps.len() as f64 };
     let max_err = cps.iter().map(|c| c.err).fold(0.0, f64::max);
-    AlignResult { rots, lenses, cps, removed, ms: t0.elapsed().as_millis(), mean_err, max_err, fine: None, fields: Vec::new(), pairs: None }
+    AlignResult { rots, lenses, cps, removed, removal_passes: usize::from(removed > 0), ms: t0.elapsed().as_millis(), mean_err, max_err, fine: None, fields: Vec::new(), pairs: None }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_areas_are_left_out_of_the_outlier_clean_up() {
+        use crate::align::CpKind;
+        let mut cps: Vec<ControlPoint> = (0..20)
+            .map(|i| {
+                let mut c = ControlPoint::new(0, 1, [0.01 * i as f64, 0.0], [0.0; 2], false);
+                c.err = 0.5;
+                c
+            })
+            .collect();
+        // two bad points and two bad areas
+        for k in [3usize, 4] {
+            cps[k].err = 30.0;
+        }
+        for k in [10usize, 11] {
+            cps[k].err = 30.0;
+            cps[k].kind = CpKind::Area;
+        }
+        let all = statistical_outliers_ex(&cps, false);
+        assert!(all[3] && all[4] && all[10] && all[11]);
+        let rm = statistical_outliers_ex(&cps, true);
+        assert!(rm[3] && rm[4], "bad real points are still removed");
+        assert!(!rm[10] && !rm[11], "areas are kept");
+        assert_eq!(rm.len(), cps.len());
+    }
     use crate::geometry::{mm, transpose};
     use crate::testutil::{crop, texture};
 
@@ -580,7 +629,7 @@ mod tests {
                 ControlPoint::new(0, 1, p, p, false)
             })
             .collect();
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: false, level: false, outliers_skip_areas: true };
         let lens = Lens { from_exif: true, ..lens };
         let r = align_all(&[0, 0], &[lens], &[1000.0, 1000.0], &cps, &s, &|_, _| {});
         for i in 0..2 {
@@ -610,7 +659,7 @@ mod tests {
         let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
         let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
 
-        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false }, &|_, _| {});
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
         assert!(mr.keypoints > 100);
         assert!(mr.pairs.iter().any(|p| (p.a, p.b) == (0, 1)), "pairs {:?}", mr.pairs.iter().map(|p| (p.a, p.b, p.points)).collect::<Vec<_>>());
         assert!(mr.pairs.iter().any(|p| (p.a, p.b) == (1, 2)));
@@ -630,7 +679,7 @@ mod tests {
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
         let lens = Lens::from_hfov_deg(50.0);
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, outliers_skip_areas: true };
         let r = align_all(&lens_of, &[lens], &long, &mr.cps, &s, &|_, _| {});
         assert!(r.mean_err < 2.0, "mean error {} px", r.mean_err);
         // equal shifts mean equal rotations between neighbours, and about twice that between 0 and 2
@@ -651,10 +700,10 @@ mod tests {
         let views: Vec<RgbImage> = (0..3).map(|i| crop(&big, i * 100, 0, 320, 260)).collect();
         let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
         let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
-        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false }, &|_, _| {});
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, outliers_skip_areas: true };
         let r = align_all(&lens_of, &[Lens::from_hfov_deg(50.0)], &long, &mr.cps, &s, &|_, _| {});
         let fa: Vec<FaPhoto> = views.iter().zip(&grays).map(|(v, g)| FaPhoto { gray: g.clone(), rgb: Arc::new(v.clone()) }).collect();
         let run = |record: bool| {
@@ -697,10 +746,10 @@ mod tests {
         let views: Vec<RgbImage> = (0..3).map(|i| crop(&big, i * 100, 0, 320, 260)).collect();
         let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
         let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
-        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false }, &|_, _| {});
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
-        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false };
+        let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, outliers_skip_areas: true };
         let r = align_all(&lens_of, &[Lens::from_hfov_deg(50.0)], &long, &mr.cps, &s, &|_, _| {});
         let fa: Vec<FaPhoto> = views.iter().zip(&grays).map(|(v, g)| FaPhoto { gray: g.clone(), rgb: Arc::new(v.clone()) }).collect();
         let cfg = FineConfig { drop_invalid_points: true, ..FineConfig::default() };

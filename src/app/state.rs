@@ -29,6 +29,7 @@ impl PanoApp {
             match_brightness: true,
             last_match: None,
             last_align: None,
+            last_align_passes: 0,
             job: None,
             auto_chain: false,
             status: "Welcome! Add the photos of your panorama to begin.".into(),

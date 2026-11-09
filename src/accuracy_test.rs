@@ -42,9 +42,20 @@ pub fn run(files: &[PathBuf]) {
     println!("loaded {} photos {:?}", photos.len(), t.elapsed());
     let grays: Vec<_> = photos.iter().map(|p| p.gray.clone()).collect();
     let works: Vec<_> = photos.iter().map(|p| p.work.clone()).collect();
-    let ms = engine::MatchSettings::default();
+    // PW_THIN_OLD=1: the former row by row thinning (for comparing)
+    let ms = engine::MatchSettings { even_thinning: std::env::var("PW_THIN_OLD").map(|v| v != "1").unwrap_or(true), ..Default::default() };
     let m = engine::find_points(&works, &grays, &[], ms, &|_, _| {});
     println!("points: {} cps in {} pairs", m.cps.len(), m.pairs.len());
+    {
+        // share of the points by image row (eighths, top to bottom)
+        let mut rows = [0usize; 8];
+        for c in &m.cps {
+            let (l, h) = (photos[c.a].w.max(photos[c.a].h) as f64, photos[c.a].h as f64);
+            rows[(((c.pa[1] * l + h / 2.0) / h * 8.0).floor().clamp(0.0, 7.0)) as usize] += 1;
+        }
+        let tot = rows.iter().sum::<usize>().max(1);
+        println!("points by image row (eighths, top to bottom, %): {}", rows.iter().map(|n| format!("{:.0}", 100.0 * *n as f64 / tot as f64)).collect::<Vec<_>>().join("/"));
+    }
     // same lens grouping as the app
     let mut keys: Vec<(Option<u64>, u32)> = Vec::new();
     let mut lenses = Vec::new();
@@ -116,7 +127,8 @@ pub fn run(files: &[PathBuf]) {
     );
     for pass in 0..passes {
         let t = std::time::Instant::now();
-        let s = engine::AlignSettings { remove_outliers: pass == 0 || !keep_points, ..Default::default() };
+        // PW_OUTLIER_AREAS=1: the clean-up also removes control areas (the former behaviour, for comparing)
+        let s = engine::AlignSettings { remove_outliers: pass == 0 || !keep_points, outliers_skip_areas: std::env::var("PW_OUTLIER_AREAS").map(|v| v != "1").unwrap_or(true), ..Default::default() };
         let r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, &|_, _| {});
         let (mut r, _) = pair_check::run_rounds(&fa, &lens_of, &lenses, &long, r0, &s, &used, &pc_cfg, &fine_cfg.matcher, ms, &|_, _| {});
         let removed = r.removed;

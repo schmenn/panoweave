@@ -91,7 +91,7 @@ Matching points (control points) are spots that show the same thing in two photo
 **📐 Align photos** works out in which direction each photo was taken, the field of view of each lens and its distortion. The result shows the **average error** (in pixels of the original photos) and the **worst point**:
 
 - below 1.5 px: excellent; below 3 px: good; above: check the points.
-- "wrong matches removed automatically": points that did not fit were taken out. Undo (Ctrl+Z) brings them back.
+- "N points removed in M passes": points that did not fit were taken out (only real points; control areas are rebuilt by the fine alignment and not counted). The check runs again each time the pair check adds points, so M can be more than 1. Undo (Ctrl+Z) brings them back.
 - The average error is measured on the points that are left. Aligning again removes more points each time, so the number keeps dropping even when the panorama does not get any better (measured: 0.60 → 0.54 px after three runs, the real fit unchanged). Judge the result by the seams in **Check overlap** or in the export, not by this number alone. To measure the real fit, see "Measuring the fit" in the pitfalls.
 
 ![Alignment result and options](align.png)
@@ -269,10 +269,11 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 | Message | Meaning |
 |---|---|
 | no overlap found (photo list) | The photo has no points to the main group. |
-| N wrong matches removed automatically | The alignment dropped points that did not fit; Ctrl+Z brings them back. |
+| N points removed in M passes | The alignment dropped N points that did not fit, over M alignment passes; Ctrl+Z brings them back. |
 | Something changed – align again to update. | Points or photos changed after aligning. |
 | The last round was undone because it made the result worse. | Fine alignment kept the better earlier state. |
-| N protected point(s) are off by more than 3 px … / could not be confirmed | The fine alignment found a protected point elsewhere, or not at all; the point was left alone. |
+| N protected point(s) are off by more than 3 px … | The fine alignment found a protected point elsewhere; the point was left alone. |
+| N protected point(s) could not be confirmed (3 repeating pattern, 1 too close to the photo edge, …) | The patches around the point do not look alike at the point's own spot. The reason is given per count: repeating pattern, too close to the photo edge, too little texture, too little similarity. Not a sign that the point is wrong; it was left alone. |
 | fine alignment changed nothing: no control areas … | "Add control areas" is off, so there was nothing to judge the rounds with. |
 | Project opened with N of M photos – missing: … | Some photo files were not found; the others were opened with their points. |
 | … failed with an internal error … | A program error in a background job; nothing was changed. |
