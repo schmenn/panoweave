@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- Alignment ignored protected points: they counted like any single automatic point, so a few hand-placed, protected points lost against hundreds of automatic points and control areas, some of them wrong (parallax on a car, trees, smooth surfaces). On a real project (19 photos, 40 protected points) the protected points fitted to 31 px on average (largest 71 px, original photo pixels) after aligning; now 4.4 px (largest 16 px). Protected points now count `LOCKED_WEIGHT` (30) times as much, stay quadratic over a wider range (they are not down-weighted as outliers) and a pair with at least 3 protected points takes only those for its start position. Switch: "Weight of protected points" in step 3 (1 = as before). After aligning, the status line says how well the protected points fit.
+- The optimiser accepted a step by the plain sum of squares although it minimises the robust loss, so steps that ignore wrong points were refused and the robust weighting could not do its job. It now accepts by the robust loss it minimises.
+
+### Added
+- `--accuracy <project.pwproj>` uses the photos, lenses and points of a project (protected points included); prints the fit of the protected points per pair (also what two photos alone could reach with only those points), the overlapping pairs that still have too few points, and takes `PW_ACC_LOCKED_WEIGHT`.
+
 ## [0.3.0] - 2026-11-09
 
 ### Added

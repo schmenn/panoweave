@@ -188,8 +188,32 @@ fn pair_counts(n: usize, cps: &[ControlPoint]) -> Vec<Vec<usize>> {
 
 /// Initial rotations: maximum spanning tree over the match graph, each edge solved in closed form.
 pub fn initial_rotations(inp: &AlignInput, lenses: &[Lens], cps: &[ControlPoint], anchor: usize) -> Vec<M3> {
+    initial_rotations_ex(inp, lenses, cps, anchor, false)
+}
+
+/// Like `initial_rotations`; with `prefer_locked` a pair with at least `LOCKED_START_MIN` protected
+/// points is solved from those alone (the closed form has no outlier handling, so hundreds of automatic
+/// points with some wrong ones would otherwise decide the start) and such pairs are used first.
+pub fn initial_rotations_ex(inp: &AlignInput, lenses: &[Lens], cps: &[ControlPoint], anchor: usize, prefer_locked: bool) -> Vec<M3> {
     let n = inp.n;
-    let counts = pair_counts(n, cps);
+    let mut counts = pair_counts(n, cps);
+    let mut locked_pair = vec![vec![false; n]; n];
+    if prefer_locked {
+        let mut lc = vec![vec![0usize; n]; n];
+        for cp in cps.iter().filter(|c| c.locked) {
+            lc[cp.a][cp.b] += 1;
+            lc[cp.b][cp.a] += 1;
+        }
+        for i in 0..n {
+            for j in 0..n {
+                if lc[i][j] >= LOCKED_START_MIN {
+                    locked_pair[i][j] = true;
+                    // protected pairs come before any pair of automatic points
+                    counts[i][j] += 1_000_000;
+                }
+            }
+        }
+    }
     let mut rots = vec![IDENTITY; n];
     let mut done = vec![false; n];
     if n == 0 {
@@ -216,6 +240,9 @@ pub fn initial_rotations(inp: &AlignInput, lenses: &[Lens], cps: &[ControlPoint]
         // pairs (ray in i, ray in j)
         let mut pairs = Vec::new();
         for cp in cps {
+            if locked_pair[i][j] && !cp.locked {
+                continue;
+            }
             if cp.a == i && cp.b == j {
                 pairs.push((ray(&lenses[inp.lens_of[i]], cp.pa), ray(&lenses[inp.lens_of[j]], cp.pb)));
             } else if cp.a == j && cp.b == i {
@@ -265,11 +292,60 @@ pub fn total_cost(rots: &[M3], lens_of: &[usize], lenses: &[Lens], cps: &[Contro
         .sum()
 }
 
+/// The function the optimiser really minimises: the robust loss (Huber or Cauchy) of every point,
+/// weighted, protected points `locked_weight` times and with a wider quadratic range. A step is
+/// accepted when this gets smaller. Before 0.3.1 the plain sum of squares decided, which rejected
+/// exactly the steps that ignore wrong points - so the robust weights could not do their job.
+fn robust_cost(rots: &[M3], lens_of: &[usize], lenses: &[Lens], cps: &[ControlPoint], opts: &OptimizeOptions) -> f64 {
+    cps.iter()
+        .map(|cp| {
+            let r = cp_residual(cp, &rots[cp.a], &rots[cp.b], &lenses[lens_of[cp.a]], &lenses[lens_of[cp.b]]);
+            let rn2: f64 = r.iter().map(|v| v * v).sum();
+            let rn = rn2.sqrt();
+            let boost = cp.locked && opts.locked_weight > 1.0;
+            let k = if boost { LOCKED_ROBUST_K } else { ROBUST_K };
+            let rho = if opts.cauchy && !boost {
+                k * k * (1.0 + rn2 / (k * k)).ln()
+            } else if rn < k {
+                rn2
+            } else {
+                2.0 * k * rn - k * k
+            };
+            rho * cp.weight * if boost { opts.locked_weight } else { 1.0 }
+        })
+        .sum()
+}
+
+/// How much more a protected point counts than a normal one in the optimisation (and that it is
+/// not down-weighted as an outlier): the person placed and protected it, so it is the reference
+/// against hundreds of automatic points and areas, some of them wrong (trees, smooth walls, parallax).
+/// 1.0 = protected points count like any other point (the behaviour before 0.3.1).
+pub const LOCKED_WEIGHT: f64 = 30.0;
+
+/// Residual (normalised units) up to which a protected point is treated quadratically; a normal point
+/// only up to `ROBUST_K`. Beyond it the loss grows linearly (Huber), so a protected point that is
+/// plainly wrong is still not able to drag the whole project.
+const LOCKED_ROBUST_K: f64 = 0.010;
+/// Residual up to which a normal point is treated quadratically (about 3 px on a 3000 px photo).
+const ROBUST_K: f64 = 0.001;
+
+/// A pair with at least this many protected points takes only those for the start rotation.
+pub const LOCKED_START_MIN: usize = 3;
+
+#[derive(Clone, Copy, Debug)]
 pub struct OptimizeOptions {
     pub focal: bool,
     pub distortion: bool,
     /// Cauchy instead of Huber robust loss
     pub cauchy: bool,
+    /// weight factor of protected points (see `LOCKED_WEIGHT`)
+    pub locked_weight: f64,
+}
+
+impl Default for OptimizeOptions {
+    fn default() -> Self {
+        OptimizeOptions { focal: false, distortion: false, cauchy: false, locked_weight: LOCKED_WEIGHT }
+    }
 }
 
 /// Levenberg-Marquardt bundle adjustment over rotations (+ optional lens parameters).
@@ -326,7 +402,7 @@ pub fn optimize(
     }
 
     let mut lambda = 1e-3;
-    let mut cost = total_cost(rots, inp.lens_of, lenses, cps);
+    let mut cost = robust_cost(rots, inp.lens_of, lenses, cps, opts);
     for _it in 0..iterations {
         if crate::engine::cancelled() {
             break;
@@ -341,9 +417,11 @@ pub fn optimize(
             let base = cp_residual(cp, &rots[cp.a], &rots[cp.b], &lenses[la_i], &lenses[lb_i]);
             // robust weight (Huber, ~3 px on a 3000 px photo)
             let rn = (base[0] * base[0] + base[1] * base[1] + base[2] * base[2] + base[3] * base[3]).sqrt();
-            let k = 0.001;
-            let robust = if opts.cauchy { 1.0 / (1.0 + (rn / k) * (rn / k)) } else if rn < k { 1.0 } else { k / rn };
-            let wgt = robust * cp.weight;
+            let boost = cp.locked && opts.locked_weight > 1.0;
+            let k = if boost { LOCKED_ROBUST_K } else { ROBUST_K };
+            // protected points are never put on the Cauchy loss, which would let go of them far out
+            let robust = if opts.cauchy && !boost { 1.0 / (1.0 + (rn / k) * (rn / k)) } else if rn < k { 1.0 } else { k / rn };
+            let wgt = robust * cp.weight * if boost { opts.locked_weight } else { 1.0 };
             let mut cols: Vec<(usize, [f64; 4])> = Vec::with_capacity(10);
             for (img, which) in [(cp.a, 0), (cp.b, 1)] {
                 let pi = rot_idx[img];
@@ -422,7 +500,7 @@ pub fn optimize(
                     nlz[l].k1 = (nlz[l].k1 + delta[k_idx[l]]).clamp(-0.6, 0.6);
                 }
             }
-            let nc = total_cost(&nr, inp.lens_of, &nlz, cps);
+            let nc = robust_cost(&nr, inp.lens_of, &nlz, cps, opts);
             if nc < cost {
                 let rel = (cost - nc) / cost.max(1e-30);
                 rots.copy_from_slice(&nr);
@@ -431,7 +509,7 @@ pub fn optimize(
                 lambda = (lambda * 0.3).max(1e-9);
                 improved = true;
                 if rel < 1e-7 {
-                    return cost;
+                    return total_cost(rots, inp.lens_of, lenses, cps);
                 }
                 break;
             } else {
@@ -442,7 +520,7 @@ pub fn optimize(
             break;
         }
     }
-    cost
+    total_cost(rots, inp.lens_of, lenses, cps)
 }
 
 /// Error of each control point in pixels of the original photos.
@@ -471,7 +549,7 @@ pub fn guess_fov(inp: &AlignInput, lenses: &mut [Lens], cps: &[ControlPoint], an
             ls[l] = Lens::from_hfov_deg(deg);
         }
         let mut rots = initial_rotations(inp, &ls, cps, anchor);
-        optimize(inp, &mut rots, &mut ls, cps, anchor, &OptimizeOptions { focal: false, distortion: false, cauchy: false }, 6);
+        optimize(inp, &mut rots, &mut ls, cps, anchor, &OptimizeOptions::default(), 6);
         let c = total_cost(&rots, inp.lens_of, &ls, cps);
         if c < best.0 {
             best = (c, deg);
@@ -667,7 +745,7 @@ mod tests {
         assert!(m_dist(&rots[0], &IDENTITY) < 1e-9);
         assert!(m_dist(&rots[1], &IDENTITY) < 1e-6);
         let mut ls = lenses.to_vec();
-        let cost = optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions { focal: false, distortion: false, cauchy: false }, 10);
+        let cost = optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions::default(), 10);
         assert!(cost < 1e-12, "cost {cost}");
         assert!(m_dist(&rots[1], &IDENTITY) < 1e-6);
         assert_eq!(ls[0], lens);
@@ -706,7 +784,7 @@ mod tests {
         ];
         let mut ls = vec![lens];
         let before = total_cost(&rots, &lens_of, &ls, &cps);
-        let after = optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions { focal: false, distortion: false, cauchy: false }, 50);
+        let after = optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions::default(), 50);
         assert!(after < before * 1e-3 + 1e-12, "before {before} after {after}");
         for i in 0..3 {
             assert!(m_dist(&rots[i], &truth[i]) < 1e-3, "photo {i}");
@@ -723,7 +801,7 @@ mod tests {
         let inp = AlignInput { n: 3, lens_of: &lens_of, long_side: &long };
         let mut ls = vec![Lens::from_hfov_deg(58.0)];
         let mut rots = initial_rotations(&inp, &ls, &cps, 0);
-        optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions { focal: true, distortion: false, cauchy: false }, 80);
+        optimize(&inp, &mut rots, &mut ls, &cps, 0, &OptimizeOptions { focal: true, ..OptimizeOptions::default() }, 80);
         assert!((ls[0].f - lens.f).abs() / lens.f < 0.01, "f {} vs {}", ls[0].f, lens.f);
     }
 
@@ -742,6 +820,92 @@ mod tests {
         let mut known = vec![Lens { from_exif: true, ..Lens::from_hfov_deg(100.0) }];
         guess_fov(&inp, &mut known, &cps, 0);
         assert!((known[0].hfov_deg() - 100.0).abs() < 1e-9);
+    }
+
+    /// Largest rotation error (matrix distance) of photos 1.. against the truth, photo 0 is the anchor.
+    fn rot_error(rots: &[M3], truth: &[M3]) -> f64 {
+        (1..rots.len()).map(|i| m_dist(&rots[i], &truth[i])).fold(0.0, f64::max)
+    }
+
+    /// Three cameras in a row: exact protected points plus many wrong ones that agree with each other
+    /// (a moving car, a tree in the wind, a smooth wall that "matches" at a wrong place).
+    fn protected_vs_false(wrong_per_pair: usize) -> (Vec<M3>, Vec<ControlPoint>) {
+        let lens = Lens::from_hfov_deg(50.0);
+        let truth = vec![camera_from_ypr(0.0, 0.0, 0.0), camera_from_ypr(0.35, 0.02, 0.0), camera_from_ypr(0.7, -0.03, 0.01)];
+        let mut cps = synth_cps(&truth, &lens, &[(0, 1), (1, 2)], 8, 21);
+        for c in cps.iter_mut() {
+            c.locked = true;
+            c.manual = true;
+        }
+        let mut wrong = synth_cps(&truth, &lens, &[(0, 1), (1, 2)], wrong_per_pair, 22);
+        let mut rng = Rng(23);
+        for c in wrong.iter_mut() {
+            // systematic shift of about 20 px on a 1000 px photo plus a little scatter
+            c.pb[0] += 0.02 + 0.004 * rng.gauss();
+            c.pb[1] += 0.012 + 0.004 * rng.gauss();
+        }
+        cps.extend(wrong);
+        (truth, cps)
+    }
+
+    fn place(cps: &[ControlPoint], prefer_locked: bool, locked_weight: f64) -> Vec<M3> {
+        let lens = Lens::from_hfov_deg(50.0);
+        let lens_of = [0usize; 3];
+        let long = [1000.0; 3];
+        let inp = AlignInput { n: 3, lens_of: &lens_of, long_side: &long };
+        let mut ls = vec![lens];
+        let mut rots = initial_rotations_ex(&inp, &ls, cps, 0, prefer_locked);
+        optimize(&inp, &mut rots, &mut ls, cps, 0, &OptimizeOptions { locked_weight, ..Default::default() }, 60);
+        rots
+    }
+
+    #[test]
+    fn protected_exact_points_prevail_against_many_false_ones() {
+        let (truth, cps) = protected_vs_false(120);
+        // before: protected points counted like any other point, 8 against 120 wrong ones
+        let old = rot_error(&place(&cps, false, 1.0), &truth);
+        let new = rot_error(&place(&cps, true, LOCKED_WEIGHT), &truth);
+        println!("rotation error: protected like any point {old:.5}, protected weighted {new:.5}");
+        assert!(new < 0.002, "protected points must decide: {new}");
+        assert!(new < old * 0.25, "old {old} new {new}");
+    }
+
+    #[test]
+    fn protected_start_uses_only_protected_points_of_a_pair() {
+        let (truth, cps) = protected_vs_false(200);
+        let lens = Lens::from_hfov_deg(50.0);
+        let lens_of = [0usize; 3];
+        let long = [1000.0; 3];
+        let inp = AlignInput { n: 3, lens_of: &lens_of, long_side: &long };
+        let rots = initial_rotations_ex(&inp, &[lens], &cps, 0, true);
+        assert!(rot_error(&rots, &truth) < 1e-6, "exact protected points give the exact start");
+        let plain = initial_rotations_ex(&inp, &[lens], &cps, 0, false);
+        assert!(rot_error(&plain, &truth) > 1e-3, "the plain start is pulled away by the wrong points");
+        // fewer than LOCKED_START_MIN protected points: not used alone
+        let mut few = cps.clone();
+        for c in few.iter_mut().filter(|c| c.locked).skip(2) {
+            c.locked = false;
+        }
+        let r = initial_rotations_ex(&inp, &[lens], &few, 0, true);
+        assert!(rot_error(&r, &truth) > 1e-3);
+    }
+
+    #[test]
+    fn robust_loss_ignores_wild_outliers() {
+        // 15 % wild points among exact ones: the robust fit must stay at the truth
+        let lens = Lens::from_hfov_deg(50.0);
+        let truth = [camera_from_ypr(0.0, 0.0, 0.0), camera_from_ypr(0.35, 0.02, 0.0), camera_from_ypr(0.7, -0.03, 0.01)];
+        let mut cps = synth_cps(&truth, &lens, &[(0, 1), (1, 2), (0, 2)], 40, 31);
+        let mut rng = Rng(32);
+        for (k, c) in cps.iter_mut().enumerate() {
+            if k % 7 == 0 {
+                c.pb = [c.pb[0] + 0.15 * rng.gauss(), c.pb[1] + 0.15 * rng.gauss()];
+            }
+        }
+        let rots = place(&cps, false, 1.0);
+        let e = rot_error(&rots, &truth);
+        println!("wild outliers: rotation error {e:.6}");
+        assert!(e < 0.003, "{e}");
     }
 
     #[test]

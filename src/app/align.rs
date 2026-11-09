@@ -1,5 +1,17 @@
 use super::*;
 
+/// " Protected points fit to x px on average (largest y px)." – the photos are placed so that the points the
+/// person protected fit best; a large number means they contradict each other or the lens/position model.
+pub(super) fn protected_fit_note(cps: &[ControlPoint]) -> String {
+    let errs: Vec<f64> = cps.iter().filter(|c| c.locked).map(|c| c.err).collect();
+    if errs.is_empty() {
+        return String::new();
+    }
+    let mean = errs.iter().sum::<f64>() / errs.len() as f64;
+    let max = errs.iter().cloned().fold(0.0, f64::max);
+    format!(" {} protected points fit to {mean:.2} px on average (largest {max:.1} px).", errs.len())
+}
+
 impl PanoApp {
     pub(super) fn run_align(&mut self, chain: bool) {
         if self.busy() || self.photos.is_empty() {
@@ -23,8 +35,8 @@ impl PanoApp {
         let lenses = self.lenses.clone();
         let cps: Vec<ControlPoint> = self.cps.iter().filter(|c| active.contains(&c.a) && active.contains(&c.b)).copied().collect();
         let s = AlignSettings { ..self.align_settings };
-        let s = AlignSettings { fine_tune_fov: s.fine_tune_fov, distortion: s.distortion, remove_outliers: s.remove_outliers, level: s.level };
-        let fine_cfg = self.fine_cfg.clone();
+        let s = AlignSettings { fine_tune_fov: s.fine_tune_fov, distortion: s.distortion, remove_outliers: s.remove_outliers, level: s.level, locked_weight: s.locked_weight };
+        let fine_cfg = fine_align::FineConfig { locked_weight: self.align_settings.locked_weight, ..self.fine_cfg.clone() };
         let par_cfg = self.parallax_cfg.clone();
         let fa: Vec<fine_align::FaPhoto> = self.photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
         let pc_cfg = self.pair_cfg.clone();
@@ -85,7 +97,7 @@ impl PanoApp {
         let rots: Vec<M3> = self.photos.iter().map(|p| p.rot).collect();
         let cps: Vec<ControlPoint> = self.cps.iter().filter(|c| active.contains(&c.a) && active.contains(&c.b)).copied().collect();
         let (focal, dist) = (self.align_settings.fine_tune_fov, self.align_settings.distortion);
-        let fine_cfg = self.fine_cfg.clone();
+        let fine_cfg = fine_align::FineConfig { locked_weight: self.align_settings.locked_weight, ..self.fine_cfg.clone() };
         let par_cfg = self.parallax_cfg.clone();
         let old_fields = self.fields.clone();
         let fa: Vec<fine_align::FaPhoto> = self.photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
@@ -155,6 +167,7 @@ impl PanoApp {
         self.preview_dirty = true;
         let q = if a.mean_err < 1.5 { "excellent" } else if a.mean_err < 3.0 { "good" } else { "rough – check the points" };
         let fine_note = a.fine.as_ref().map(fine_attention).unwrap_or_default();
+        let fine_note = format!("{}{fine_note}", protected_fit_note(&self.cps));
         self.set_status(
             format!(
                 "Aligned in {}: average error {:.2} px ({q}){}.{}{fine_note}",
@@ -262,6 +275,11 @@ impl PanoApp {
                 ui.checkbox(&mut self.align_settings.distortion, "Correct lens distortion (barrel / pincushion)");
                 ui.checkbox(&mut self.align_settings.remove_outliers, "Remove wrong matches automatically");
                 ui.checkbox(&mut self.align_settings.level, "Level the horizon automatically");
+                ui.horizontal(|ui| {
+                    ui.label("Weight of protected points");
+                    ui.add(egui::DragValue::new(&mut self.align_settings.locked_weight).range(1.0..=100.0).speed(0.1).prefix("× "))
+                        .on_hover_text("How much more a protected point (🔒) counts than an automatic point or area when the photos are placed. 1 = like any other point; protected points are also never treated as outliers.");
+                });
             });
             ui.add_space(6.0);
             card(ui, |ui| {

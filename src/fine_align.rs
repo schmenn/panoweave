@@ -77,6 +77,14 @@ pub struct FineConfig {
     /// (pixels of the working image) it is counted and reported, so the person can look at it.
     #[serde(default = "locked_warn_default")]
     pub locked_warn_px: f32,
+    /// weight factor of protected points in the optimisation (`align::LOCKED_WEIGHT`; 1 = like any point).
+    /// The app sets it from the alignment options.
+    #[serde(default = "locked_weight_default")]
+    pub locked_weight: f64,
+}
+
+fn locked_weight_default() -> f64 {
+    align::LOCKED_WEIGHT
 }
 
 fn point_template_default() -> usize {
@@ -102,6 +110,7 @@ impl Default for FineConfig {
             enabled: true,
             record_patches: record_patches_default(),
             locked_warn_px: locked_warn_default(),
+            locked_weight: locked_weight_default(),
             matcher: MatchConfig::default(),
             refine_points: true,
             drop_invalid_points: false,
@@ -990,7 +999,7 @@ pub fn run(
         cnt[c.b] += 1;
     }
     let anchor = (0..n).max_by_key(|&i| cnt[i]).unwrap_or(0);
-    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy };
+    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy, locked_weight: cfg.locked_weight };
     let mut pairs: Vec<(usize, usize)> = cps.iter().map(|c| (c.a.min(c.b), c.a.max(c.b))).collect();
     pairs.sort();
     pairs.dedup();
@@ -1180,7 +1189,7 @@ pub fn reoptimize(
         cnt[c.b] += 1;
     }
     let anchor = (0..n).max_by_key(|&i| cnt[i]).unwrap_or(0);
-    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy };
+    let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy, locked_weight: cfg.locked_weight };
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
     stats.err_before = err_stats(&cps);
     report(0.1, "Optimising with the patches from the list");
