@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
 ### Added
 - `--accuracy` measures on 3200 px copies of the photos by default (was the 1600 px working images, where part of the result was the inaccuracy of the measurement itself: 0.40 instead of 0.27 px on the Fischerbastei set). `PW_ACC_CHECK_SIZE` still sets it.
 - Headless `--accuracy <photos>`: aligns like the Align button and measures the remaining shift in every overlap on spots that are neither points nor control areas (`fine_align::quality`), so removing points cannot improve it; per pass, by distance from the photo centre and optionally per pair (`PW_ACC_PAIRS=1`). Documented in the README, the guide and `CLAUDE.md`; unit test with a known misalignment. Measured with it (Fischerbastei 13 photos, Citadelle 21 photos): aligning again lowers the shown average error (0.60 → 0.54 px) but not the real fit; fine alignment on 3200 px images, a second distortion term and accepting optimiser steps by the robust cost (review C4) changed the real fit by 0–3 %, so no "maximum accuracy" mode was added.
@@ -29,6 +31,7 @@
 - The "use" tick in the photo list is locked while a job runs (an alignment that finished after a tick changed could duplicate or lose points).
 
 ### Changed
+- CONTRIBUTING.md rewritten: ways to help, setup with the pinned toolchain, the project rules (switches, no silent failures, colours/radii from `consts.rs`, measuring with `--accuracy` / `--imgdiff`), a checklist before a pull request, Windows tips.
 - Mask window: it starts with the red brush ("do not use", the common case; before the green one, and a click by mistake forced a photo in), and the active tool is a filled button in its colour. "Show seams" shows the seam map under the photo over the full width (it was a thin strip in a side column). "Edit masks…" also works with Soft fade (red masks apply there too).
 - The mask editor can also be opened from step 3 ("🖌 Masks" next to "Patch comparison"); before it was only in the export step under Blending.
 - README: new layout with the icon, badges (CI, release, downloads, license, Rust version, platform, status), a panorama banner (Budapest, stitched with PanoWeave), highlights, quick start, grouped features, a pipeline diagram, and the long lists (project layout, command-line tools) in sections that open on click. Nothing removed.
