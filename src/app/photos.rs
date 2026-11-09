@@ -200,6 +200,7 @@ impl PanoApp {
         self.gains_rx = None;
         self.graph_photo = None;
         self.click = ClickState::default();
+        self.area = Default::default();
         self.pair_summary = None;
         self.sky_cache = None;
         self.dup_cache = None;

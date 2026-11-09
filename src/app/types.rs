@@ -99,6 +99,8 @@ pub(super) enum JobMsg {
     PairChecked { a: usize, b: usize, cps: Vec<ControlPoint>, reports: Vec<crate::pair_check::PairReport> },
     /// patch click mode result
     ClickMatched(Box<crate::click_match::ClickResult>),
+    /// area mode result (see `points_area.rs`)
+    AreaMatched(Box<crate::area_match::AreaResult>),
     /// "Snap selected" finished (see `points_snap.rs`)
     Snapped(Box<super::points_snap::SnapDone>),
     /// the person pressed Cancel: the job's result is thrown away
@@ -194,6 +196,8 @@ pub(super) enum PointTool {
     Add,
     /// Rough click pair refined by patch matching.
     PatchClick,
+    /// Draw a rectangle round the same surface in both photos (see `points_area.rs`).
+    Area,
     /// Drag a rectangle: selects the points inside.
     SelectRect,
     /// Drag a free outline: selects the points inside.
@@ -431,6 +435,9 @@ pub struct PanoApp {
     /// patch click mode of the point editor
     pub(super) click: ClickState,
     pub(super) click_cfg: crate::click_match::ClickConfig,
+    /// area mode of the point editor: the two rectangles, the last result and its settings
+    pub(super) area: super::points_area::AreaState,
+    pub(super) area_cfg: crate::area_match::AreaConfig,
     /// undo / redo of the control points (every window feeds the same one)
     pub(super) undo: super::history::History<CpSnapshot>,
     /// mask painting window
