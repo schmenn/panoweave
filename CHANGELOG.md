@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- One lasso in the whole program. The point editor and the mask editor now share one implementation (`select_shapes::Lasso`) and one way of drawing it. The point editor's lasso gains what the mask lasso had: besides dragging around an area, you can click corner by corner and close with a double click or Enter; Esc cancels it, Ctrl+Z takes the last corner back, a shaky click sets one corner. Both editors draw the same outline (dark halo, thin line, faint closing line, corner dots, brush circle with the same halo) and show the same help text; only the colour differs (violet for points, green/red for the kind of mask). With the lasso chosen in the point editor, a click on empty space now starts a corner instead of clearing the selection; a click on a point still selects it. Unit-tested; not tried by clicking through the window.
+
 ## [0.3.0] - 2026-11-09
 
 ### Added
