@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accuracy_search;
 mod accuracy_test;
 mod align;
 mod duplicate_points;
@@ -68,6 +69,10 @@ fn parse_args() -> (Args, bool) {
             }
             "--accuracy" => {
                 a.demo = Some("accuracy".into());
+                selftest = true;
+            }
+            "--accuracy-search" => {
+                a.demo = Some("accuracy-search".into());
                 selftest = true;
             }
             "--paircheck" => {
@@ -173,7 +178,7 @@ fn wgpu_configuration() -> eframe::egui_wgpu::WgpuConfiguration {
 
 fn main() -> eframe::Result {
     // the window program (no console in release builds) tells the person about a crash; headless runs just log it
-    crashlog::install(!std::env::args().any(|a| a == "--selftest" || a == "--loadtest" || a == "--imgdiff" || a == "--kpdebug" || a == "--pairtest" || a == "--paircheck" || a == "--accuracy"));
+    crashlog::install(!std::env::args().any(|a| a == "--selftest" || a == "--loadtest" || a == "--imgdiff" || a == "--kpdebug" || a == "--pairtest" || a == "--paircheck" || a == "--accuracy" || a == "--accuracy-search"));
     {
         let raw: Vec<String> = std::env::args().skip(1).collect();
         if raw.first().map(|s| s.as_str()) == Some("--imgdiff") && raw.len() >= 3 {
@@ -192,6 +197,10 @@ fn main() -> eframe::Result {
     }
     if selftest && args.demo.as_deref() == Some("paircheck") {
         paircheck_test(&args.files);
+        return Ok(());
+    }
+    if selftest && args.demo.as_deref() == Some("accuracy-search") {
+        accuracy_search::run_cli(&args.files);
         return Ok(());
     }
     if selftest && args.demo.as_deref() == Some("accuracy") {

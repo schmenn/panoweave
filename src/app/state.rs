@@ -118,6 +118,7 @@ impl PanoApp {
             edge_tex: [None, None],
             patch_win: crate::patch_window::PatchWindow::new(),
             pair_cfg: crate::pair_check::PairCheckConfig::default(),
+            acc: Default::default(),
             pair_summary: None,
             show_graph: false,
             graph_photo: None,

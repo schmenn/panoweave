@@ -89,6 +89,8 @@ pub(super) enum JobMsg {
     Loaded(Vec<Result<LoadedPhoto, String>>),
     Matched(MatchResult),
     Aligned(AlignResult),
+    /// "Maximum accuracy" finished (see `accuracy.rs`)
+    AccuracySearch(Box<crate::accuracy_search::SearchReport>),
     Rendered(Result<(PathBuf, u128, usize, usize), String>),
     BracketLoaded(Vec<Result<(String, Source, Arc<RgbImage>, RgbImage, PhotoInfo), String>>),
     FusedSaved(Result<(PathBuf, u128), String>),
@@ -428,6 +430,7 @@ pub struct PanoApp {
     pub(super) patch_win: crate::patch_window::PatchWindow,
     /// geometric pair check (part of the alignment) and its last result
     pub(super) pair_cfg: crate::pair_check::PairCheckConfig,
+    pub(super) acc: super::accuracy::AccState,
     pub(super) pair_summary: Option<crate::pair_check::PairSummary>,
     /// connection view (graph + warning list)
     pub(super) show_graph: bool,
