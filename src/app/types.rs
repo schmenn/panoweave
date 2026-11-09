@@ -94,6 +94,8 @@ pub(super) enum JobMsg {
     FusedSaved(Result<(PathBuf, u128), String>),
     /// sky masks of the photos that had none: (key of the working image, the image, its mask)
     SkyMasks(Vec<(usize, Arc<RgbImage>, Arc<crate::features::SkyMask>)>),
+    /// foliage maps of the photos that had none (same shape)
+    FoliageMaps(Vec<(usize, Arc<RgbImage>, Arc<crate::foliage::FoliageMap>)>),
     PairPoints { a: usize, b: usize, cps: Vec<ControlPoint>, ms: u128, mode: &'static str },
     /// "Search again" for one pair from the connection view
     PairChecked { a: usize, b: usize, cps: Vec<ControlPoint>, reports: Vec<crate::pair_check::PairReport> },
@@ -409,6 +411,10 @@ pub struct PanoApp {
     pub(super) sky_masks: HashMap<usize, (Arc<RgbImage>, Arc<crate::features::SkyMask>)>,
     pub(super) sky_version: u64,
     pub(super) sky_cache: Option<(u64, Vec<crate::sky_points::SkyPoint>)>,
+    /// foliage maps per photo (worker thread, memory only, keyed by the working image) and the last result
+    pub(super) fol_maps: HashMap<usize, (Arc<RgbImage>, Arc<crate::foliage::FoliageMap>)>,
+    pub(super) fol_version: u64,
+    pub(super) fol_cache: Option<(u64, Vec<crate::foliage::FoliagePoint>)>,
     /// sorted rows of the control point list and the number within each pair (cached)
     pub(super) cp_rows_cache: Option<(String, Vec<usize>, Vec<usize>)>,
     pub(super) render_started: bool,

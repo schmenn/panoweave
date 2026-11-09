@@ -4,6 +4,7 @@ mod accuracy_test;
 mod align;
 mod duplicate_points;
 mod sky_points;
+mod foliage;
 mod crashlog;
 mod app;
 mod engine;
