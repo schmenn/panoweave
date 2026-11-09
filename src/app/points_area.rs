@@ -1,28 +1,38 @@
 //! Area tool of the point editor: draw a rough rectangle round the same surface (a sign, a number
-//! plate, a wall) in the left and in the right photo, in either order. The areas are compared
-//! exactly on a worker thread (`area_match.rs`) and come back as point suggestions that are only
-//! added after "Accept" (one undo step); "Discard" drops them.
+//! plate, a wall) in the left and in the right photo, in either order. The four corners can then be
+//! pulled one by one (a number plate of a car seen from the side is a slanted quadrilateral), the
+//! inside moves the whole area. The areas are compared exactly on a worker thread (`area_match.rs`,
+//! projective map, small mistakes in the corners are corrected) and come back as point suggestions
+//! that are only added after "Accept" (one undo step); "Discard" drops them.
 
 use super::*;
-use crate::area_match::{self, AreaResult, Rect as AreaRect};
+use crate::area_match::{self, AreaResult, Quad};
 
-/// A rectangle being drawn or moved (photo pixels of its pane).
-struct AreaDrag {
-    pane: Pane,
-    /// where the drag started
-    start: P2,
-    /// the rectangle before a move (None = a new one is drawn); Esc brings it back
-    before: Option<AreaRect>,
-    /// moving the existing rectangle (otherwise drawing a new one)
-    moving: bool,
+/// What a drag in progress does.
+#[derive(Clone, Copy)]
+enum DragKind {
+    /// a new rectangle from the point where the button went down
+    Draw { start: P2 },
+    /// the whole quadrilateral; `start` = where the button went down
+    Move { start: P2 },
+    /// one corner; `grab` = corner minus mouse position at the press (the corner does not jump)
+    Corner { i: usize, grab: P2 },
 }
 
-/// The two rectangles (index = pane), the drag in progress and the last result.
+/// A quadrilateral being drawn, moved or reshaped (photo pixels of its pane).
+struct AreaDrag {
+    pane: Pane,
+    kind: DragKind,
+    /// the quadrilateral before the drag (None = there was none); Esc brings it back
+    before: Option<Quad>,
+}
+
+/// The two quadrilaterals (index = pane), the drag in progress and the last result.
 #[derive(Default)]
 pub(super) struct AreaState {
-    /// the photo pair the rectangles belong to; another pair on screen drops them
+    /// the photo pair the areas belong to; another pair on screen drops them
     pair: (usize, usize),
-    pub(super) rect: [Option<AreaRect>; 2],
+    pub(super) quad: [Option<Quad>; 2],
     drag: Option<AreaDrag>,
     pub(super) result: Option<AreaResult>,
 }
@@ -33,7 +43,7 @@ pub(super) struct AreaInput {
     b: usize,
     ga: Arc<Gray>,
     gb: Arc<Gray>,
-    rects: (AreaRect, AreaRect),
+    quads: (Quad, Quad),
     priors: crate::click_match::ClickPriors,
     cfg: crate::area_match::AreaConfig,
 }
@@ -41,16 +51,15 @@ pub(super) struct AreaInput {
 impl AreaInput {
     /// The comparison itself (None = cancelled).
     pub(super) fn compute(&self) -> Option<AreaResult> {
-        area_match::run(self.a, self.b, &self.ga, &self.gb, self.rects.0, self.rects.1, &self.priors, &self.cfg)
+        area_match::run(self.a, self.b, &self.ga, &self.gb, self.quads.0, self.quads.1, &self.priors, &self.cfg)
     }
-}
-
-fn contains(r: &AreaRect, p: P2) -> bool {
-    p.0 >= r.0.0 && p.0 <= r.1.0 && p.1 >= r.0.1 && p.1 <= r.1.1
 }
 
 /// Rectangles smaller than this on both sides (photo pixels) count as a click, not as a drawing.
 const MIN_DRAWN_PX: f64 = 4.0;
+/// A corner handle is grabbed within this distance of the mouse (screen pixels) and drawn with this radius.
+const HANDLE_GRAB_SCREEN_PX: f32 = 12.0;
+const HANDLE_DRAW_SCREEN_PX: f32 = 5.0;
 
 impl PanoApp {
     /// Other photos on screen (switch, swap sides, photo removed): the rectangles were drawn in the old ones.
@@ -67,7 +76,7 @@ impl PanoApp {
         }
         if ui
             .add(egui::Button::selectable(self.pe.tool == PointTool::Area, "▭ Area"))
-            .on_hover_text("Draw a rough rectangle round the same surface (a sign, a number plate, a wall) in the left and in the right photo. The two areas are then compared exactly and several points with real structure are proposed.")
+            .on_hover_text("Draw a rough rectangle round the same surface (a sign, a number plate, a wall) in the left and in the right photo, pull its corners onto the surface (slanted ones too), then the two areas are compared exactly and several points on corners with real structure are proposed.")
             .clicked()
         {
             self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::Area);
@@ -83,53 +92,84 @@ impl PanoApp {
             return false;
         }
         if let Some(d) = self.area.drag.take() {
-            self.area.rect[d.pane.i()] = d.before;
+            self.area.quad[d.pane.i()] = d.before;
             return true;
         }
-        if self.area.rect.iter().any(|r| r.is_some()) || self.area.result.is_some() {
-            self.area.rect = [None, None];
+        if self.area.quad.iter().any(|r| r.is_some()) || self.area.result.is_some() {
+            self.area.quad = [None, None];
             self.area.result = None;
             return true;
         }
         false
     }
 
-    /// Mouse events of the two halves while the Area tool is on. Returns true when the event is used up
-    /// (the right mouse button and scrolling still move and zoom the photo).
-    pub(super) fn area_event(&mut self, ev: &PaneEvent, px_of: &dyn Fn(Pane, Pos2) -> P2) -> bool {
+    /// Mouse events of the two halves while the Area tool is on (`scale` = screen pixels per photo
+    /// pixel of a half). Returns true when the event is used up (the right mouse button and scrolling
+    /// still move and zoom the photo). The drag starts where the button went down: the caller passes
+    /// the press position of the `DragStart`, not the position after egui's drag threshold.
+    pub(super) fn area_event(&mut self, ev: &PaneEvent, px_of: &dyn Fn(Pane, Pos2) -> P2, scale: &dyn Fn(Pane) -> f32) -> bool {
         match ev {
             PaneEvent::Click(..) => true,
             PaneEvent::DragStart(pane, pos, true, _) => {
                 let p = px_of(*pane, *pos);
-                let before = self.area.rect[pane.i()];
-                let moving = before.is_some_and(|r| contains(&r, p));
-                if !moving {
-                    self.area.rect[pane.i()] = Some((p, p));
+                let before = self.area.quad[pane.i()];
+                let grab_r = (HANDLE_GRAB_SCREEN_PX / scale(*pane).max(1e-3)) as f64;
+                let corner = before.and_then(|q| {
+                    (0..4)
+                        .map(|i| (i, (q[i].0 - p.0).hypot(q[i].1 - p.1)))
+                        .filter(|(_, d)| *d <= grab_r)
+                        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                        .map(|(i, _)| i)
+                });
+                let kind = match (before, corner) {
+                    (Some(q), Some(i)) => DragKind::Corner { i, grab: (q[i].0 - p.0, q[i].1 - p.1) },
+                    (Some(q), None) if area_match::quad_contains(&q, p, 0.0) => DragKind::Move { start: p },
+                    _ => DragKind::Draw { start: p },
+                };
+                if let DragKind::Draw { .. } = kind {
+                    self.area.quad[pane.i()] = Some(area_match::quad_from_rect((p, p)));
                 }
-                self.area.drag = Some(AreaDrag { pane: *pane, start: p, before, moving });
-                // changed rectangles: the old suggestions no longer belong to them
+                self.area.drag = Some(AreaDrag { pane: *pane, kind, before });
+                // changed areas: the old suggestions no longer belong to them
                 self.area.result = None;
                 true
             }
             PaneEvent::Drag(pane, pos, _) => {
                 let Some(d) = self.area.drag.as_ref().filter(|d| d.pane == *pane) else { return false };
                 let p = px_of(*pane, *pos);
-                self.area.rect[pane.i()] = if d.moving {
-                    let (dx, dy) = (p.0 - d.start.0, p.1 - d.start.1);
-                    d.before.map(|r| ((r.0.0 + dx, r.0.1 + dy), (r.1.0 + dx, r.1.1 + dy)))
-                } else {
-                    Some((d.start, p))
+                let q = match (d.kind, d.before) {
+                    (DragKind::Draw { start }, _) => Some(area_match::quad_from_rect((start, p))),
+                    (DragKind::Move { start }, Some(b)) => {
+                        let (dx, dy) = (p.0 - start.0, p.1 - start.1);
+                        Some(b.map(|c| (c.0 + dx, c.1 + dy)))
+                    }
+                    (DragKind::Corner { i, grab }, Some(mut b)) => {
+                        b[i] = (p.0 + grab.0, p.1 + grab.1);
+                        Some(b)
+                    }
+                    _ => None,
                 };
+                if q.is_some() {
+                    self.area.quad[pane.i()] = q;
+                }
                 true
             }
             PaneEvent::DragEnd => {
                 let Some(d) = self.area.drag.take() else { return false };
                 let (w, h) = self.work_dims(if d.pane == Pane::A { self.pe.a } else { self.pe.b });
-                if let Some(r) = self.area.rect[d.pane.i()] {
-                    let r = area_match::clamp_rect(r, w, h);
-                    let (sx, sy) = (r.1.0 - r.0.0, r.1.1 - r.0.1);
-                    // a click without a real drag keeps what was there before
-                    self.area.rect[d.pane.i()] = if !d.moving && sx < MIN_DRAWN_PX && sy < MIN_DRAWN_PX { d.before } else { Some(r) };
+                if let Some(q) = self.area.quad[d.pane.i()] {
+                    let q = area_match::clamp_quad(q, w, h);
+                    let drawn = matches!(d.kind, DragKind::Draw { .. });
+                    let (bw, bh) = area_match::quad_size(&q);
+                    self.area.quad[d.pane.i()] = if drawn && bw < MIN_DRAWN_PX && bh < MIN_DRAWN_PX {
+                        // a click without a real drag keeps what was there before
+                        d.before
+                    } else if !area_match::quad_is_convex(&q) {
+                        self.set_status("Area: the corners must make a plain four-sided shape (no side crossing another) – the change was undone.", WARN);
+                        d.before
+                    } else {
+                        Some(q)
+                    };
                 }
                 true
             }
@@ -139,17 +179,17 @@ impl PanoApp {
 
     /// What the worker needs, or None while a rectangle is missing.
     pub(super) fn area_input(&self) -> Option<AreaInput> {
-        let (ra, rb) = (self.area.rect[0]?, self.area.rect[1]?);
+        let (ra, rb) = (self.area.quad[0]?, self.area.quad[1]?);
         let (a, b) = (self.pe.a, self.pe.b);
         let seeds = self.pair_seeds(a, b);
-        let ca = ((ra.0.0 + ra.1.0) * 0.5, (ra.0.1 + ra.1.1) * 0.5);
+        let ca = ((ra[0].0 + ra[1].0 + ra[2].0 + ra[3].0) * 0.25, (ra[0].1 + ra[1].1 + ra[2].1 + ra[3].1) * 0.25);
         let align = if self.aligned && !self.needs_align { self.predict_from_alignment(a, b, ca).map(|(_, j)| j) } else { None };
         Some(AreaInput {
             a,
             b,
             ga: self.photos[a].gray.clone(),
             gb: self.photos[b].gray.clone(),
-            rects: (ra, rb),
+            quads: (ra, rb),
             priors: crate::click_match::ClickPriors { seeds, align },
             cfg: self.area_cfg.clone(),
         })
@@ -215,7 +255,7 @@ impl PanoApp {
         }
         let n = chosen.len();
         self.area.result = None;
-        self.area.rect = [None, None];
+        self.area.quad = [None, None];
         self.needs_align = true;
         self.set_status(format!("{n} points added from the areas. Align again (step 3) to use them. Ctrl+Z undoes it."), GOOD);
     }
@@ -225,19 +265,33 @@ impl PanoApp {
         self.area.result = None;
     }
 
-    /// The rectangles and, when there is a result, its points, in the half `pane` (screen geometry as in `draw_pane`).
+    /// The areas and, when there is a result, its points, in the half `pane` (screen geometry as in `draw_pane`).
     pub(super) fn paint_area(&self, painter: &egui::Painter, pane: Pane, origin: Pos2, scale: f32) {
         if self.pe.tool != PointTool::Area {
             return;
         }
         let to_screen = |p: P2| origin + Vec2::new((p.0 as f32 + 0.5) * scale, (p.1 as f32 + 0.5) * scale);
-        if let Some(r) = self.area.rect[pane.i()] {
-            let rect = Rect::from_two_pos(to_screen(r.0), to_screen(r.1));
-            painter.rect_filled(rect, 0.0, ACCENT.gamma_multiply(0.12));
-            painter.rect_stroke(rect, 0.0, Stroke::new(3.2, Color32::BLACK), StrokeKind::Middle);
-            painter.rect_stroke(rect, 0.0, Stroke::new(1.6, ACCENT), StrokeKind::Middle);
+        if let Some(q) = self.area.quad[pane.i()] {
+            let pts: Vec<Pos2> = q.iter().map(|c| to_screen(*c)).collect();
+            if area_match::quad_is_convex(&q) {
+                painter.add(egui::Shape::convex_polygon(pts.clone(), ACCENT.gamma_multiply(0.12), Stroke::NONE));
+            }
+            painter.add(egui::Shape::closed_line(pts.clone(), Stroke::new(3.2, Color32::BLACK)));
+            painter.add(egui::Shape::closed_line(pts.clone(), Stroke::new(1.6, ACCENT)));
+            // the corner handles: drag one to pull the area onto the surface
+            for c in &pts {
+                painter.circle_filled(*c, HANDLE_DRAW_SCREEN_PX, ACCENT);
+                painter.circle_stroke(*c, HANDLE_DRAW_SCREEN_PX, Stroke::new(1.5, Color32::BLACK));
+            }
         }
         let Some(res) = self.area.result.as_ref().filter(|r| (r.a, r.b) == (self.pe.a, self.pe.b)) else { return };
+        // the right area as the match corrected it (where the left one lies in the right photo)
+        if pane == Pane::B && self.area_cfg.show_corrected && res.error.is_none() {
+            let mut pts: Vec<Pos2> = res.fitted_b.iter().map(|c| to_screen(*c)).collect();
+            pts.push(pts[0]);
+            painter.add(egui::Shape::line(pts.clone(), Stroke::new(3.0, Color32::BLACK)));
+            painter.extend(egui::Shape::dashed_line(&pts, Stroke::new(1.6, GOOD), 6.0, 4.0));
+        }
         for (k, s) in res.points.iter().enumerate() {
             let col = if s.accept { GOOD } else if s.weak { WARN } else { MUTED };
             let c = to_screen(if pane == Pane::A { s.pa } else { s.pb });
@@ -249,12 +303,12 @@ impl PanoApp {
 
     /// Strip under the toolbar while the Area tool is on.
     pub(super) fn area_panel(&mut self, ui: &mut egui::Ui) {
-        let (has_a, has_b) = (self.area.rect[0].is_some(), self.area.rect[1].is_some());
+        let (has_a, has_b) = (self.area.quad[0].is_some(), self.area.quad[1].is_some());
         let state = match (has_a, has_b) {
-            (false, false) => "Area: drag a rough rectangle round a surface (sign, number plate, wall) in one photo, then round the same surface in the other. Drag inside a rectangle to move it, drag outside to draw it again. Esc clears.",
+            (false, false) => "Area: drag a rough rectangle round a surface (sign, number plate, wall) in one photo, then round the same surface in the other. Pull the corner dots onto the surface (slanted surfaces too), drag inside to move it, drag outside to draw it again. Esc clears.",
             (true, false) => "Now drag a rectangle round the same surface in the RIGHT photo.",
             (false, true) => "Now drag a rectangle round the same surface in the LEFT photo.",
-            (true, true) => "Both rectangles are there – move or redraw them if needed, then press \"Match the areas\".",
+            (true, true) => "Both areas are there – pull the corners onto the surface if needed (a bit off is fine, it is corrected), then press \"Match the areas\".",
         };
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(state).small().color(ACCENT));
@@ -263,9 +317,10 @@ impl PanoApp {
                 self.run_area();
             }
             if ui.add_enabled(has_a || has_b || self.area.result.is_some(), egui::Button::new("✖ Clear")).on_hover_text("Remove the rectangles and the suggestions (Esc)").clicked() {
-                self.area.rect = [None, None];
+                self.area.quad = [None, None];
                 self.area.result = None;
             }
+            ui.checkbox(&mut self.area_cfg.show_corrected, "Show corrected area").on_hover_text("After matching, draw the right area as the match corrected it (dashed green): where the left area lies in the right photo.");
         });
         let Some(r) = self.area.result.clone() else { return };
         if (r.a, r.b) != (self.pe.a, self.pe.b) {
@@ -278,7 +333,7 @@ impl PanoApp {
             }
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(format!("{} points, mean score {:.3}", r.points.len(), r.mean_score())).strong());
-                ui.label(RichText::new(format!("zoom ×{:.3}, rotation {:.1}° – start {}", r.zoom(), r.rotation_deg(), r.map_source)).small().color(MUTED));
+                ui.label(RichText::new(format!("zoom ×{:.3}, rotation {:.1}° (perspective fitted) – start {}", r.zoom(), r.rotation_deg(), r.map_source)).small().color(MUTED));
             });
             if let Some(n) = &r.note {
                 ui.label(RichText::new(n).small().color(WARN));
@@ -326,6 +381,10 @@ mod tests {
     use crate::area_match::AreaSuggestion;
     use crate::testutil;
 
+    fn quad(r: area_match::Rect) -> Quad {
+        area_match::quad_from_rect(r)
+    }
+
     fn suggestion(k: usize, weak: bool) -> AreaSuggestion {
         AreaSuggestion { pa: (20.0 + 5.0 * k as f64, 30.0), pb: (22.0 + 5.0 * k as f64, 31.0), score: if weak { 0.82 } else { 0.95 }, conf: 0.6, texture: 1e-3, weak, accept: !weak }
     }
@@ -335,8 +394,9 @@ mod tests {
         app.pe.a = 0;
         app.pe.b = 1;
         app.area_sync_pair();
-        app.area.rect = [Some(((10.0, 10.0), (60.0, 50.0))), Some(((12.0, 11.0), (62.0, 51.0)))];
-        let mut r = AreaResult { a: 0, b: 1, map: [1.0, 0.0, 0.0, 1.0, 2.0, 1.0], map_source: "test".into(), points: Vec::new(), error: None, note: None, log: Vec::new() };
+        app.area.quad = [Some(quad(((10.0, 10.0), (60.0, 50.0)))), Some(quad(((12.0, 11.0), (62.0, 51.0))))];
+        let mut r = AreaResult::empty(0, 1);
+        r.map_source = "test".into();
         r.points = (0..5).map(|k| suggestion(k, k == 4)).collect();
         app.area.result = Some(r);
         app
@@ -383,41 +443,58 @@ mod tests {
     }
 
     #[test]
-    fn rectangles_belong_to_the_pair_on_screen() {
+    fn areas_belong_to_the_pair_on_screen() {
         let mut app = app_with_result();
         app.pe.b = 0;
         app.pe.a = 1;
         app.area_sync_pair();
-        assert!(app.area.rect.iter().all(|r| r.is_none()) && app.area.result.is_none());
+        assert!(app.area.quad.iter().all(|r| r.is_none()) && app.area.result.is_none());
     }
 
     #[test]
-    fn drawing_moving_and_escape() {
+    fn drawing_moving_pulling_corners_and_escape() {
         let mut app = app_with_photos(2);
         app.pe.a = 0;
         app.pe.b = 1;
         app.area_sync_pair();
         app.pe.tool = PointTool::Area;
         let px_of = |_: Pane, p: Pos2| -> P2 { (p.x as f64, p.y as f64) };
+        let one = |_: Pane| 1.0f32;
         let m = egui::Modifiers::NONE;
+        let start = |app: &mut PanoApp, x: f32, y: f32| app.area_event(&PaneEvent::DragStart(Pane::A, Pos2::new(x, y), true, m), &px_of, &one);
+        let drag = |app: &mut PanoApp, x: f32, y: f32| app.area_event(&PaneEvent::Drag(Pane::A, Pos2::new(x, y), Vec2::ZERO), &px_of, &one);
+        let end = |app: &mut PanoApp| app.area_event(&PaneEvent::DragEnd, &px_of, &one);
         // draw in the left photo: the right mouse button is left to panning
-        assert!(!app.area_event(&PaneEvent::DragStart(Pane::A, Pos2::new(10.0, 10.0), false, m), &px_of));
-        assert!(app.area_event(&PaneEvent::DragStart(Pane::A, Pos2::new(10.0, 10.0), true, m), &px_of));
-        assert!(app.area_event(&PaneEvent::Drag(Pane::A, Pos2::new(60.0, 40.0), Vec2::ZERO), &px_of));
-        assert!(app.area_event(&PaneEvent::DragEnd, &px_of));
-        assert_eq!(app.area.rect[0], Some(((10.0, 10.0), (60.0, 40.0))));
+        assert!(!app.area_event(&PaneEvent::DragStart(Pane::A, Pos2::new(10.0, 10.0), false, m), &px_of, &one));
+        assert!(start(&mut app, 10.0, 10.0));
+        assert!(drag(&mut app, 60.0, 40.0));
+        assert!(end(&mut app));
+        assert_eq!(app.area.quad[0], Some(quad(((10.0, 10.0), (60.0, 40.0)))));
         // dragging inside moves it
-        app.area_event(&PaneEvent::DragStart(Pane::A, Pos2::new(30.0, 20.0), true, m), &px_of);
-        app.area_event(&PaneEvent::Drag(Pane::A, Pos2::new(35.0, 22.0), Vec2::ZERO), &px_of);
-        app.area_event(&PaneEvent::DragEnd, &px_of);
-        assert_eq!(app.area.rect[0], Some(((15.0, 12.0), (65.0, 42.0))));
-        // Esc during a drag brings the rectangle back, then clears, then leaves the tool
-        app.area_event(&PaneEvent::DragStart(Pane::A, Pos2::new(30.0, 20.0), true, m), &px_of);
-        app.area_event(&PaneEvent::Drag(Pane::A, Pos2::new(50.0, 30.0), Vec2::ZERO), &px_of);
+        start(&mut app, 30.0, 20.0);
+        drag(&mut app, 35.0, 22.0);
+        end(&mut app);
+        assert_eq!(app.area.quad[0], Some(quad(((15.0, 12.0), (65.0, 42.0)))));
+        // a corner is pulled alone (it does not jump to the mouse: the grab offset stays)
+        start(&mut app, 64.0, 41.0);
+        drag(&mut app, 80.0, 60.0);
+        end(&mut app);
+        let q = app.area.quad[0].unwrap();
+        assert_eq!((q[0], q[1], q[3]), ((15.0, 12.0), (65.0, 12.0), (15.0, 42.0)));
+        assert_eq!(q[2], (81.0, 61.0));
+        // a corner dragged so that the sides cross is put back
+        start(&mut app, 81.0, 61.0);
+        drag(&mut app, 5.0, 5.0);
+        end(&mut app);
+        assert_eq!(app.area.quad[0], Some(q));
+        assert!(app.status.contains("plain four-sided"), "{}", app.status);
+        // Esc during a drag brings the area back, then clears, then leaves the tool
+        start(&mut app, 40.0, 30.0);
+        drag(&mut app, 50.0, 40.0);
         assert!(app.area_escape());
-        assert_eq!(app.area.rect[0], Some(((15.0, 12.0), (65.0, 42.0))));
+        assert_eq!(app.area.quad[0], Some(q));
         assert!(app.area_escape());
-        assert!(app.area.rect.iter().all(|r| r.is_none()));
+        assert!(app.area.quad.iter().all(|r| r.is_none()));
         assert!(!app.area_escape(), "nothing left: Esc leaves the tool");
     }
 
@@ -442,8 +519,8 @@ mod tests {
         app.pe.a = 0;
         app.pe.b = 1;
         app.area_sync_pair();
-        app.area.rect = [Some(((100.0, 80.0), (260.0, 200.0))), Some(((104.0, 71.0), (272.0, 197.0)))];
-        let input = app.area_input().expect("both rectangles");
+        app.area.quad = [Some(quad(((100.0, 80.0), (260.0, 200.0)))), Some(quad(((104.0, 71.0), (272.0, 197.0))))];
+        let input = app.area_input().expect("both areas");
         let r = input.compute().expect("not cancelled");
         assert!(r.error.is_none(), "{:?} {:?}", r.error, r.log);
         for p in &r.points {
@@ -464,6 +541,6 @@ mod tests {
         app.area_cfg.enabled = false;
         assert_eq!(app.pe.tool, PointTool::Edit);
         assert!(!app.area_escape(), "Esc does nothing in the area tool when another tool is on");
-        assert!(app.area.rect.iter().all(|r| r.is_none()));
+        assert!(app.area.quad.iter().all(|r| r.is_none()));
     }
 }

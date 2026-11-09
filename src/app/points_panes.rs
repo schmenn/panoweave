@@ -360,7 +360,10 @@ impl PanoApp {
             }
         if resp.drag_started() {
             let primary = resp.drag_started_by(egui::PointerButton::Primary);
-            if let Some(p) = resp.interact_pointer_pos() {
+            // egui reports a drag only after the mouse has moved a few pixels; the Area tool wants its
+            // corner where the button went down, not where the threshold was passed
+            let press = if self.pe.tool == PointTool::Area { ui.input(|i| i.pointer.press_origin()) } else { None };
+            if let Some(p) = drag_start_pos(press, resp.interact_pointer_pos()) {
                 let mods = ui.input(|i| i.modifiers);
                 events.push(PaneEvent::DragStart(pane, p, primary, mods));
             }
@@ -372,5 +375,23 @@ impl PanoApp {
         if resp.drag_stopped() {
             events.push(PaneEvent::DragEnd);
         }
+    }
+}
+
+/// Where a drag starts: the press position when it is wanted and known, else the current position.
+fn drag_start_pos(press: Option<Pos2>, now: Option<Pos2>) -> Option<Pos2> {
+    press.or(now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_drag_starts_where_the_button_went_down() {
+        let (down, after_threshold) = (Pos2::new(100.0, 100.0), Pos2::new(105.0, 103.0));
+        assert_eq!(drag_start_pos(Some(down), Some(after_threshold)), Some(down));
+        assert_eq!(drag_start_pos(None, Some(after_threshold)), Some(after_threshold));
+        assert_eq!(drag_start_pos(None, None), None);
     }
 }

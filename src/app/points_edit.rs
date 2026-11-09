@@ -290,7 +290,7 @@ impl PanoApp {
         let brush_screen = self.brush_radius();
         let brush_r = |pane: Pane| -> f64 { (brush_screen / geo[pane.i()].scale) as f64 };
         for ev in events {
-            if self.pe.tool == PointTool::Area && self.area_event(&ev, &px_of) {
+            if self.pe.tool == PointTool::Area && self.area_event(&ev, &px_of, &|pane| geo[pane.i()].scale) {
                 continue;
             }
             match ev {
