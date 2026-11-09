@@ -24,6 +24,9 @@ pub(super) fn point_color(i: usize) -> Color32 {
     POINT_COLORS[i % POINT_COLORS.len()]
 }
 
+/// How many pairs of the parallax hint are listed in full (the rest only counted; the log has all).
+pub(super) const PARALLAX_HINTS_SHOWN: usize = 5;
+
 /// Image-cache bound of the original: /ImageCache/UpperBound default 0x10000000 = 256 MiB
 /// Used here for the full-size photos of the point editor.
 pub(super) const IMAGE_CACHE_UPPER_BOUND: u64 = 268435456; // 0x10000000

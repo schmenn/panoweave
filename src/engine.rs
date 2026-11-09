@@ -142,12 +142,15 @@ pub struct MatchSettings {
     pub ignore_sky: bool,
     /// spread the kept points evenly over the whole overlap (false = former row by row order, top rows first)
     pub even_thinning: bool,
+    /// look for a nearer object (parallax) among the matches the rotation model rejects; only reported, never
+    /// turned into points. Off = no extra work. The app switches it off while Parallax mode is on.
+    pub parallax_hint: features::ParallaxHintConfig,
 }
 
 impl Default for MatchSettings {
     fn default() -> Self {
         // points per pair: default 20
-        MatchSettings { points_per_photo: 3500, points_per_pair: 20, ignore_sky: true, even_thinning: true }
+        MatchSettings { points_per_photo: 3500, points_per_pair: 20, ignore_sky: true, even_thinning: true, parallax_hint: Default::default() }
     }
 }
 
@@ -157,6 +160,41 @@ pub struct PairStat {
     pub points: usize,
 }
 
+/// A photo pair with a nearer object whose matches do not fit the rotation model (see `features::ParallaxGroup`).
+#[derive(Clone, Copy, Debug)]
+pub struct ParallaxHint {
+    pub a: usize,
+    pub b: usize,
+    pub group: features::ParallaxGroup,
+    /// size of the working images of photo a (to place the group in the picture)
+    pub dims: (usize, usize),
+}
+
+impl ParallaxHint {
+    /// "Photos 8 and 10: 412 matches on a nearer object do not fit the rest (about 25 px apart) – this looks like parallax."
+    pub fn text(&self) -> String {
+        format!(
+            "Photos {} and {}: {} matches on a nearer object do not fit the rest (about {:.0} px apart) – this looks like parallax.",
+            self.a + 1,
+            self.b + 1,
+            self.group.count,
+            self.group.shift_px
+        )
+    }
+    /// Where the group lies in photo a, in words.
+    pub fn place(&self) -> String {
+        let (cx, cy) = (self.group.centre.0 / self.dims.0.max(1) as f32, self.group.centre.1 / self.dims.1.max(1) as f32);
+        let h = if cx < 0.33 { "left" } else if cx > 0.67 { "right" } else { "middle" };
+        let v = if cy < 0.33 { "top" } else if cy > 0.67 { "bottom" } else { "middle" };
+        match (h, v) {
+            ("middle", "middle") => "in the middle of photo".to_string(),
+            ("middle", v) => format!("{v} of photo"),
+            (h, "middle") => format!("{h} of photo"),
+            (h, v) => format!("{v} {h} of photo"),
+        }
+    }
+}
+
 pub struct MatchResult {
     pub cps: Vec<ControlPoint>,
     pub pairs: Vec<PairStat>,
@@ -164,6 +202,8 @@ pub struct MatchResult {
     pub match_ms: u128,
     pub keypoints: usize,
     pub sky_removed: usize,
+    /// pairs with a nearer object that the rotation model cannot explain (empty when the check is off)
+    pub parallax: Vec<ParallaxHint>,
 }
 
 /// Normalised coordinate of a work-image pixel.
@@ -245,14 +285,14 @@ pub fn find_points(
     let pairs = candidate_pairs(&feats);
     let done = std::sync::atomic::AtomicUsize::new(0);
     let total = pairs.len().max(1);
-    let results: Vec<(usize, usize, Vec<ControlPoint>)> = pairs
+    let results: Vec<(usize, usize, Vec<ControlPoint>, Option<features::ParallaxGroup>)> = pairs
         .par_iter()
         .map(|&(i, j)| {
             if cancelled() {
-                return (i, j, Vec::new());
+                return (i, j, Vec::new(), None);
             }
             // take a generous set, check every match by correlation, then keep the best spread
-            let r = features::match_pair(&feats[i], &feats[j], VERIFY_POOL, (i * 7919 + j * 104729) as u64 + 1).and_then(|mut pm| {
+            let r = features::match_pair_ex(&feats[i], &feats[j], VERIFY_POOL, (i * 7919 + j * 104729) as u64 + 1, Some(&settings.parallax_hint)).and_then(|mut pm| {
                 let checked = verify_matches(&grays[i], &grays[j], &pm.h, &pm.corrs);
                 if checked.len() < MIN_VERIFIED {
                     return None;
@@ -262,6 +302,7 @@ pub fn find_points(
             });
             let k = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             report(0.1 + 0.9 * k as f32 / total as f32, &format!("Matching photo pairs ({k} of {total})"));
+            let suspect = r.as_ref().and_then(|pm| pm.suspect);
             let cps = match r {
                 Some(pm) => pm
                     .corrs
@@ -276,18 +317,28 @@ pub fn find_points(
                     .collect(),
                 None => vec![],
             };
-            (i, j, cps)
+            (i, j, cps, suspect)
         })
         .collect();
     let mut cps: Vec<ControlPoint> = keep_manual.iter().filter(|c| c.manual || c.locked).copied().collect();
     let mut stats = Vec::new();
-    for (a, b, c) in results {
+    let mut parallax = Vec::new();
+    for (a, b, c, suspect) in results {
+        if let Some(group) = suspect {
+            let h = ParallaxHint { a, b, group, dims: (grays[a].w, grays[a].h) };
+            eprintln!("parallax check: {} The group lies {} {}, {:.0} % of the matches.", h.text(), h.place(), a + 1, group.share * 100.0);
+            parallax.push(h);
+        }
         if !c.is_empty() {
             stats.push(PairStat { a, b, points: c.len() });
             cps.extend(c);
         }
     }
-    MatchResult { cps, pairs: stats, detect_ms, match_ms: t1.elapsed().as_millis(), keypoints, sky_removed }
+    if settings.parallax_hint.enabled {
+        eprintln!("parallax check: {} pairs checked, {} suspected", pairs.len(), parallax.len());
+    }
+    parallax.sort_by_key(|h| (std::cmp::Reverse(h.group.count), h.a, h.b));
+    MatchResult { cps, pairs: stats, detect_ms, match_ms: t1.elapsed().as_millis(), keypoints, sky_removed, parallax }
 }
 
 /// Statistical clean-up factor: remove points worse than mean + OUTLIER_SIGMA * standard deviation
@@ -681,7 +732,7 @@ mod tests {
         let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
         let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
 
-        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true, parallax_hint: Default::default() }, &|_, _| {});
         assert!(mr.keypoints > 100);
         assert!(mr.pairs.iter().any(|p| (p.a, p.b) == (0, 1)), "pairs {:?}", mr.pairs.iter().map(|p| (p.a, p.b, p.points)).collect::<Vec<_>>());
         assert!(mr.pairs.iter().any(|p| (p.a, p.b) == (1, 2)));
@@ -722,7 +773,7 @@ mod tests {
         let views: Vec<RgbImage> = (0..3).map(|i| crop(&big, i * 100, 0, 320, 260)).collect();
         let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
         let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
-        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true, parallax_hint: Default::default() }, &|_, _| {});
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
         let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, ..Default::default() };
@@ -768,7 +819,7 @@ mod tests {
         let views: Vec<RgbImage> = (0..3).map(|i| crop(&big, i * 100, 0, 320, 260)).collect();
         let works: Vec<Arc<RgbImage>> = views.iter().cloned().map(Arc::new).collect();
         let grays: Vec<Arc<Gray>> = views.iter().map(|v| Arc::new(to_gray(v))).collect();
-        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true }, &|_, _| {});
+        let mr = find_points(&works, &grays, &[], MatchSettings { points_per_photo: 800, points_per_pair: 40, ignore_sky: false, even_thinning: true, parallax_hint: Default::default() }, &|_, _| {});
         let lens_of = [0usize; 3];
         let long = [320.0; 3];
         let s = AlignSettings { fine_tune_fov: false, distortion: false, remove_outliers: true, level: false, ..Default::default() };

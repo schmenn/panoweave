@@ -124,6 +124,7 @@ impl PanoApp {
             pair_cfg: crate::pair_check::PairCheckConfig::default(),
             acc: Default::default(),
             pair_summary: None,
+            parallax_hints: Vec::new(),
             show_graph: false,
             graph_photo: None,
             click: ClickState::default(),

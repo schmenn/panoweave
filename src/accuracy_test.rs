@@ -73,9 +73,9 @@ pub fn setup(files_in: &[PathBuf]) -> Setup {
     let grays: Vec<_> = photos.iter().map(|p| p.gray.clone()).collect();
     let works: Vec<_> = photos.iter().map(|p| p.work.clone()).collect();
     // PW_THIN_OLD=1: the former row by row thinning (for comparing)
-    let ms = engine::MatchSettings { even_thinning: std::env::var("PW_THIN_OLD").map(|v| v != "1").unwrap_or(true), ..Default::default() };
+    let ms = engine::MatchSettings { even_thinning: std::env::var("PW_THIN_OLD").map(|v| v != "1").unwrap_or(true), parallax_hint: crate::features::ParallaxHintConfig { enabled: std::env::var("PW_PARALLAX_HINT").map(|v| v != "0").unwrap_or(true), ..Default::default() }, ..Default::default() };
     let m = match &proj {
-        Some(p) => engine::MatchResult { cps: p.cps.clone(), pairs: Vec::new(), detect_ms: 0, match_ms: 0, keypoints: 0, sky_removed: 0 },
+        Some(p) => engine::MatchResult { cps: p.cps.clone(), pairs: Vec::new(), detect_ms: 0, match_ms: 0, keypoints: 0, sky_removed: 0, parallax: Vec::new() },
         None => engine::find_points(&works, &grays, &[], ms, &|_, _| {}),
     };
     println!("points: {} cps in {} pairs, {} protected", m.cps.len(), m.pairs.len(), m.cps.iter().filter(|c| c.locked).count());

@@ -244,6 +244,7 @@ impl PanoApp {
         });
         ui.add_space(6.0);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            self.ui_parallax_hints(ui);
             card(ui, |ui| {
                 ui.label(RichText::new("Result").strong().size(16.0));
                 if let Some((mean, max, removed, ms)) = self.last_align {

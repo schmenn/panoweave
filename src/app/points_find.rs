@@ -29,6 +29,35 @@ pub(super) fn new_pair_points(existing: &[ControlPoint], found: Vec<ControlPoint
 }
 
 impl PanoApp {
+    /// The parallax hint of the last "Find points": which pairs have matches on a nearer object that do not fit the
+    /// rest, with buttons for the two ways out. Nothing is applied before a click.
+    pub(super) fn ui_parallax_hints(&mut self, ui: &mut egui::Ui) {
+        if self.parallax_hints.is_empty() || self.parallax_cfg.enabled {
+            return;
+        }
+        card(ui, |ui| {
+            ui.label(RichText::new("Nearby object").strong().color(WARN));
+            for h in self.parallax_hints.iter().take(PARALLAX_HINTS_SHOWN) {
+                ui.label(format!("{} The group lies {} {}.", h.text(), h.place(), h.a + 1));
+            }
+            if self.parallax_hints.len() > PARALLAX_HINTS_SHOWN {
+                ui.label(RichText::new(format!("… and {} more pairs (see the log).", self.parallax_hints.len() - PARALLAX_HINTS_SHOWN)).small().color(MUTED));
+            }
+            ui.label(RichText::new("These matches are not used as points (the rotation model cannot fulfil them). Parallax mode corrects such shifts locally near the seams; a mask keeps the object from showing twice.").small().color(MUTED));
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Turn on Parallax mode").on_hover_text("Switches the option “Parallax mode” in step 3 on. Align again afterwards.").clicked() {
+                    self.parallax_cfg.enabled = true;
+                    self.needs_align = true;
+                    self.set_status("Parallax mode is on. Press “Align photos” to use it.", GOOD);
+                }
+                if ui.button("Open masks").on_hover_text("Opens the mask editor: paint the object red to keep it out of the panorama, or green to take it from one photo.").clicked() {
+                    self.mk.open = true;
+                }
+            });
+        });
+        ui.add_space(6.0);
+    }
+
     pub(super) fn run_match(&mut self, chain: bool) {
         if self.busy() || self.photos.len() < 2 {
             return;
@@ -37,7 +66,9 @@ impl PanoApp {
         let grays: Vec<Arc<Gray>> = self.photos.iter().map(|p| p.gray.clone()).collect();
         let works: Vec<Arc<RgbImage>> = self.photos.iter().map(|p| p.work.clone()).collect();
         let manual: Vec<ControlPoint> = self.cps.iter().filter(|c| c.manual || c.locked).copied().collect();
-        let settings = self.match_settings;
+        let mut settings = self.match_settings;
+        // with Parallax mode on the near objects are handled by the mode itself: no check, no extra work
+        settings.parallax_hint.enabled &= !self.parallax_cfg.enabled;
         self.start_job("Finding matching points", move |report, _| {
             JobMsg::Matched(engine::find_points(&works, &grays, &manual, settings, report))
         });
@@ -106,6 +137,7 @@ impl PanoApp {
         self.matched = true;
         self.needs_align = true;
         self.last_match = Some((m.keypoints, m.detect_ms, m.match_ms, m.pairs.len()));
+        self.parallax_hints = m.parallax;
         let n = self.photos.len();
         let comps = crate::align::components(n, &self.cps);
         let groups = comps.iter().max().map(|v| v + 1).unwrap_or(0);
@@ -115,7 +147,11 @@ impl PanoApp {
             m.pairs.len(),
             fmt_ms(m.detect_ms + m.match_ms)
         );
-        if groups > 1 {
+        if let Some(h) = self.parallax_hints.first() {
+            let more = if self.parallax_hints.len() > 1 { format!(" (and {} more pairs)", self.parallax_hints.len() - 1) } else { String::new() };
+            let text = format!("{msg} {} Try Parallax mode or mask the object – see step 3{more}.", h.text());
+            self.set_status(text, WARN);
+        } else if groups > 1 {
             self.set_status(format!("{msg} Some photos have no overlap with the rest – see step 3."), WARN);
         } else {
             self.set_status(msg, GOOD);

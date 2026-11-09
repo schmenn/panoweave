@@ -402,7 +402,7 @@ fn selftest_run(files: Vec<PathBuf>) {
             let _ = im.save(format!("shots/mask_{}.png", p.name));
         }
     }
-    let ms = engine::MatchSettings { ignore_sky: std::env::var("PW_SKY").map(|v| v != "0").unwrap_or(true), even_thinning: std::env::var("PW_THIN_OLD").map(|v| v != "1").unwrap_or(true), ..Default::default() };
+    let ms = engine::MatchSettings { ignore_sky: std::env::var("PW_SKY").map(|v| v != "0").unwrap_or(true), even_thinning: std::env::var("PW_THIN_OLD").map(|v| v != "1").unwrap_or(true), parallax_hint: features::ParallaxHintConfig { enabled: std::env::var("PW_PARALLAX_HINT").map(|v| v != "0").unwrap_or(true), ..Default::default() }, ..Default::default() };
     let m = engine::find_points(&works, &grays, &[], ms, &|_, _| {});
     let masks: Vec<_> = photos.iter().map(|p| features::sky_mask(&p.work, &p.gray)).collect();
     let on_sky = m

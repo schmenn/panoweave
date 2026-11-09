@@ -771,6 +771,12 @@ impl PanoApp {
                 ui.label(RichText::new("Warnings").strong());
                 egui::ScrollArea::vertical().id_salt("graph_warn").max_height(200.0).show(ui, |ui| {
                     let mut any = false;
+                    if !self.parallax_cfg.enabled {
+                        for h in self.parallax_hints.iter().filter(|h| active.contains(&h.a) && active.contains(&h.b)) {
+                            any = true;
+                            ui.label(RichText::new(format!("{} Try Parallax mode (step 3), or mask the object.", h.text())).color(WARN));
+                        }
+                    }
                     for &i in &active {
                         if !linked[i] {
                             any = true;

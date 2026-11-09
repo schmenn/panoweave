@@ -440,6 +440,8 @@ pub struct PanoApp {
     pub(super) pair_cfg: crate::pair_check::PairCheckConfig,
     pub(super) acc: super::accuracy::AccState,
     pub(super) pair_summary: Option<crate::pair_check::PairSummary>,
+    /// pairs where a nearer object does not fit the rotation model (from the last "Find points", memory only)
+    pub(super) parallax_hints: Vec<engine::ParallaxHint>,
     /// connection view (graph + warning list)
     pub(super) show_graph: bool,
     pub(super) graph_photo: Option<usize>,
