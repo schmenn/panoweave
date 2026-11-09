@@ -162,7 +162,8 @@ The point editor (step 2) shows two photos side by side.
 
 - **Click** a point to select it. The red square is the match window, the dashed white square the search area. **Drag** a point to move it; it snaps to the exact spot when you let go. **Delete** removes it.
 - **Shift+click** or **Ctrl+click** adds a point to the selection or takes it out.
-- **Rectangle**, **Lasso**: drag on empty space to select the points inside. Shift adds, Ctrl takes out.
+- **Rectangle**: drag on empty space to select the points inside. Shift adds, Ctrl takes out.
+- **Lasso**: the same lasso as in the mask editor. Drag around an area on empty space (the points inside are selected when you let go), or click corner by corner and close with a double click or Enter. Esc cancels, Ctrl+Z takes the last corner back. Shift adds, Ctrl takes out. Clicking or dragging a point itself still selects or moves it, unless a lasso is already being drawn.
 - **Brush**: click or paint to select the points under the brush (radius next to it).
 - **Delete selected** removes all selected points as one undo step.
 - **🧲 Snap selected** lets all selected points snap to the exact spot in the background (only results with at least 80 % match are taken; protected points are left alone).
@@ -304,7 +305,8 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Click a point | Select it; the partner in the other photo is centred when that half is zoomed in |
 | Drag a point | Move it; it snaps to the exact spot when you let go (protected points stay) |
 | Shift+click, Ctrl+click a point | Add it to the selection or take it out |
-| Rectangle / Lasso: drag | Select the points inside; Shift+drag adds, Ctrl+drag takes out |
+| Rectangle: drag | Select the points inside; Shift+drag adds, Ctrl+drag takes out |
+| Lasso: drag, or click corners | Select the points inside (when you let go, or on double-click / Enter); Shift adds, Ctrl takes out; Esc cancels, Ctrl+Z removes the last corner |
 | Brush: click or paint | Select the points under the brush; Ctrl takes out |
 | Delete or Backspace | Delete the selected point(s); protected points stay and are named |
 | L | Protect / unprotect the selected point (the one clicked last, not a multiple selection) |
@@ -333,7 +335,7 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Key / action | What it does |
 |---|---|
 | Left button | Paint or draw with the chosen tool |
-| Lasso: drag | Draw around an area; it is masked when you let go |
+| Lasso: drag | Draw around an area; it is masked when you let go (the lasso of the point editor works the same way) |
 | Lasso: click | Set a corner; double-click or Enter closes the shape |
 | Esc | Throw away the shape that is being drawn |
 | Ctrl+Z | While drawing a lasso: remove the last corner; otherwise undo the last mask change |

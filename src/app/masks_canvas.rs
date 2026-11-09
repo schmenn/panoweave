@@ -77,23 +77,11 @@ impl PanoApp {
             paint_brush_stroke(painter, geo, s);
         }
         if t.tool.is_lasso() {
-            let pts: Vec<Pos2> = t.corners.iter().map(|&c| to_screen(geo, c)).collect();
-            let col = kind_color(t.tool.kind(), 255);
-            let mut line = pts.clone();
-            if let (Some(h), false) = (hover, pts.is_empty()) {
-                line.push(h);
-            }
-            if line.len() >= 2 {
-                painter.add(egui::Shape::line(line, Stroke::new(2.0, col)));
-            }
-            for p in pts.iter().filter(|_| !t.dragging_lasso()) {
-                painter.circle_filled(*p, 3.5, col);
-                painter.circle_stroke(*p, 3.5, Stroke::new(1.0, Color32::BLACK));
-            }
+            // the same drawing as in the point editor, in the colour of the kind of mask
+            let pts: Vec<Pos2> = t.lasso.corners.iter().map(|&(x, y)| geo.origin + Vec2::new(x as f32, y as f32) * geo.scale).collect();
+            super::select_shapes::paint_lasso(painter, &pts, hover, t.lasso.dragging(), kind_color(t.tool.kind(), 255));
         } else if let Some(h) = hover {
-            let r = screen_radius(geo, t.radius).max(2.0);
-            painter.circle_stroke(h, r, Stroke::new(2.5, Color32::BLACK));
-            painter.circle_stroke(h, r, Stroke::new(1.2, ring));
+            super::select_shapes::paint_brush_ring(painter, h, screen_radius(geo, t.radius).max(2.0), ring);
         }
     }
 
