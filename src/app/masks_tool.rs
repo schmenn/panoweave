@@ -1,9 +1,10 @@
 //! The mask tools: turns pointer events (already in screen coordinates) into strokes.
-//! Brush: press, drag, release = one stroke. Lasso: drag around an area (closes on release, like the
-//! lasso of the point editor), or click corner by corner and close with a double click or Enter;
-//! Escape throws it away. Pure logic, no window code.
+//! Brush: press, drag, release = one stroke. Lasso: the same lasso as in the point editor
+//! (`select_shapes::Lasso`: drag around an area, or click corner by corner and close with a double
+//! click or Enter; Escape throws it away). Pure logic, no window code.
 
 use super::masks_state::PhotoMask;
+use super::select_shapes::Lasso;
 use super::types::PaneGeo;
 use crate::masks::{MaskKind, MaskStroke};
 use eframe::egui::{Pos2, Vec2};
@@ -14,12 +15,6 @@ pub(super) const MIN_BRUSH: f32 = 0.002;
 pub(super) const MAX_BRUSH: f32 = 0.10;
 /// A new point of a brush stroke is only taken when it is this far (in brush radii) from the last one.
 const STEP_IN_RADII: f32 = 0.25;
-/// A lasso needs at least this many corners.
-pub(super) const MIN_CORNERS: usize = 3;
-/// A lasso drag shorter than this (screen pixels across) is a shaky click: it sets one corner.
-const LASSO_DRAG_MIN_PX: f32 = 12.0;
-/// Corners of a dragged lasso are taken this far apart (screen pixels).
-const LASSO_STEP_PX: f32 = 4.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Tool {
@@ -91,22 +86,29 @@ fn clamp01(f: [f32; 2]) -> [f32; 2] {
     [f[0].clamp(0.0, 1.0), f[1].clamp(0.0, 1.0)]
 }
 
+/// Photo pixels (the lasso works in them, in both editors) to fractions of the photo and back.
+fn px_to_frac(geo: &PaneGeo, p: (f64, f64)) -> [f32; 2] {
+    [(p.0 / geo.w as f64) as f32, (p.1 / geo.h as f64) as f32]
+}
+
+fn frac_to_px(geo: &PaneGeo, f: [f32; 2]) -> (f64, f64) {
+    (f[0] as f64 * geo.w as f64, f[1] as f64 * geo.h as f64)
+}
+
 pub(super) struct MaskTool {
     pub(super) tool: Tool,
     pub(super) radius: f32,
     /// the brush stroke being painted
     pub(super) stroke: Option<MaskStroke>,
-    /// the corners of the lasso being drawn
-    pub(super) corners: Vec<[f32; 2]>,
-    /// a lasso drag is going on; the corner it started with
-    lasso_drag: Option<usize>,
+    /// the lasso being drawn; its corners are photo pixels of the working image (`geo.w` x `geo.h`)
+    pub(super) lasso: Lasso,
 }
 
 impl Default for MaskTool {
     fn default() -> Self {
         // red first: taking something out (a boat, a person) is the common case, and a green stroke by
         // mistake forces a photo in where it was not wanted
-        Self { tool: Tool::BrushNegative, radius: DEFAULT_BRUSH, stroke: None, corners: Vec::new(), lasso_drag: None }
+        Self { tool: Tool::BrushNegative, radius: DEFAULT_BRUSH, stroke: None, lasso: Lasso::default() }
     }
 }
 
@@ -114,23 +116,17 @@ impl MaskTool {
     /// Throws away what is being drawn (tool or photo changed).
     pub(super) fn cancel(&mut self) {
         self.stroke = None;
-        self.corners.clear();
-        self.lasso_drag = None;
+        self.lasso.cancel();
     }
 
     #[cfg(test)]
     pub(super) fn busy(&self) -> bool {
-        self.stroke.is_some() || !self.corners.is_empty()
-    }
-
-    /// A lasso outline is being dragged (its many corners are not drawn as dots).
-    pub(super) fn dragging_lasso(&self) -> bool {
-        self.lasso_drag.is_some()
+        self.stroke.is_some() || self.lasso.busy()
     }
 
     /// Takes the last lasso corner back; false if there is none.
     pub(super) fn pop_corner(&mut self) -> bool {
-        self.corners.pop().is_some()
+        self.lasso.pop_corner()
     }
 
     /// Feeds one event of the pointer; returns true if the mask of the photo changed (a stroke was added).
@@ -147,36 +143,19 @@ impl MaskTool {
                 // lasso: a drag draws the outline (or, while corners are being clicked, adds to them)
                 let f = to_frac(geo, p);
                 if inside(f) {
-                    self.lasso_drag = Some(self.corners.len());
-                    self.corners.push(f);
+                    self.lasso.down(frac_to_px(geo, f));
                 }
                 false
             }
-            Ptr::Move(p) if self.lasso_drag.is_some() => {
-                let f = clamp01(to_frac(geo, p));
-                let far = self.corners.last().is_none_or(|l| to_screen(geo, *l).distance(to_screen(geo, f)) >= LASSO_STEP_PX);
-                if far {
-                    self.corners.push(f);
-                }
+            Ptr::Move(p) if self.lasso.dragging() => {
+                let f = to_frac(geo, p);
+                self.lasso.drag(frac_to_px(geo, f), geo.scale as f64, Some((geo.w as f64, geo.h as f64)));
                 false
             }
-            Ptr::Up if self.lasso_drag.is_some() => {
-                let start = self.lasso_drag.take().unwrap_or(0);
-                let path: Vec<Pos2> = self.corners[start..].iter().map(|&c| to_screen(geo, c)).collect();
-                let (lo, hi) = path.iter().fold((Pos2::new(f32::MAX, f32::MAX), Pos2::new(f32::MIN, f32::MIN)), |(lo, hi), q| (lo.min(*q), hi.max(*q)));
-                let drawn = path.len() >= MIN_CORNERS && (hi - lo).length() >= LASSO_DRAG_MIN_PX;
-                if !drawn {
-                    // a click that moved a little: one corner, as a click would have set
-                    self.corners.truncate(start + 1);
-                    false
-                } else if start == 0 {
-                    // dragged around an area from scratch: done
-                    self.close_lasso(mask, w, h)
-                } else {
-                    // dragged while clicking corners: the outline joins the corners, still open
-                    false
-                }
-            }
+            Ptr::Up if self.lasso.dragging() => match self.lasso.up(geo.scale as f64) {
+                Some(poly) => self.commit_lasso(poly, geo, mask, w, h),
+                None => false,
+            },
             Ptr::Move(p) => {
                 let f = clamp01(to_frac(geo, p));
                 let step = self.radius * STEP_IN_RADII * geo.w.max(geo.h);
@@ -195,11 +174,14 @@ impl MaskTool {
             Ptr::Click(p) if self.tool.is_lasso() => {
                 let f = to_frac(geo, p);
                 if inside(f) {
-                    self.corners.push(f);
+                    self.lasso.click(frac_to_px(geo, f));
                 }
                 false
             }
-            Ptr::DoubleClick | Ptr::Enter if self.tool.is_lasso() => self.close_lasso(mask, w, h),
+            Ptr::DoubleClick | Ptr::Enter if self.tool.is_lasso() => match self.lasso.close() {
+                Some(poly) => self.commit_lasso(poly, geo, mask, w, h),
+                None => false,
+            },
             Ptr::Escape => {
                 self.cancel();
                 false
@@ -208,12 +190,10 @@ impl MaskTool {
         }
     }
 
-    fn close_lasso(&mut self, mask: &mut PhotoMask, w: usize, h: usize) -> bool {
-        let corners = std::mem::take(&mut self.corners);
-        if corners.len() < MIN_CORNERS {
-            return false;
-        }
-        mask.commit(MaskStroke { kind: self.tool.kind(), points: corners, radius: 0.0, polygon: true }, w, h)
+    /// A finished lasso becomes a polygon stroke (corners as fractions of the photo).
+    fn commit_lasso(&mut self, poly: Vec<(f64, f64)>, geo: &PaneGeo, mask: &mut PhotoMask, w: usize, h: usize) -> bool {
+        let points: Vec<[f32; 2]> = poly.into_iter().map(|p| clamp01(px_to_frac(geo, p))).collect();
+        mask.commit(MaskStroke { kind: self.tool.kind(), points, radius: 0.0, polygon: true }, w, h)
     }
 }
 
@@ -335,14 +315,14 @@ mod tests {
         at(&mut t, &mut m, Ptr::Down(p(100.0, 100.0)));
         at(&mut t, &mut m, Ptr::Move(p(105.0, 103.0)));
         assert!(!at(&mut t, &mut m, Ptr::Up));
-        assert_eq!(t.corners.len(), 1);
+        assert_eq!(t.lasso.corners.len(), 1);
         at(&mut t, &mut m, Ptr::Click(p(300.0, 100.0)));
         // a drag while corners are being clicked joins them and leaves the shape open
         at(&mut t, &mut m, Ptr::Down(p(300.0, 150.0)));
         at(&mut t, &mut m, Ptr::Move(p(250.0, 190.0)));
         at(&mut t, &mut m, Ptr::Move(p(150.0, 190.0)));
         assert!(!at(&mut t, &mut m, Ptr::Up));
-        assert!(t.corners.len() >= 4 && m.strokes.is_empty());
+        assert!(t.lasso.corners.len() >= 4 && m.strokes.is_empty());
         assert!(at(&mut t, &mut m, Ptr::Enter));
         assert_eq!(m.buf.as_ref().unwrap().at(100.0, 60.0, 200.0, 100.0), POSITIVE);
     }
@@ -352,7 +332,7 @@ mod tests {
         let (mut t, mut m) = (MaskTool { tool: Tool::LassoPositive, ..Default::default() }, PhotoMask::default());
         at(&mut t, &mut m, Ptr::Click(p(100.0, 100.0)));
         at(&mut t, &mut m, Ptr::Click(p(120.0, 100.0)));
-        assert!(t.pop_corner() && t.corners.len() == 1);
+        assert!(t.pop_corner() && t.lasso.corners.len() == 1);
         at(&mut t, &mut m, Ptr::Escape);
         assert!(!t.busy() && m.strokes.is_empty());
         t.tool = Tool::BrushPositive;

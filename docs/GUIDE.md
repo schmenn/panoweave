@@ -76,7 +76,7 @@ Matching points (control points) are spots that show the same thing in two photo
 - **Detail:** *Fast*, *Balanced* (default) or *Thorough (difficult scenes)*: how many features per photo are looked at. Thorough is slower and helps with little texture or very different photos.
 - **Ignore sky & clouds** (on by default): clouds move between shots, so points on them pull the photos apart. Turn it off only if the sky is the only overlap.
 - **Points per pair:** how many points are kept per pair (8 to 300). More points do not make the alignment much better once each pair has a few dozen good ones.
-- **🔍 Find points for these two photos** (or *Find more points…* when the pair has points already) searches only the pair on screen.
+- **🔍 Find points for these two photos** (or *Find more points…* when the pair has points already) searches only the pair on screen. It **adds** points and never replaces or moves one: every point the pair has stays (also the automatic ones you may have checked), and a found point that lies on an existing point (closer than about 6 px in either photo) is not added a second time. The message says "N new, M already there".
 
 **The two photos on screen** are chosen with the drop-downs above them (or by clicking a pair in the [connection graph](#connections)). **⇄ Swap sides** swaps them. How to edit points is described in [section 4](#4-the-point-editor-in-detail).
 
@@ -164,18 +164,23 @@ The point editor (step 2) shows two photos side by side.
 
 **Select / edit** (the default tool) and its selection shapes:
 
-- **Click** a point to select it. The red square is the match window, the dashed white square the search area. **Drag** a point to move it; it snaps to the exact spot when you let go. **Delete** removes it.
+- **Click** a point to select it. The red square is the match window, the dashed white square the search area. **Drag** a point to move it; it snaps to the exact spot when you let go (hold **Alt** when you start the drag: no snapping, the point stays exactly where you drop it). **Delete** removes it.
 - **Shift+click** or **Ctrl+click** adds a point to the selection or takes it out.
-- **Rectangle**, **Lasso**: drag on empty space to select the points inside. Shift adds, Ctrl takes out.
+- **Rectangle**: drag on empty space to select the points inside. Shift adds, Ctrl takes out.
+- **Lasso**: the same lasso as in the mask editor. Drag around an area on empty space (the points inside are selected when you let go), or click corner by corner and close with a double click or Enter. Esc cancels, Ctrl+Z takes the last corner back. Shift adds, Ctrl takes out. Clicking or dragging a point itself still selects or moves it, unless a lasso is already being drawn.
 - **Brush**: click or paint to select the points under the brush (radius next to it).
 - **Delete selected** removes all selected points as one undo step.
 - **🧲 Snap selected** lets all selected points snap to the exact spot in the background (only results with at least 80 % match are taken; protected points are left alone).
 
-**➕ Add point:** click a distinctive spot (a corner, a sharp detail) in one photo, then the same spot in the other; both clicks snap to the exact spot. With **then find more automatically** PanoWeave grows more points around it.
+**➕ Add point:** click a distinctive spot (a corner, a sharp detail) in either photo, then the same spot in the other; the other side looks for the matching spot, and both sides behave the same whether you start left or right. With **then find more automatically** PanoWeave grows more points around it. **If a side snapped wrongly,** the new point stays selected: click in that photo again and exactly that side moves to your click (the snap only corrects within a few pixels of it, and a weak match leaves it exactly where you clicked, so it cannot jump back). **Alt+click** never snaps. **Esc** (or **Ctrl+click**) finishes the point, and the next click starts a new one. Points you moved, dragged or snapped count as placed by hand.
 
 **🎯 Patch click:** click roughly the same spot in both photos. PanoWeave uses the rotation and zoom of nearby points (and of the alignment) to find the exact spot, even when the photos are turned or zoomed differently, and suggests more pairs around it. Check the suggestions and press **✔ Accept** or **✖ Discard**. Nothing is added without your click.
 
 ![Patch click with suggestions](guide/patchclick.png)
+
+**▭ Area:** for a surface with detail (a sign, a number plate, a facade, a wall with posters). Drag a rough rectangle round it in one photo, then round the same surface in the other photo (the order does not matter); the rectangle starts exactly where you press the mouse button. Each rectangle has four corner dots: pull them one by one onto the surface, so that a slanted surface (the number plate of a car seen from the side) is outlined as a slanted four-sided shape. You do not have to be exact: corners that are a bit off (up to about 15 % of the size of the area) are corrected automatically. Drag inside an area to move it, drag outside to draw it again, **Esc** clears both. A change that would make the sides cross is undone. The right mouse button still moves the photo and the wheel zooms. Then press **▶ Match the areas**: PanoWeave compares the two areas exactly (also when the photos are zoomed, turned or seen from a different angle) and proposes up to a dozen points, placed on corners with real structure (where edges in two directions meet), never on a plain surface or beside a corner. With **Show corrected area** the right area is drawn dashed green as the match corrected it. Every point shows its match score; weak ones (below 0.90) are marked yellow and not ticked. Check them and press **✔ Accept** (one undo step, the points count as hand-placed) or **✖ Discard** (nothing changes). If nothing matches, the message says why: a plain area, rectangles that do not show the same thing, or rectangles that are too far apart. Aligning again (step 3) uses the new points.
+
+![Area with suggestions](guide/area.png)
 
 **🔒 Protect** (key **L**): a protected point is never removed or moved by any automatic or bulk action (clean up, delete all in a pair, outlier removal, duplicate removal, a new search, the fine alignment). Single delete and drag are refused until you unprotect it.
 
@@ -187,7 +192,7 @@ The point editor (step 2) shows two photos side by side.
 
 ### All points (F3)
 
-A sortable list of all points with their pair, error, match and kind. Filters: one pair, error above a value, only protected, only duplicates, only on sky. Click a row to show the point in the editor; Ctrl+click toggles a row, Shift+click selects a range. **Delete selected**, **Delete all N listed** and **Remove outliers (mean + 2σ)** act on the list (protected points stay). **Duplicate points** (two points of a pair on the same spot) are marked orange and can be removed with one click (the worse one goes; hand-placed points stay).
+A sortable list of all points with their pair, error, match and kind. Filters: one pair, error above a value, only protected, only duplicates, only on sky. The lock at the end of a row protects or unlocks that point (all selected rows when it belongs to the selection); **Unlock selected**, **Unlock all listed** and **Protect selected** do it for several at once, as one undo step, so protected points can be deleted from the list afterwards. Click a row to show the point in the editor; Ctrl+click toggles a row, Shift+click selects a range. **Delete selected**, **Delete all N listed** and **Remove outliers (mean + 2σ)** act on the list (protected points stay). **Duplicate points** (two points of a pair on the same spot) are marked orange and can be removed with one click (the worse one goes; hand-placed points stay).
 
 ![List of all control points](guide/cplist.png)
 
@@ -309,11 +314,13 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Click a point | Select it; the partner in the other photo is centred when that half is zoomed in |
 | Drag a point | Move it; it snaps to the exact spot when you let go (protected points stay) |
 | Shift+click, Ctrl+click a point | Add it to the selection or take it out |
-| Rectangle / Lasso: drag | Select the points inside; Shift+drag adds, Ctrl+drag takes out |
+| Rectangle: drag | Select the points inside; Shift+drag adds, Ctrl+drag takes out |
+| Lasso: drag, or click corners | Select the points inside (when you let go, or on double-click / Enter); Shift adds, Ctrl takes out; Esc cancels, Ctrl+Z removes the last corner |
 | Brush: click or paint | Select the points under the brush; Ctrl takes out |
 | Delete or Backspace | Delete the selected point(s); protected points stay and are named |
 | L | Protect / unprotect the selected point (the one clicked last, not a multiple selection) |
-| Esc | **Add point**: cancel a half-placed point (the first click); pressed again, or in any other tool, back to **Select / edit** |
+| Esc | **Add point**: cancel a half-placed point (the first click), or finish the point just placed so the next click starts a new one; pressed again, or in any other tool, back to **Select / edit**. **Area**: cancel the drag, then clear the rectangles, then back to **Select / edit** |
+| Area: drag | Draw a rectangle (outside one), pull a corner dot, or move the area (inside it); right mouse button moves the photo |
 
 **All points list (F3)**
 
@@ -338,7 +345,7 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Key / action | What it does |
 |---|---|
 | Left button | Paint or draw with the chosen tool |
-| Lasso: drag | Draw around an area; it is masked when you let go |
+| Lasso: drag | Draw around an area; it is masked when you let go (the lasso of the point editor works the same way) |
 | Lasso: click | Set a corner; double-click or Enter closes the shape |
 | Esc | Throw away the shape that is being drawn |
 | Ctrl+Z | While drawing a lasso: remove the last corner; otherwise undo the last mask change |

@@ -23,6 +23,7 @@ mod photo_menu_tests;
 mod photos;
 mod pipeline;
 mod points;
+mod points_area;
 mod points_click;
 mod points_edit;
 mod points_find;
