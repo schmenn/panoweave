@@ -91,6 +91,8 @@ impl PanoApp {
             key = key.or(super::history::read_undo_key(ctx));
         }
         match key {
+            // while a lasso is being clicked, Ctrl+Z takes its last corner back (as in the mask editor)
+            Some(super::history::UndoKey::Undo) if self.pe.lasso.pop_corner() => {}
             Some(super::history::UndoKey::Undo) => self.undo_last(),
             Some(super::history::UndoKey::Redo) => self.redo_last(),
             None => {}
@@ -207,16 +209,10 @@ impl PanoApp {
                 (Some(a), Some(b)) => points_in(&Shape::Rect(*a, *b), pts),
                 _ => return,
             },
-            PointTool::SelectLasso if finish => points_in(&Shape::Lasso(&sd.path), pts),
-            _ => return,
+            _ => return, // the lasso has its own builder, see `select_shapes::Lasso`
         };
         let op = SelOp::for_tool(tool, sd.mods.shift, sd.mods.command);
-        if op != SelOp::Replace && self.pe.sel.is_empty() {
-            self.pe.sel.extend(self.pe.selected.filter(|&s| s < self.cps.len()));
-        }
-        op.apply(&mut self.pe.sel, &hits);
-        // the multiple selection is the truth while a shape tool is used
-        self.pe.selected = None;
+        self.apply_hits(&hits, op);
     }
 
     /// Store a hand-placed pair; `n1` belongs to pane `p1`, `n2` to the other pane.
@@ -293,7 +289,12 @@ impl PanoApp {
             if self.pe.tool == PointTool::Area && self.area_event(&ev, &px_of, &|pane| geo[pane.i()].scale) {
                 continue;
             }
+            // the lasso tool works like the one of the mask editor (`select_shapes::Lasso`)
+            if self.lasso_event(&ev, geo, &px_of, &|pane, pos| nearest(pane, pos).is_some(), pts) {
+                continue;
+            }
             match ev {
+                PaneEvent::LassoClose => {}
                 PaneEvent::Fit(pane) => {
                     let g = &geo[pane.i()];
                     self.pe.views[pane.i()].zoom = 1.0;
@@ -362,7 +363,7 @@ impl PanoApp {
                     }
                 }
                 PaneEvent::DragStart(pane, pos, primary, mods) => {
-                    // rectangle and lasso start on empty space; on a point the point is dragged as usual
+                    // rectangle starts on empty space; on a point the point is dragged as usual
                     let on_point = self.pe.tool != PointTool::SelectBrush && !mods.shift && !mods.command && nearest(pane, pos).is_some();
                     if primary && self.pe.tool.is_select() && !on_point {
                         // a selection shape starts here (the secondary button still moves the photo)

@@ -48,6 +48,7 @@ impl PanoApp {
             })
             .collect();
         self.sync_selection();
+        self.sync_lasso();
         let frame = self.selection_frame();
         let mut new_a = a;
         let mut new_b = b;
@@ -80,11 +81,16 @@ impl PanoApp {
         if ui.input(|i| i.key_pressed(egui::Key::L) && !i.modifiers.any()) && !ui.ctx().egui_wants_keyboard_input() {
             self.toggle_lock_selected();
         }
+        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !ui.ctx().egui_wants_keyboard_input() {
+            self.lasso_enter(&pts);
+        }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            // Esc cancels a half-placed point first, otherwise it leaves the tool
+            // Esc cancels a lasso or a half-placed point first, otherwise it leaves the tool
             self.pe.sel_drag = None;
             if self.area_escape() {
                 // the area tool took the key (cancelled a drag or cleared the rectangles)
+            } else if self.pe.lasso.busy() {
+                self.pe.lasso.cancel();
             } else if self.pe.pending.take().is_none() {
                 self.pe.tool = PointTool::Edit;
             }
@@ -148,7 +154,7 @@ impl PanoApp {
                 for (tool, text, tip) in [
                     (PointTool::Edit, "Click", "Click a point to select it (Shift/Ctrl+click adds or takes it out), drag it to move it."),
                     (PointTool::SelectRect, "▭ Rectangle", "Drag a rectangle on empty space to select the points inside. Shift adds to the selection, Ctrl takes points out. Points can still be dragged."),
-                    (PointTool::SelectLasso, "➰ Lasso", "Drag a free outline on empty space to select the points inside. Shift adds to the selection, Ctrl takes points out. Points can still be dragged."),
+                    (PointTool::SelectLasso, "➰ Lasso", select_shapes::LASSO_TIP),
                     (PointTool::SelectBrush, "🖌 Brush", "Click or paint over points to select them. Ctrl takes points out again."),
                 ] {
                     if ui.add(egui::Button::selectable(self.pe.tool == tool, text)).on_hover_text(tip).clicked() {
@@ -281,7 +287,9 @@ impl PanoApp {
     /// Hint line under the toolbar (or the strip of the patch click mode).
     fn points_hint(&mut self, ui: &mut egui::Ui) {
         let adding = self.pe.tool == PointTool::Add;
-        let hint = if self.pe.tool.is_select() {
+        let hint = if self.pe.tool == PointTool::SelectLasso {
+            select_shapes::LASSO_POINTS_HINT
+        } else if self.pe.tool.is_select() {
             "Drag in a photo to select points (the right mouse button still moves the photo). Shift adds, Ctrl takes out. Delete removes the selection; protected points stay. Esc leaves the tool."
         } else if adding {
             match self.pe.pending {

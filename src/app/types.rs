@@ -182,6 +182,8 @@ pub(super) enum PaneEvent {
     DragStart(Pane, Pos2, bool, egui::Modifiers),
     Drag(Pane, Pos2, Vec2),
     DragEnd,
+    /// double click that closes the lasso being clicked
+    LassoClose,
 }
 
 /// The one tool of the point editor: what a click into a photo does.
@@ -236,6 +238,10 @@ pub(super) struct PointEditor {
     pub(super) sel_fp: u64,
     /// selection shape being dragged (rectangle, lasso, brush)
     pub(super) sel_drag: Option<SelDrag>,
+    /// the lasso being drawn (shared with the mask editor), the pane and pair it belongs to and the
+    /// keys held when it was started (Shift adds, Ctrl takes out)
+    pub(super) lasso: super::select_shapes::Lasso,
+    pub(super) lasso_ctx: Option<(Pane, (usize, usize), egui::Modifiers)>,
     /// brush radius in screen pixels (0 = `select_shapes::BRUSH_PX_DEFAULT`)
     pub(super) brush_px: f32,
     /// What a click into a photo does (radio-button style, see `PointTool::toggle`).
