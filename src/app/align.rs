@@ -23,7 +23,7 @@ impl PanoApp {
         let lenses = self.lenses.clone();
         let cps: Vec<ControlPoint> = self.cps.iter().filter(|c| active.contains(&c.a) && active.contains(&c.b)).copied().collect();
         let s = AlignSettings { ..self.align_settings };
-        let s = AlignSettings { fine_tune_fov: s.fine_tune_fov, distortion: s.distortion, remove_outliers: s.remove_outliers, level: s.level };
+        let s = AlignSettings { fine_tune_fov: s.fine_tune_fov, distortion: s.distortion, remove_outliers: s.remove_outliers, level: s.level, outliers_skip_areas: s.outliers_skip_areas };
         let fine_cfg = self.fine_cfg.clone();
         let par_cfg = self.parallax_cfg.clone();
         let fa: Vec<fine_align::FaPhoto> = self.photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
@@ -103,7 +103,7 @@ impl PanoApp {
             let errs: Vec<f64> = cps2.iter().filter(|c| c.kind == CpKind::Point).map(|c| c.err).collect();
             let (mean_err, max_err) = if errs.is_empty() { (0.0, 0.0) } else { (errs.iter().sum::<f64>() / errs.len() as f64, errs.iter().cloned().fold(0.0, f64::max)) };
             let fields = if par_cfg.enabled { fine_align::parallax_fields(&fa, &lens_of, &lenses2, &rots, &cps2, &fine_cfg, &par_cfg) } else { old_fields };
-            JobMsg::Aligned(AlignResult { rots, lenses: lenses2, cps: cps2, removed: 0, ms: t0.elapsed().as_millis(), mean_err, max_err, fine: Some(st), fields, pairs: None })
+            JobMsg::Aligned(AlignResult { rots, lenses: lenses2, cps: cps2, removed: 0, removal_passes: 0, ms: t0.elapsed().as_millis(), mean_err, max_err, fine: Some(st), fields, pairs: None })
         });
     }
 
@@ -147,6 +147,7 @@ impl PanoApp {
         self.aligned = true;
         self.needs_align = false;
         self.last_align = Some((a.mean_err, a.max_err, a.removed, a.ms));
+        self.last_align_passes = a.removal_passes;
         let was_chain = self.auto_chain;
         if was_chain || self.view.bounds == PanoView::default().bounds {
             self.choose_projection();
@@ -168,7 +169,7 @@ impl PanoApp {
                 "Aligned in {}: average error {:.2} px ({q}){}.{}{fine_note}",
                 fmt_ms(a.ms),
                 a.mean_err,
-                if a.removed > 0 { format!(", {} bad points removed automatically", a.removed) } else { String::new() },
+                if a.removed > 0 { format!(", {}", removed_text(a.removed, a.removal_passes)) } else { String::new() },
                 pair_note.unwrap_or_default()
             ),
             if a.mean_err < 3.0 && fine_note.is_empty() { GOOD } else { WARN },
@@ -239,7 +240,7 @@ impl PanoApp {
                         ui.add_space(12.0);
                         ui.vertical(|ui| {
                             ui.label(format!("Average error {mean:.2} px · worst point {max:.1} px"));
-                            ui.label(RichText::new(format!("{} points used · {removed} wrong matches removed automatically · {}", self.cps.len(), fmt_ms(ms))).small().color(MUTED));
+                            ui.label(RichText::new(format!("{} points used · {} · {}", self.cps.len(), removed_text(removed, self.last_align_passes), fmt_ms(ms))).small().color(MUTED));
                         });
                     });
                     if mean >= 3.0 {

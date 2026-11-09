@@ -314,6 +314,8 @@ pub struct PanoApp {
     pub(super) match_brightness: bool,
     pub(super) last_match: Option<(usize, u128, u128, usize)>,
     pub(super) last_align: Option<(f64, f64, usize, u128)>,
+    /// passes in which the last alignment removed points (for the message)
+    pub(super) last_align_passes: usize,
     pub(super) job: Option<Job>,
     pub(super) auto_chain: bool,
     pub(super) status: String,

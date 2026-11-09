@@ -195,6 +195,8 @@ pub struct FineStats {
     pub locked_warn_px: f32,
     /// protected points without a usable match (further off than the search radius, or too little texture)
     pub locked_unmatched: usize,
+    /// the reasons for `locked_unmatched` with the count of each, most frequent first
+    pub locked_unmatched_reasons: Vec<(String, usize)>,
     /// no control area could be measured, so no round could be judged and nothing was changed
     pub no_test_spots: bool,
     /// the last measuring round (the list shown in the patch comparison window):
@@ -316,6 +318,44 @@ pub struct PatchMeasure {
     pub dir_b: V3,
     /// mean absolute grey difference before matching (0..255)
     pub diff: f32,
+    /// only for protected points whose search found nothing usable: similarity of the two patches at the
+    /// point's own spot (None = not measured, or the patch does not lie inside both photos)
+    pub own_score: Option<f32>,
+}
+
+/// Why a protected point could not be confirmed (the labels are shown to the person).
+pub const LOCKED_REPEATING: &str = "repeating pattern";
+pub const LOCKED_EDGE: &str = "too close to the photo edge";
+pub const LOCKED_TEXTURE: &str = "too little texture";
+pub const LOCKED_SIMILARITY: &str = "too little similarity";
+
+/// Judge a protected point from its own spot: `None` = confirmed, else the reason it was not.
+/// Confirming only needs the patches to look alike where the point is; whether the spot is the only good one
+/// in the search area (uniqueness) belongs to the search, not to this check.
+pub fn classify_locked(own_score: Option<f32>, min_score: f32, search_reason: &str) -> Option<&'static str> {
+    match own_score {
+        Some(s) if s >= min_score => None,
+        None => Some(if search_reason == "too little texture" { LOCKED_TEXTURE } else { LOCKED_EDGE }),
+        Some(_) => Some(if search_reason.contains("repeating pattern") {
+            LOCKED_REPEATING
+        } else if search_reason == "too little texture" {
+            LOCKED_TEXTURE
+        } else {
+            LOCKED_SIMILARITY
+        }),
+    }
+}
+
+/// Similarity of the patches around `d` in photo a and around direction `dir_b` in photo b (the protected
+/// point's own spot), measured without any search.
+fn own_spot_score(ga: &Geo, gb: &Geo, ia: (&Gray, &RgbImage), ib: (&Gray, &RgbImage), d: V3, dir_b: V3, cfg: &MatchConfig) -> Option<f32> {
+    let scale = ga.pixel_angle().max(gb.pixel_angle());
+    let plane = Plane::new(d, &ga.rot, scale);
+    let size = Region::size_for(cfg);
+    let ra = render_region(ga, ia.0, ia.1, &plane, size);
+    let rb = render_region(gb, ib.0, ib.1, &plane, size);
+    let (dx, dy) = plane.coords(dir_b)?;
+    patch_matcher::score_at_shift(&ra, &rb, cfg, dx as f32, dy as f32)
 }
 
 /// Match the patch around `d` (seen in photo a) inside photo b.
@@ -404,7 +444,7 @@ pub fn measure_ex(
             let detail = patch_matcher::MatchDetail { uniqueness: 0.0, texture, min_eig };
             store(&result, detail, None, &SearchTrace::default(), f32::NAN);
         }
-        return Some(PatchMeasure { id, result, dir_b: d, diff: f32::NAN });
+        return Some(PatchMeasure { id, result, dir_b: d, diff: f32::NAN, own_score: None });
     }
     let rb = render_region(gb, ib.0, ib.1, &plane, size);
     // grey difference of the central patch as it lies now
@@ -434,7 +474,7 @@ pub fn measure_ex(
         patch_matcher::match_patch(&ra, &rb, cfg)
     };
     let dir_b = plane.dir(result.dx as f64, result.dy as f64);
-    Some(PatchMeasure { id, result, dir_b, diff })
+    Some(PatchMeasure { id, result, dir_b, diff, own_score: None })
 }
 
 /// Smoothed copies for photos that are much finer than their partner (avoids aliasing when a
@@ -524,6 +564,7 @@ struct RoundOutcome {
     locked_far: usize,
     locked_far_max: f32,
     locked_unmatched: usize,
+    locked_reasons: HashMap<&'static str, usize>,
     skipped_cells: usize,
 }
 
@@ -709,7 +750,14 @@ fn measure_round(
                 mcfg
             };
             let rc = RecCtx { a: c.a, b: c.b, pa: c.pa, kind: c.kind, hand_point: c.manual, disabled: is_disabled(&key) };
-            let m = measure_ex(ga, gb, imgs.get(c.a, geos, c.b), imgs.get(c.b, geos, c.a), d, use_cfg, cfg.record_patches.then_some(&rc));
+            let mut m = measure_ex(ga, gb, imgs.get(c.a, geos, c.b), imgs.get(c.b, geos, c.a), d, use_cfg, cfg.record_patches.then_some(&rc));
+            if c.locked
+                && let Some(pm) = m.as_mut()
+                && !pm.result.valid
+            {
+                // confirm a protected point where it lies, not where the search ended
+                pm.own_score = own_spot_score(ga, gb, imgs.get(c.a, geos, c.b), imgs.get(c.b, geos, c.a), d, gb.px_to_dir(denorm(gb, c.pb)), use_cfg);
+            }
             (*c, m, false)
         })
         .collect();
@@ -717,6 +765,7 @@ fn measure_round(
     let mut n_refined = 0;
     let mut n_failed = 0;
     let (mut locked_far, mut locked_far_max, mut locked_unmatched) = (0usize, 0.0f32, 0usize);
+    let mut locked_reasons: HashMap<&'static str, usize> = HashMap::new();
     for (mut c, m, kept_manual) in refined {
         if c.kind == CpKind::Area {
             if c.locked {
@@ -770,7 +819,10 @@ fn measure_round(
                     };
                 }
             } else if c.locked {
-                locked_unmatched += 1;
+                if let Some(why) = classify_locked(m.own_score, cfg.point_min_score, m.result.reason) {
+                    locked_unmatched += 1;
+                    *locked_reasons.entry(why).or_insert(0) += 1;
+                }
             } else if c.kind == CpKind::Point && !c.manual {
                 if cfg.drop_invalid_points {
                     STORE.finalize(m.id, None, None);
@@ -925,8 +977,20 @@ fn measure_round(
         locked_far,
         locked_far_max,
         locked_unmatched,
+        locked_reasons,
         skipped_cells,
     }
+}
+
+fn reason_list(m: &HashMap<&'static str, usize>) -> Vec<(String, usize)> {
+    let mut v: Vec<(String, usize)> = m.iter().map(|(k, n)| (k.to_string(), *n)).collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    v
+}
+
+/// "3 repeating pattern, 1 too close to the photo edge"
+pub fn reasons_text(v: &[(String, usize)]) -> String {
+    v.iter().map(|(k, n)| format!("{n} {k}")).collect::<Vec<_>>().join(", ")
 }
 
 /// How many candidates per pair are measured, as a multiple of `max_areas_per_pair`.
@@ -1144,11 +1208,12 @@ pub fn run(
     stats.locked_far_max = o.locked_far_max;
     stats.locked_warn_px = cfg.locked_warn_px;
     stats.locked_unmatched = o.locked_unmatched;
+    stats.locked_unmatched_reasons = reason_list(&o.locked_reasons);
     if o.locked_far > 0 {
         stats.log.push(format!("{} protected points are off by more than {:.1} px (up to {:.1} px) - left as they are", o.locked_far, cfg.locked_warn_px, o.locked_far_max));
     }
     if o.locked_unmatched > 0 {
-        stats.log.push(format!("{} protected points could not be confirmed (no match within the search radius) - left as they are", o.locked_unmatched));
+        stats.log.push(format!("{} protected points could not be confirmed ({}) - left as they are", o.locked_unmatched, reasons_text(&stats.locked_unmatched_reasons)));
     }
     if o.valid == 0 {
         stats.log.push("no valid patches - keeping the alignment as it is (texture-poor overlaps?)".into());
@@ -1228,6 +1293,7 @@ pub fn run(
             stats.locked_far = o.locked_far;
             stats.locked_far_max = o.locked_far_max;
             stats.locked_unmatched = o.locked_unmatched;
+            stats.locked_unmatched_reasons = reason_list(&o.locked_reasons);
             next_cps = o.cps;
         }
     }
@@ -1585,6 +1651,20 @@ mod parallax_tests {
 #[cfg(test)]
 mod quality_tests {
     use super::*;
+
+    #[test]
+    fn protected_points_are_confirmed_at_their_own_spot() {
+        // the search was ambiguous (repeating pattern) but the patches agree where the point lies: confirmed
+        assert_eq!(classify_locked(Some(0.9), 0.6, "ambiguous (repeating pattern)"), None);
+        assert_eq!(classify_locked(Some(0.9), 0.6, "best match at the edge of the search area"), None);
+        // the reasons for not confirming are told apart
+        assert_eq!(classify_locked(Some(0.3), 0.6, "ambiguous (repeating pattern)"), Some(LOCKED_REPEATING));
+        assert_eq!(classify_locked(Some(0.3), 0.6, "similarity too low"), Some(LOCKED_SIMILARITY));
+        assert_eq!(classify_locked(None, 0.6, "patch outside the photo"), Some(LOCKED_EDGE));
+        assert_eq!(classify_locked(Some(0.3), 0.6, "too little texture"), Some(LOCKED_TEXTURE));
+        let v = reason_list(&HashMap::from([(LOCKED_EDGE, 1usize), (LOCKED_REPEATING, 3)]));
+        assert_eq!(reasons_text(&v), "3 repeating pattern, 1 too close to the photo edge");
+    }
 
     /// Two copies of the same textured picture: aligned they have no shift; one camera turned by a
     /// known angle shows that angle as shift (in pixels) on the independent check.

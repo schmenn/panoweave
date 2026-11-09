@@ -545,24 +545,61 @@ fn guided(a: &Features, b: &Features, h: &[f64; 9], radius: f64) -> Vec<Corr> {
     out
 }
 
+/// Side of the grid `thin` spreads the points over.
+const THIN_GRID: usize = 8;
+
+/// Order in which the grid cells are visited: farthest-point order (each next cell is the one farthest from all
+/// cells taken so far, ties by index), deterministic, so every prefix of the order covers the whole picture.
+fn scattered_cells(g: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = vec![(g / 2) * g + g / 2];
+    let mut dist = vec![usize::MAX; g * g];
+    while order.len() < g * g {
+        let last = *order.last().unwrap_or(&0);
+        let (lx, ly) = ((last % g) as isize, (last / g) as isize);
+        let mut best = (0usize, usize::MAX);
+        for c in 0..g * g {
+            if order.contains(&c) {
+                continue;
+            }
+            let (dx, dy) = ((c % g) as isize - lx, (c / g) as isize - ly);
+            dist[c] = dist[c].min((dx * dx + dy * dy) as usize);
+            if best.1 == usize::MAX || dist[c] > dist[best.0] {
+                best = (c, dist[c]);
+            }
+        }
+        order.push(best.0);
+    }
+    order
+}
+
 /// Keep at most `max` correspondences, spread evenly over the overlap.
-pub fn thin(mut c: Vec<Corr>, w: usize, h: usize, max: usize) -> Vec<Corr> {
+pub fn thin(c: Vec<Corr>, w: usize, h: usize, max: usize) -> Vec<Corr> {
+    thin_mode(c, w, h, max, true)
+}
+
+/// `thin`, with the choice of order. `even = true` (the default) takes the best match of each grid cell
+/// round by round, visiting the cells in a scattered order, so a limit below the cell count still covers the
+/// whole picture. `even = false` restores the former row by row order (top rows first), which crowded the
+/// points into the upper part of the picture.
+pub fn thin_mode(mut c: Vec<Corr>, w: usize, h: usize, max: usize, even: bool) -> Vec<Corr> {
     if c.len() <= max {
         return c;
     }
     c.sort_by_key(|k| k.dist);
-    let g = 8usize;
+    let g = THIN_GRID;
     let mut cells: Vec<Vec<Corr>> = vec![Vec::new(); g * g];
     for k in c {
         let gx = ((k.ax / w as f32 * g as f32) as usize).min(g - 1);
         let gy = ((k.ay / h as f32 * g as f32) as usize).min(g - 1);
         cells[gy * g + gx].push(k);
     }
+    let order: Vec<usize> = if even { scattered_cells(g) } else { (0..g * g).collect() };
     let mut out = Vec::with_capacity(max);
     let mut round = 0;
     while out.len() < max {
         let mut any = false;
-        for cell in &cells {
+        for &ci in &order {
+            let cell = &cells[ci];
             if round < cell.len() {
                 out.push(cell[round]);
                 any = true;
@@ -857,6 +894,29 @@ mod tests {
         assert_eq!(t.len(), 8);
         assert!(t.iter().any(|c| c.ax > 90.0 && c.ay > 90.0));
         assert!(t.iter().any(|c| c.ax > 90.0 && c.ay < 10.0));
+    }
+
+    #[test]
+    fn thin_covers_all_rows_and_columns() {
+        // one match in the middle of each of the 8x8 cells, limit 20 (below the cell count)
+        let all: Vec<Corr> = (0..64).map(|i| corr((i % 8) as f32 * 12.5 + 6.0, (i / 8) as f32 * 12.5 + 6.0, 10)).collect();
+        let rows = |t: &[Corr]| {
+            let mut r = [false; 8];
+            t.iter().for_each(|c| r[((c.ay / 12.5) as usize).min(7)] = true);
+            r.iter().filter(|b| **b).count()
+        };
+        let cols = |t: &[Corr]| {
+            let mut r = [false; 8];
+            t.iter().for_each(|c| r[((c.ax / 12.5) as usize).min(7)] = true);
+            r.iter().filter(|b| **b).count()
+        };
+        let t = thin(all.clone(), 100, 100, 20);
+        assert_eq!(t.len(), 20);
+        assert_eq!(rows(&t), 8, "all rows used");
+        assert_eq!(cols(&t), 8, "all columns used");
+        // the former order only reached the upper rows
+        let old = thin_mode(all, 100, 100, 20, false);
+        assert!(rows(&old) < 8);
     }
 
     #[test]

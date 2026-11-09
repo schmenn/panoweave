@@ -397,7 +397,7 @@ impl Ctx<'_> {
             .collect();
         let keep = consistent(&dev, self.cfg.outlier_sigma, self.cfg.sigma_floor_px);
         let good: Vec<features::Corr> = checked.iter().zip(&keep).filter(|(_, k)| **k).map(|(c, _)| *c).collect();
-        let thinned = features::thin(good.clone(), gra.w, gra.h, self.settings.points_per_pair);
+        let thinned = features::thin_mode(good.clone(), gra.w, gra.h, self.settings.points_per_pair, self.settings.even_thinning);
         *note = format!(
             "{} matches, {} passed the correlation check, {} rejected as outliers against the geometry, {} kept",
             pm.corrs.len(),
@@ -472,7 +472,7 @@ impl Ctx<'_> {
         let keep = consistent(&ok.iter().map(|x| x.1).collect::<Vec<_>>(), self.cfg.outlier_sigma, self.cfg.sigma_floor_px);
         let good: Vec<features::Corr> = ok.iter().zip(&keep).filter(|(_, k)| **k).map(|(x, _)| x.0).collect();
         let (gra, grb) = (&pa_img.gray, &pb_img.gray);
-        let thinned = features::thin(good.clone(), gra.w, gra.h, self.settings.points_per_pair);
+        let thinned = features::thin_mode(good.clone(), gra.w, gra.h, self.settings.points_per_pair, self.settings.even_thinning);
         let mut rs: Vec<String> = reasons.iter().map(|(k, v)| format!("{v} {k}")).collect();
         rs.sort();
         *note = format!(
@@ -701,6 +701,7 @@ pub fn run_rounds(
         let removed = r.removed;
         let mut r2 = engine::align_all(lens_of, lenses_start, long, &all, s, report);
         r2.removed += removed;
+        r2.removal_passes += r.removal_passes;
         r2.ms += r.ms;
         r = r2;
     }
