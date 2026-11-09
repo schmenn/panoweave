@@ -17,7 +17,7 @@
 
 PanoWeave is a panorama stitcher written in Rust. It takes you through the whole job in one window – **photos → control points → align → frame → export** – with its own point detection and matching, a careful alignment and a memory-independent export. Everything happens automatically with one click, and every step can still be checked and adjusted. An **exposure fusion** mode merges bracketed shots.
 
-> **Status:** early development (v0.2, alpha). Windows is the main platform.
+> **Status:** early development (v0.3, alpha). Windows is the main platform.
 
 ## Highlights
 
@@ -117,7 +117,7 @@ flowchart LR
 | `sky_points` | Points on sky or cloud: which points to mark and which may be removed |
 | `seams`, `masks` | Seam finder (graph cut) and the masks painted on photos |
 | `app` | The egui user interface, split into `types`, `state`, `jobs`, `demo`, `chrome`, `pipeline`, `points_*`, `photos`, `align`, `frame`, `export`, `exposure`, `connections` |
-| `main` | Arguments and headless test drivers |
+| `main`, `accuracy_test` | Arguments and headless test drivers (`--accuracy`: the independent fit check) |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development notes.
 </details>

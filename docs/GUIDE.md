@@ -1,6 +1,6 @@
 # PanoWeave user guide
 
-This guide explains how PanoWeave works, what each step and setting does, and what to do when a panorama does not come out right. It describes version 0.2 (alpha); the program changes quickly, so if something here does not match what you see, the program is right and this guide is out of date.
+This guide explains how PanoWeave works, what each step and setting does, and what to do when a panorama does not come out right. It describes version 0.3 (alpha); the program changes quickly, so if something here does not match what you see, the program is right and this guide is out of date.
 
 **Contents**
 
