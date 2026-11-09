@@ -16,6 +16,7 @@ impl PanoApp {
             // other photos on screen (switch, swap sides, photo removed): the clicks were made in the old ones
             self.click = ClickState { pair: (self.pe.a, self.pe.b), ..Default::default() };
         }
+        self.area_sync_pair();
         let ctx = ui.ctx().clone();
         self.points_toolbar_all(ui);
         let (a, b) = (self.pe.a, self.pe.b);
@@ -86,10 +87,18 @@ impl PanoApp {
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             // Esc cancels a lasso or a half-placed point first, otherwise it leaves the tool
             self.pe.sel_drag = None;
-            if self.pe.lasso.busy() {
+            if self.area_escape() {
+                // the area tool took the key (cancelled a drag or cleared the rectangles)
+            } else if self.pe.lasso.busy() {
                 self.pe.lasso.cancel();
             } else if self.pe.pending.take().is_none() {
-                self.pe.tool = PointTool::Edit;
+                if self.pe.tool == PointTool::Add && self.pe.fresh.take().is_some() {
+                    // the next click in the add tool starts a new point
+                    self.pe.selected = None;
+                    self.set_status("Point finished. The next click starts a new point.", MUTED);
+                } else {
+                    self.pe.tool = PointTool::Edit;
+                }
             }
         }
     }
@@ -189,6 +198,7 @@ impl PanoApp {
                 self.pe.tool = PointTool::toggle(self.pe.tool, PointTool::PatchClick);
                 self.pe.pending = None;
             }
+            self.area_tool_button(ui);
             if ui.add_enabled(self.undo.can_undo(), egui::Button::new("↶ Undo")).on_hover_text(self.undo.undo_label().map(|w| format!("Undo {w} (Ctrl+Z)")).unwrap_or_default()).clicked() {
                 self.undo_last();
             }
@@ -277,6 +287,7 @@ impl PanoApp {
             }
             ui.separator();
             self.sky_ui(ui, false);
+            self.foliage_ui(ui);
         });
     }
 
@@ -291,13 +302,16 @@ impl PanoApp {
             match self.pe.pending {
                 Some((Pane::A, _)) => "Now click the same spot in the RIGHT photo – it snaps to the exact spot.",
                 Some((Pane::B, _)) => "Now click the same spot in the LEFT photo – it snaps to the exact spot.",
-                None => "Click a distinctive spot (a corner, a sharp detail) in either photo. Esc cancels.",
+                None if self.pe.fresh.is_some() && self.pe.fresh == self.pe.selected => "The new point is still selected: a click in either photo moves that side of it (Alt: no snapping). Esc or Ctrl+click starts the next point.",
+                None => "Click a distinctive spot (a corner, a sharp detail) in either photo. Esc cancels. Alt+click: no snapping.",
             }
         } else {
             "Scroll to zoom, drag the photo to move it, double-click to fit. Click a point to select it: red = match window, dashed white = search area. Drag it to move it (edges are shown, it snaps to the exact spot), Delete removes it."
         };
         if self.pe.tool == PointTool::PatchClick {
             self.click_panel(ui);
+        } else if self.pe.tool == PointTool::Area {
+            self.area_panel(ui);
         } else {
             ui.label(RichText::new(hint).small().color(if adding { ACCENT } else { MUTED }));
         }

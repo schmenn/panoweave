@@ -76,7 +76,7 @@ Matching points (control points) are spots that show the same thing in two photo
 - **Detail:** *Fast*, *Balanced* (default) or *Thorough (difficult scenes)*: how many features per photo are looked at. Thorough is slower and helps with little texture or very different photos.
 - **Ignore sky & clouds** (on by default): clouds move between shots, so points on them pull the photos apart. Turn it off only if the sky is the only overlap.
 - **Points per pair:** how many points are kept per pair (8 to 300). More points do not make the alignment much better once each pair has a few dozen good ones.
-- **🔍 Find points for these two photos** (or *Find more points…* when the pair has points already) searches only the pair on screen.
+- **🔍 Find points for these two photos** (or *Find more points…* when the pair has points already) searches only the pair on screen. It **adds** points and never replaces or moves one: every point the pair has stays (also the automatic ones you may have checked), and a found point that lies on an existing point (closer than about 6 px in either photo) is not added a second time. The message says "N new, M already there".
 
 **The two photos on screen** are chosen with the drop-downs above them (or by clicking a pair in the [connection graph](#connections)). **⇄ Swap sides** swaps them. How to edit points is described in [section 4](#4-the-point-editor-in-detail).
 
@@ -85,6 +85,7 @@ Matching points (control points) are spots that show the same thing in two photo
 - **Remove points worse than … px → Clean up** deletes points with a large alignment error (after aligning). Protected points stay.
 - **Delete all in this pair** deletes the points of the pair on screen (protected points stay).
 - **Find points on sky or cloud** finds points that still sit on sky (placed by hand, from the patch click, from old projects). The photos are checked once ("Check N photos"); the threshold sets how much sky around a point counts. **Remove N** removes them as one undo step. Points placed by hand are only removed with "include points placed by hand"; protected points never. When nothing can be removed, the button says why.
+- **Foliage** (shown while "Count points and patches on foliage less" is on): the same for points on foliage. The threshold is the foliage value (0 to 1) from which a point counts; restless errors after aligning decide, so align first. "Check N photos" looks at the photos once; **Remove N** removes the automatic points on foliage as one undo step (hand-placed only with "include points placed by hand", protected never). Nothing is removed unless you press the button: by default foliage is only counted less.
 
 ### Step 3: Align
 
@@ -110,8 +111,11 @@ Next to **📐 Align photos**: **🔬 Patch comparison** (the patches of the fin
 
 - **Refine control points**: moves automatic points to the exact spot. Points placed by hand stay where you put them; protected points are never moved, but if one is more than 3 px off (or cannot be found nearby) the status line says so.
 - **Add control areas in the overlaps**: adds measured patches along the seams. The rounds are judged on these areas; without them the fine alignment changes nothing (and says so).
+- **Control area placement - Where the photo has structure** (on by default): each area is put at the spot with structure in **two directions** (a corner, gravel, leaves, a texture) near its grid point, instead of on a bare grid, so areas no longer line up in rows on trees or sit on smooth asphalt. Plain cells (smooth road, wall, a single straight edge) get no area; the number is shown under the summary ("N grid cells without structure were left out") and in the log. Patches that are measured but rejected for the same reason say "too little texture" or "structure in one direction only" in the list of reasons and in the patch comparison. Off = the plain grid of earlier versions.
 - **Parallax mode** (off by default): a local correction near the seams for close objects. It is saved in the project.
 - **Record patches for this window**: keeps the measured patches for the **🔬 Patch comparison** window. Switching it off saves time and memory and does not change the result.
+
+- **Count points and patches on foliage less** (on by default, step 3, above the fine alignment switches): leaves move between the shots, so points and patches on trees and bushes pull the photos apart. They are recognised by colour (green to brown), very fine irregular structure and, above all, by restless remaining errors after aligning (the neighbours of a point disagree with each other); they get a smaller weight (down to a quarter) in the alignment instead of being removed. Colour and structure alone only lower the weight a little, so a green sign, a green wall or a lawn that holds still keep their influence. Control areas are put away from foliage where the photo allows it. Protected points and points placed by hand are never touched. Off = exactly as before.
 
 The many numbers under "Fine alignment" are for difficult cases; **Reset to defaults** brings them back.
 
@@ -160,7 +164,7 @@ The point editor (step 2) shows two photos side by side.
 
 **Select / edit** (the default tool) and its selection shapes:
 
-- **Click** a point to select it. The red square is the match window, the dashed white square the search area. **Drag** a point to move it; it snaps to the exact spot when you let go. **Delete** removes it.
+- **Click** a point to select it. The red square is the match window, the dashed white square the search area. **Drag** a point to move it; it snaps to the exact spot when you let go (hold **Alt** when you start the drag: no snapping, the point stays exactly where you drop it). **Delete** removes it.
 - **Shift+click** or **Ctrl+click** adds a point to the selection or takes it out.
 - **Rectangle**: drag on empty space to select the points inside. Shift adds, Ctrl takes out.
 - **Lasso**: the same lasso as in the mask editor. Drag around an area on empty space (the points inside are selected when you let go), or click corner by corner and close with a double click or Enter. Esc cancels, Ctrl+Z takes the last corner back. Shift adds, Ctrl takes out. Clicking or dragging a point itself still selects or moves it, unless a lasso is already being drawn.
@@ -168,11 +172,15 @@ The point editor (step 2) shows two photos side by side.
 - **Delete selected** removes all selected points as one undo step.
 - **🧲 Snap selected** lets all selected points snap to the exact spot in the background (only results with at least 80 % match are taken; protected points are left alone).
 
-**➕ Add point:** click a distinctive spot (a corner, a sharp detail) in one photo, then the same spot in the other; both clicks snap to the exact spot. With **then find more automatically** PanoWeave grows more points around it.
+**➕ Add point:** click a distinctive spot (a corner, a sharp detail) in either photo, then the same spot in the other; the other side looks for the matching spot, and both sides behave the same whether you start left or right. With **then find more automatically** PanoWeave grows more points around it. **If a side snapped wrongly,** the new point stays selected: click in that photo again and exactly that side moves to your click (the snap only corrects within a few pixels of it, and a weak match leaves it exactly where you clicked, so it cannot jump back). **Alt+click** never snaps. **Esc** (or **Ctrl+click**) finishes the point, and the next click starts a new one. Points you moved, dragged or snapped count as placed by hand.
 
 **🎯 Patch click:** click roughly the same spot in both photos. PanoWeave uses the rotation and zoom of nearby points (and of the alignment) to find the exact spot, even when the photos are turned or zoomed differently, and suggests more pairs around it. Check the suggestions and press **✔ Accept** or **✖ Discard**. Nothing is added without your click.
 
 ![Patch click with suggestions](guide/patchclick.png)
+
+**▭ Area:** for a surface with detail (a sign, a number plate, a facade, a wall with posters). Drag a rough rectangle round it in one photo, then round the same surface in the other photo (the order does not matter); the rectangle starts exactly where you press the mouse button. Each rectangle has four corner dots: pull them one by one onto the surface, so that a slanted surface (the number plate of a car seen from the side) is outlined as a slanted four-sided shape. You do not have to be exact: corners that are a bit off (up to about 15 % of the size of the area) are corrected automatically. Drag inside an area to move it, drag outside to draw it again, **Esc** clears both. A change that would make the sides cross is undone. The right mouse button still moves the photo and the wheel zooms. Then press **▶ Match the areas**: PanoWeave compares the two areas exactly (also when the photos are zoomed, turned or seen from a different angle) and proposes up to a dozen points, placed on corners with real structure (where edges in two directions meet), never on a plain surface or beside a corner. With **Show corrected area** the right area is drawn dashed green as the match corrected it. Every point shows its match score; weak ones (below 0.90) are marked yellow and not ticked. Check them and press **✔ Accept** (one undo step, the points count as hand-placed) or **✖ Discard** (nothing changes). If nothing matches, the message says why: a plain area, rectangles that do not show the same thing, or rectangles that are too far apart. Aligning again (step 3) uses the new points.
+
+![Area with suggestions](guide/area.png)
 
 **🔒 Protect** (key **L**): a protected point is never removed or moved by any automatic or bulk action (clean up, delete all in a pair, outlier removal, duplicate removal, a new search, the fine alignment). Single delete and drag are refused until you unprotect it.
 
@@ -184,7 +192,7 @@ The point editor (step 2) shows two photos side by side.
 
 ### All points (F3)
 
-A sortable list of all points with their pair, error, match and kind. Filters: one pair, error above a value, only protected, only duplicates, only on sky. Click a row to show the point in the editor; Ctrl+click toggles a row, Shift+click selects a range. **Delete selected**, **Delete all N listed** and **Remove outliers (mean + 2σ)** act on the list (protected points stay). **Duplicate points** (two points of a pair on the same spot) are marked orange and can be removed with one click (the worse one goes; hand-placed points stay).
+A sortable list of all points with their pair, error, match and kind. Filters: one pair, error above a value, only protected, only duplicates, only on sky. The lock at the end of a row protects or unlocks that point (all selected rows when it belongs to the selection); **Unlock selected**, **Unlock all listed** and **Protect selected** do it for several at once, as one undo step, so protected points can be deleted from the list afterwards. Click a row to show the point in the editor; Ctrl+click toggles a row, Shift+click selects a range. **Delete selected**, **Delete all N listed** and **Remove outliers (mean + 2σ)** act on the list (protected points stay). **Duplicate points** (two points of a pair on the same spot) are marked orange and can be removed with one click (the worse one goes; hand-placed points stay).
 
 ![List of all control points](guide/cplist.png)
 
@@ -230,7 +238,7 @@ The **Exposure blend** mode (top of the window) merges photos of the same view t
 Some photos have no points to the others. Common reasons: too little overlap, very different zoom, a featureless overlap (sky, water, a white wall). Open the **Connections** window, use **Join photos …** or the patch click mode to place a few points between the groups by hand, then align again. A photo that does not belong to the panorama can be unticked ("use").
 
 **Points on clouds, water or moving people**
-They pull the photos apart, because those things moved between shots. Keep "Ignore sky & clouds" on, use **Find points on sky or cloud** to remove old ones, and delete points on people or waves by hand (select them with the lasso or brush and press Delete).
+They pull the photos apart, because those things moved between shots. Keep "Ignore sky & clouds" on, use **Find points on sky or cloud** to remove old ones, and delete points on people or waves by hand (select them with the lasso or brush and press Delete). Trees and bushes move too: they get a smaller weight automatically ("Count points and patches on foliage less"), and **Foliage → Remove** in the point editor deletes their points if you want them gone.
 
 **Seams or double edges on close objects (parallax)**
 The photos were not taken around the lens. Try the **Parallax mode** in the fine alignment, **Smart seams** and masks in the export, and avoid points on close objects (they cannot fit both the near and the far parts).
@@ -274,6 +282,7 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 | The last round was undone because it made the result worse. | Fine alignment kept the better earlier state. |
 | N protected point(s) are off by more than 3 px … | The fine alignment found a protected point elsewhere; the point was left alone. |
 | N protected point(s) could not be confirmed (3 repeating pattern, 1 too close to the photo edge, …) | The patches around the point do not look alike at the point's own spot. The reason is given per count: repeating pattern, too close to the photo edge, too little texture, too little similarity. Not a sign that the point is wrong; it was left alone. |
+| N grid cells without structure were left out | Smooth surfaces (asphalt, a wall) and single straight edges cannot tell a shift along them, so no control area is tried there. Normal on streets; turn off "Where the photo has structure" to get the plain grid back. |
 | fine alignment changed nothing: no control areas … | "Add control areas" is off, so there was nothing to judge the rounds with. |
 | Project opened with N of M photos – missing: … | Some photo files were not found; the others were opened with their points. |
 | … failed with an internal error … | A program error in a background job; nothing was changed. |
@@ -311,7 +320,8 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Brush: click or paint | Select the points under the brush; Ctrl takes out |
 | Delete or Backspace | Delete the selected point(s); protected points stay and are named |
 | L | Protect / unprotect the selected point (the one clicked last, not a multiple selection) |
-| Esc | **Add point**: cancel a half-placed point (the first click); pressed again, or in any other tool, back to **Select / edit** |
+| Esc | **Add point**: cancel a half-placed point (the first click), or finish the point just placed so the next click starts a new one; pressed again, or in any other tool, back to **Select / edit**. **Area**: cancel the drag, then clear the rectangles, then back to **Select / edit** |
+| Area: drag | Draw a rectangle (outside one), pull a corner dot, or move the area (inside it); right mouse button moves the photo |
 
 **All points list (F3)**
 
