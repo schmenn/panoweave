@@ -1,5 +1,33 @@
 use super::*;
 
+/// "Find more points for these two images": a found point closer than this (normalised
+/// coordinates, long image side = 1, so 0.004 is about 6 px of a 1600 px photo) to a point the pair
+/// already has, in either photo, is not added a second time.
+pub(super) const NEW_POINT_MIN_DIST: f64 = 0.004;
+
+/// Splits a search result for the pair (`a`, `b`) into the points to add and counts the ones
+/// that lie on an existing point of the pair (or on an earlier new one). The existing points are
+/// never touched.
+pub(super) fn new_pair_points(existing: &[ControlPoint], found: Vec<ControlPoint>, a: usize, b: usize, min_dist: f64) -> (Vec<ControlPoint>, usize) {
+    // existing points as (position in photo a, position in photo b)
+    let mut taken: Vec<([f64; 2], [f64; 2])> = existing
+        .iter()
+        .filter_map(|c| if c.a == a && c.b == b { Some((c.pa, c.pb)) } else if c.a == b && c.b == a { Some((c.pb, c.pa)) } else { None })
+        .collect();
+    let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < min_dist;
+    let mut add = Vec::new();
+    let mut there = 0;
+    for c in found {
+        if taken.iter().any(|t| near(t.0, c.pa) || near(t.1, c.pb)) {
+            there += 1;
+        } else {
+            taken.push((c.pa, c.pb));
+            add.push(c);
+        }
+    }
+    (add, there)
+}
+
 impl PanoApp {
     pub(super) fn run_match(&mut self, chain: bool) {
         if self.busy() || self.photos.len() < 2 {
@@ -159,16 +187,23 @@ impl PanoApp {
             );
             return;
         }
-        let sel = self.pe.selected.and_then(|k| self.cps.get(k).copied());
+        // adds to the points of the pair, never replaces or moves one (also not the automatic
+        // ones: the person may have checked them); spots that are taken already are skipped
+        let (fresh, there) = new_pair_points(&self.cps, cps, a, b, NEW_POINT_MIN_DIST);
+        let n = fresh.len();
+        if n == 0 {
+            self.set_status(
+                format!("Photos {} and {}: 0 new points, {there} already there (found {mode} in {}). Nothing changed.", a + 1, b + 1, fmt_ms(ms)),
+                WARN,
+            );
+            return;
+        }
         self.push_undo(&format!("finding points for photos {}/{}", a + 1, b + 1));
-        self.cps.retain(|c| c.manual || c.locked || !((c.a == a && c.b == b) || (c.a == b && c.b == a)));
-        let n = cps.len();
-        self.cps.extend(cps);
+        self.cps.extend(fresh);
         self.matched = true;
         self.needs_align = true;
-        self.pe.selected = sel.and_then(|s| self.cps.iter().position(|c| c.a == s.a && c.b == s.b && c.pa == s.pa && c.pb == s.pb));
         self.set_status(
-            format!("Found {n} points {mode} between photo {} and {} in {}. Align again (step 3) to use them.", a + 1, b + 1, fmt_ms(ms)),
+            format!("Photos {} and {}: {n} new, {there} already there (found {mode} in {}). Your points stay. Align again (step 3) to use them.", a + 1, b + 1, fmt_ms(ms)),
             GOOD,
         );
     }
@@ -196,5 +231,54 @@ impl PanoApp {
                 let _ = tx.send((i, name, color_image(&img)));
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cp(a: usize, b: usize, pa: [f64; 2], pb: [f64; 2], manual: bool) -> ControlPoint {
+        ControlPoint::new(a, b, pa, pb, manual)
+    }
+
+    #[test]
+    fn find_more_adds_to_the_pair_and_skips_spots_that_are_taken() {
+        let mut hand = cp(0, 1, [0.10, 0.10], [0.20, 0.20], true);
+        hand.locked = true;
+        // an automatic point stored in the other order (photo 1 first) must count as well
+        let auto_swapped = cp(1, 0, [0.50, 0.50], [0.40, 0.40], false);
+        let other_pair = cp(1, 2, [0.30, 0.30], [0.31, 0.31], false);
+        let existing = vec![hand, auto_swapped, other_pair];
+        let found = vec![
+            cp(0, 1, [0.1001, 0.1002], [0.2001, 0.2002], false), // on the hand point
+            cp(0, 1, [0.40, 0.4001], [0.50, 0.5001], false),     // on the swapped automatic point
+            cp(0, 1, [0.30, 0.30], [0.31, 0.31], false),         // new (only the other pair has this spot)
+            cp(0, 1, [0.3001, 0.3001], [0.3101, 0.3101], false), // twice in the result: second one is skipped
+            cp(0, 1, [0.70, 0.70], [0.71, 0.71], false),         // new
+        ];
+        let (add, there) = new_pair_points(&existing, found, 0, 1, NEW_POINT_MIN_DIST);
+        assert_eq!((add.len(), there), (2, 3));
+        assert_eq!(add[0].pa, [0.30, 0.30]);
+    }
+
+    #[test]
+    fn on_pair_points_keeps_every_existing_point_and_reports_new_and_present() {
+        let mut app = super::super::masks_tests::app_with_photos(2);
+        app.cps = vec![cp(0, 1, [0.1, 0.1], [0.2, 0.2], true), cp(0, 1, [0.3, 0.3], [0.4, 0.4], false)];
+        let before = app.cps.clone();
+        let found: Vec<ControlPoint> = vec![
+            cp(0, 1, [0.1, 0.1], [0.2, 0.2], false),
+            cp(0, 1, [0.5, 0.1], [0.6, 0.2], false),
+            cp(0, 1, [0.5, 0.3], [0.6, 0.4], false),
+            cp(0, 1, [0.5, 0.5], [0.6, 0.6], false),
+            cp(0, 1, [0.5, 0.7], [0.6, 0.8], false),
+        ];
+        app.on_pair_points(0, 1, found, 5, "from your points");
+        assert_eq!(app.cps.len(), 6);
+        assert!(app.cps.iter().zip(&before).all(|(x, y)| x.pa == y.pa && x.pb == y.pb && x.manual == y.manual), "existing points are untouched");
+        assert!(app.status.contains("4 new, 1 already there"), "{}", app.status);
+        app.undo_last();
+        assert_eq!(app.cps.len(), 2);
     }
 }

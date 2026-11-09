@@ -243,6 +243,11 @@ pub(super) struct PointEditor {
     /// What a click into a photo does (radio-button style, see `PointTool::toggle`).
     pub(super) tool: PointTool,
     pub(super) pending: Option<(Pane, [f64; 2])>,
+    /// the point the add tool just placed (while it is still the selected one, a further click
+    /// moves its clicked half instead of starting a second point)
+    pub(super) fresh: Option<usize>,
+    /// Alt was held when the current drag started: no snapping at its end
+    pub(super) drag_no_snap: bool,
     pub(super) dragging: Option<(usize, Pane)>,
     pub(super) panning: Option<Pane>,
     pub(super) views: [PaneView; 2],
