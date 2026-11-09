@@ -347,6 +347,15 @@ impl RenderPhoto {
         self.lens.f * self.full_long
     }
 
+    /// Like `lookup`, but `None` where the person painted "do not use this photo here": such a pixel
+    /// does not exist for this photo, so nothing of it reaches the picture – not even blurred through
+    /// the blending. Where every photo is masked the panorama has a hole (see `mask_holes`).
+    #[inline]
+    pub fn lookup_used(&self, wdir: V3) -> Option<(f32, f32, f32)> {
+        let (x, y, wt) = self.lookup(wdir)?;
+        if self.mask_at(x, y) == crate::masks::NEGATIVE { None } else { Some((x, y, wt)) }
+    }
+
     /// world direction -> pixel position in `img`, plus centre weight.
     #[inline]
     pub fn lookup(&self, wdir: V3) -> Option<(f32, f32, f32)> {
@@ -507,7 +516,7 @@ pub fn render_preview(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usiz
             let mut acc = [0.0f32; 3];
             let mut ws = 0.0f32;
             for (pi, p) in photos.iter().enumerate() {
-                if let Some((x, y, wt)) = p.lookup(d) {
+                if let Some((x, y, wt)) = p.lookup_used(d) {
                     let c = sample_rgb_linear(&p.img, x, y);
                     let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[pi];
                     let c = p.shade(c, x, y);
@@ -537,7 +546,9 @@ pub fn render_preview(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usiz
     out
 }
 
-/// Low-resolution coverage mask (1 = some photo covers the pixel).
+/// Low-resolution coverage mask (1 = some photo covers the pixel). Masks do not count here: a hole
+/// that masks leave in the middle would make "Auto crop" cut the panorama down around it; it is
+/// shown in the preview and reported (`mask_holes`) instead.
 pub fn coverage(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usize) -> Vec<bool> {
     let m = Mapper::new(view, view.bounds, w, h);
     (0..w * h)
@@ -547,6 +558,65 @@ pub fn coverage(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usize) -> 
             photos.iter().any(|p| p.lookup(d).is_some())
         })
         .collect()
+}
+
+/// Experiments (`PW_MASK_MAP=<file.png>` on export): the preview with the masks drawn in – orange where
+/// some covering photo is masked "do not use", magenta where all are (a hole), green where one is
+/// masked "use". Shows where masks land in the panorama (a moving boat is elsewhere in every photo).
+pub fn mask_map(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usize) -> Vec<u8> {
+    let mut px = render_preview(photos, view, w, h, false, false);
+    let m = Mapper::new(view, view.bounds, w, h);
+    px.par_chunks_mut(w * 4).enumerate().for_each(|(py, row)| {
+        for x in 0..w {
+            let Some(d) = m.dir(x, py) else { continue };
+            let (mut neg, mut pos, mut any, mut used) = (false, false, false, false);
+            for p in photos {
+                if let Some((u, v, _)) = p.lookup(d) {
+                    any = true;
+                    match p.mask_at(u, v) {
+                        crate::masks::NEGATIVE => neg = true,
+                        crate::masks::POSITIVE => pos = true,
+                        _ => {}
+                    }
+                    used |= p.mask_at(u, v) != crate::masks::NEGATIVE;
+                }
+            }
+            // magenta: masked in every covering photo (a hole), orange: masked in some of them only
+            // (the others still show what is there), green: a photo is masked "use" here
+            let tint = if any && !used { Some([255u8, 0, 255]) } else if neg { Some([255, 150, 0]) } else if pos { Some([40, 255, 80]) } else { None };
+            if let Some(t) = tint {
+                let o = x * 4;
+                for k in 0..3 {
+                    row[o + k] = ((row[o + k] as u16 + t[k] as u16) / 2) as u8;
+                }
+                row[o + 3] = 255;
+            }
+        }
+    });
+    px
+}
+
+/// Share of the panorama (within the crop) that a photo covers but that every covering photo has
+/// masked "do not use": a hole the masks make. Checked on a small grid of `w` × `h` points.
+pub fn mask_holes(photos: &[RenderPhoto], view: &PanoView, w: usize, h: usize) -> f32 {
+    let m = Mapper::new(view, view.bounds, w, h);
+    let cb = view.crop;
+    let (holes, inside) = (0..w * h)
+        .into_par_iter()
+        .filter(|&i| {
+            let fx = ((i % w) as f64 + 0.5) / w as f64;
+            let fy = ((i / w) as f64 + 0.5) / h as f64;
+            fx >= cb[0] && fx <= cb[1] && fy >= cb[2] && fy <= cb[3]
+        })
+        .map(|i| {
+            let Some(d) = m.dir(i % w, i / w) else { return (0usize, 0usize) };
+            if !photos.iter().any(|p| p.lookup(d).is_some()) {
+                return (0, 0);
+            }
+            (usize::from(!photos.iter().any(|p| p.lookup_used(d).is_some())), 1)
+        })
+        .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+    if inside == 0 { 0.0 } else { holes as f32 / inside as f32 }
 }
 
 /// Largest axis-aligned rectangle fully covered (fractions [l, r, t, b]).
@@ -627,7 +697,7 @@ pub fn compute_gains(photos: &[RenderPhoto], view: &PanoView) -> Vec<[f32; 3]> {
             let Some(d) = m.dir(i % w, i / w) else { return vec![] };
             let mut v = Vec::new();
             for (k, p) in photos.iter().enumerate() {
-                if let Some((x, y, wt)) = p.lookup(d)
+                if let Some((x, y, wt)) = p.lookup_used(d)
                     && wt > 0.05 {
                         v.push((k, p.photometry_at(sample_rgb_linear(&p.img, x, y), x, y)));
                     }
@@ -815,7 +885,7 @@ pub fn render_final(
                     }
                     for px in 0..w {
                         let Some(d) = m.dir(px, py) else { continue };
-                        if let Some((x, y, wt)) = p.lookup(d) {
+                        if let Some((x, y, wt)) = p.lookup_used(d) {
                             let c = sample(&p.img, x, y);
                             let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[i];
                             let c = p.shade(c, x, y);
@@ -861,7 +931,7 @@ pub fn render_final(
                     let prow = pref.as_ref().map(|v| &v[py * w..(py + 1) * w]);
                     for px in 0..w {
                         let Some(d) = m.dir(px, py) else { continue };
-                        if let Some((x, y, wt)) = p.lookup(d) {
+                        if let Some((x, y, wt)) = p.lookup_used(d) {
                             // the photo with the most detail wins (see `seam_score`)
                             let sc = if prefer { seam_score(qual[i], wt) } else { wt };
                             let wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
@@ -908,7 +978,7 @@ pub fn render_final(
                         }
                         for px in 0..w {
                             let Some(d) = m.dir(px, py) else { continue };
-                            if let Some((x, y, _)) = p.lookup(d) {
+                            if let Some((x, y, _)) = p.lookup_used(d) {
                                 let c = sample(&p.img, x, y);
                                 ir[px] = p.shade(c, x, y);
                                 vr_[px] = 1.0;
@@ -1221,7 +1291,7 @@ fn feather_window(
             let py = ya + ry;
             for px in 0..w {
                 let Some(d) = m.dir(px, py) else { continue };
-                if let Some((x, y, wt)) = p.lookup(d) {
+                if let Some((x, y, wt)) = p.lookup_used(d) {
                     let c = sample(&p.img, x, y);
                     let wt = if p.clipped_at(x, y) { wt * wt * CLIP_WEIGHT } else { wt * wt } * qual[i];
                     let c = p.shade(c, x, y);
@@ -1285,7 +1355,7 @@ fn smooth_window(
             let prow = pref.as_ref().map(|v| &v[ry * w..(ry + 1) * w]);
             for px in 0..w {
                 let Some(d) = m.dir(px, py) else { continue };
-                if let Some((x, y, wt)) = p.lookup(d) {
+                if let Some((x, y, wt)) = p.lookup_used(d) {
                     let sc = if prefer { seam_score(qual[i], wt) } else { wt };
                     let wt = if p.clipped_at(x, y) { sc * CLIP_WEIGHT } else { sc };
                     let wt = adjust_score(&p, x, y, wt, prow.is_some_and(|r| r[px] == i as u16));
@@ -1329,7 +1399,7 @@ fn smooth_window(
             let py = ya + wy;
             for px in 0..w {
                 let Some(d) = m.dir(px, py) else { continue };
-                if let Some((x, y, _)) = p.lookup(d) {
+                if let Some((x, y, _)) = p.lookup_used(d) {
                     let c = sample(&p.img, x, y);
                     ir[px] = p.shade(c, x, y);
                     vr_[px] = 1.0;
@@ -1941,6 +2011,35 @@ mod strip_tests {
         }
     }
 
+    /// Red masks make holes and leave pixels out of the blending; the strip height must still change nothing.
+    #[test]
+    fn with_red_masks_the_strip_height_still_changes_nothing() {
+        let mut photos = scene(3, false);
+        // the middle photo masked red in its centre, the last one on its right half
+        let mut a = vec![crate::masks::NEUTRAL; 64];
+        for y in 2..6 {
+            for x in 2..6 {
+                a[y * 8 + x] = crate::masks::NEGATIVE;
+            }
+        }
+        let b: Vec<u8> = (0..64).map(|i| if i % 8 >= 4 { crate::masks::NEGATIVE } else { crate::masks::NEUTRAL }).collect();
+        photos[1].mask = Some(Arc::new(crate::masks::MaskBuf { w: 8, h: 8, data: a }));
+        photos[2].mask = Some(Arc::new(crate::masks::MaskBuf { w: 8, h: 8, data: b }));
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        assert!(mask_holes(&photos, &view, 200, 60) > 0.0, "the right half of the last photo is a hole");
+        for blend in [Blend::Smooth, Blend::Feather] {
+            let ro = RenderOptions { levels: 5, ..Default::default() };
+            let one = StripConfig { max_rows: 1 << 20, ..Default::default() };
+            let (whole, _, _, _) = strips_of(&photos, &view, 1500, blend, &ro, &one);
+            let cfg = StripConfig { max_rows: 64, min_rows: 16, ..Default::default() };
+            let (strips, n, _, _) = strips_of(&photos, &view, 1500, blend, &ro, &cfg);
+            assert!(n >= 3);
+            let d = compare(&whole, &strips);
+            assert!(d.max <= 1, "{blend:?}: strips differ from one window: max {} in {}/{} px", d.max, d.differing, d.total);
+        }
+    }
+
     #[test]
     fn feather_strips_are_exactly_the_whole_image_render() {
         let photos = scene(3, true);
@@ -2084,6 +2183,64 @@ mod strip_tests {
                 assert!(checked > 500, "the photos should overlap well: {checked} pixels checked");
                 assert!(wrong * 50 < checked, "seams {seams_on}, mask {mask_kind}: {wrong} of {checked} overlap pixels show the wrong photo");
             }
+        }
+    }
+
+    /// A photo masked red everywhere gives nothing to the picture: no colour of it is blended into the
+    /// overlap (before, its low frequencies were, which made masked things look blurred), and where
+    /// only that photo covers the panorama there is a hole, which `mask_holes` reports.
+    #[test]
+    fn a_red_mask_leaves_nothing_of_the_photo_and_a_hole_where_no_other_covers() {
+        let mut photos: Vec<RenderPhoto> = [[200u8, 30, 30], [30, 30, 200]]
+            .iter()
+            .enumerate()
+            .map(|(i, c)| RenderPhoto {
+                w: 300.0,
+                h: 200.0,
+                rot: camera_from_ypr((i as f64 * 22.0 - 11.0).to_radians(), 0.0, 0.0),
+                lens: Lens::from_hfov_deg(50.0),
+                field: None,
+                gain: [1.0; 3],
+                gain_map: None,
+                photometry: None,
+                full_long: 300.0,
+                trusted: true,
+                mask: None,
+                img: Arc::new(crate::testutil::solid(300, 200, *c)),
+            })
+            .collect();
+        let mut view = PanoView::default();
+        fit_bounds(&mut view, &photos);
+        assert_eq!(mask_holes(&photos, &view, 120, 40), 0.0, "no masks, no holes");
+        photos[1].mask = Some(Arc::new(crate::masks::MaskBuf { w: 4, h: 4, data: vec![crate::masks::NEGATIVE; 16] }));
+        let holes = mask_holes(&photos, &view, 120, 40);
+        assert!(holes > 0.1 && holes < 0.9, "the part only the blue photo covers is a hole: {holes}");
+        let cb = view.crop_bounds();
+        let (w, h) = (700usize, ((700.0 / ((cb[1] - cb[0]) / (cb[3] - cb[2]))).round() as usize).max(16));
+        let m = Mapper::new(&view, cb, w, h);
+        let cancel = AtomicBool::new(false);
+        let prog = Progress { report: &|_, _| {}, cancel: &cancel };
+        let load = |i: usize, _px: bool| Ok(photos[i].clone());
+        for blend in [Blend::Smooth, Blend::Feather] {
+            let ro = RenderOptions { levels: 4, ..Default::default() };
+            let (col, cov, _, _) = render_final(2, &load, &view, w, blend, &ro, &prog).unwrap();
+            let (mut red, mut hole) = (0, 0);
+            for py in 0..h {
+                for px in 0..w {
+                    let Some(d) = m.dir(px, py) else { continue };
+                    let (a, b) = (photos[0].lookup(d), photos[1].lookup(d));
+                    let c = col[py * w + px];
+                    if a.is_some() && cov[py * w + px] > 0.0 {
+                        // inside the red photo, also right next to the blue one: no blue at all
+                        assert!(c[2] < c[0] * 0.25, "{blend:?}: blue blended in at ({px}, {py}): {c:?}");
+                        red += 1;
+                    } else if a.is_none() && b.is_some() {
+                        assert_eq!(cov[py * w + px], 0.0, "{blend:?}: only the masked photo covers ({px}, {py}) – a hole");
+                        hole += 1;
+                    }
+                }
+            }
+            assert!(red > 1000 && hole > 1000, "{blend:?}: {red} red, {hole} hole pixels");
         }
     }
 

@@ -223,6 +223,18 @@ impl PanoApp {
                 );
                 return;
             }
+        if let Ok(f) = std::env::var("PW_MASK_MAP") {
+            // experiments: where the masks land in the panorama
+            // framed like the export (the crop), so it can be laid over the exported picture
+            let mut v = self.view.clone();
+            v.bounds = v.crop_bounds();
+            v.crop = [0.0, 1.0, 0.0, 1.0];
+            let (w, h) = (2400usize, ((2400.0 * eh as f64 / ew.max(1) as f64) as usize).max(8));
+            let px = stitch::mask_map(&self.render_photos(true), &v, w, h);
+            if let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, px) {
+                let _ = img.save(&f);
+            }
+        }
         let sources = self.export_sources();
         let view = self.view.clone();
         let out_w = ew;
@@ -486,6 +498,9 @@ impl PanoApp {
                     ui.add_enabled(self.blend == Blend::Smooth, egui::Checkbox::new(&mut self.export_opts.smart_seams, "Smart seams – steer the seams around poles, lamps and people (slower, recommended)"))
                         .on_hover_text("Off (default): the photo with the most detail wins where photos overlap. On: the seams are searched so that they run where the photos agree, so a close object that two photos see from different sides is not cut in two. The export takes some seconds longer. Only for Smooth seams.");
                     self.mask_button(ui);
+                    if let Some(n) = self.mask_hole_note() {
+                        ui.label(RichText::new(format!("⚠ {n}")).color(WARN));
+                    }
                 });
                 ui.add_space(10.0);
                 let r = primary_button(ui, "Export panorama", !self.busy() && !self.gains_pending());

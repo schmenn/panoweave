@@ -86,6 +86,9 @@ impl PanoApp {
             }
             ui.checkbox(&mut self.show_outlines, "Show photo borders");
         });
+        if let Some(n) = self.mask_hole_note() {
+            ui.label(RichText::new(format!("⚠ {n}")).color(WARN));
+        }
         let (hf, vf) = self.view.fov_deg();
         let nw = self.natural_width();
         let cb = self.view.crop_bounds();

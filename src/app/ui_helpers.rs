@@ -48,6 +48,17 @@ pub(super) fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> eg
     )
 }
 
+impl PanoApp {
+    /// Warning when red masks leave part of the panorama without any photo, or `None`.
+    pub(super) fn mask_hole_note(&self) -> Option<String> {
+        (self.mask_hole_share > 0.0).then(|| {
+            let pct = self.mask_hole_share * 100.0;
+            let size = if pct < 0.1 { "less than 0.1 %".to_string() } else { format!("about {pct:.1} %") };
+            format!("Masks leave a hole ({size} of the picture): there every photo is masked red, so it stays empty – transparent in PNG and TIFF, black in JPEG. Remove a red mask there or keep a photo that covers it.")
+        })
+    }
+}
+
 /// How many tiles of width `tile` fit next to each other into `avail` with `gap` between them (at least one).
 pub(super) fn tiles_per_row(avail: f32, tile: f32, gap: f32) -> usize {
     (((avail + gap) / (tile + gap)).floor() as usize).max(1)

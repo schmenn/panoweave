@@ -113,6 +113,9 @@ pub(crate) fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
+/// Width of the coarse grid on which the preview checks for holes that masks leave.
+pub(super) const MASK_HOLE_GRID: usize = 240;
+
 /// Steps kept for undo (and again for redo). Every step holds a copy of all control points
 /// (~100 bytes each, up to ~12 000 points), so 20 steps stay below ~25 MB per stack.
 pub(super) const UNDO_DEPTH: usize = 20;

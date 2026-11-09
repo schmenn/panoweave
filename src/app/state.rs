@@ -41,6 +41,8 @@ impl PanoApp {
             preview_gen: 0,
             preview_shown_gen: 0,
             preview_rx: None,
+            mask_hole_share: 0.0,
+            mask_sig: 0,
             gains_rx: None,
             gains_gen: 0,
             preview_view: None,

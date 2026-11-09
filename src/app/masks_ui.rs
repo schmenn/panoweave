@@ -57,16 +57,17 @@ impl PanoApp {
         self.photos.iter().filter(|p| p.mask.any()).count()
     }
 
-    /// The "Edit masks..." button of the Blending card (only for Smooth seams).
+    /// The "Edit masks..." button of the Blending card. Red masks work with both blendings (the masked
+    /// spots are left out); green ones only steer the seams of Smooth seams.
     pub(super) fn mask_button(&mut self, ui: &mut egui::Ui) {
         let smooth = self.blend == Blend::Smooth;
         ui.horizontal_wrapped(|ui| {
-            let b = ui.add_enabled(smooth, egui::Button::new("🖌  Edit masks…")).on_hover_text("Paint where a photo must or must not be used, for example to keep a pole or a person whole.");
-            if !smooth {
-                b.on_disabled_hover_text("Masks only steer Smooth seams.");
-                ui.label(RichText::new("Masks only steer Smooth seams.").small().color(MUTED));
-            } else if b.clicked() {
+            let b = ui.button("🖌  Edit masks…").on_hover_text("Paint where a photo must (green) or must not (red) be used, for example to keep a pole or a person whole or to take a passing boat out.");
+            if b.clicked() {
                 self.mk.open = true;
+            }
+            if !smooth {
+                ui.label(RichText::new("With Soft fade only red masks work (green ones steer the seams of Smooth seams).").small().color(MUTED));
             }
             let n = self.masked_photos();
             if n > 0 {
@@ -98,7 +99,7 @@ impl PanoApp {
         }
         let ctx = ui.ctx().clone();
         self.ensure_tex(&ctx, self.mk.sel);
-        ui.label(RichText::new("Paint green where this photo must be used, red where it must not be used. Used by Smooth seams.").color(MUTED));
+        ui.label(RichText::new("Paint green where this photo must be used, red where it must not be used: a red spot is left out of the panorama; where every photo is red the panorama has a hole.").color(MUTED));
         if self.mk.show_seams {
             self.update_seam_preview();
         }
@@ -109,17 +110,16 @@ impl PanoApp {
             });
             ui.vertical(|ui| {
                 self.mask_toolbar(ui);
-                ui.horizontal_top(|ui| {
-                    let seam_w = if self.mk.show_seams { 300.0 } else { 0.0 };
-                    let canvas = Vec2::new((ui.available_width() - seam_w - 12.0).max(260.0), (ui.available_height() - 4.0).max(300.0));
-                    self.mask_canvas(ui, canvas);
-                    if self.mk.show_seams {
-                        ui.vertical(|ui| {
-                            ui.set_width(seam_w);
-                            self.seam_panel(ui);
-                        });
-                    }
-                });
+                // the seam map is as wide as the panorama allows: under the photo, over the full width
+                // (in a side column a wide panorama was only a thin strip)
+                let full = ui.available_width();
+                let seam_h = if self.mk.show_seams { self.seam_panel_height(full, ui.available_height()) } else { 0.0 };
+                let canvas = Vec2::new(full.max(260.0), (ui.available_height() - seam_h - 8.0).max(260.0));
+                self.mask_canvas(ui, canvas);
+                if self.mk.show_seams {
+                    ui.add_space(4.0);
+                    self.seam_panel(ui);
+                }
             });
         });
     }
@@ -162,8 +162,14 @@ impl PanoApp {
     fn mask_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             for t in Tool::ALL {
-                let txt = RichText::new(t.label()).color(tool_color(t));
-                if ui.selectable_label(self.mk.tool.tool == t, txt).clicked() && self.mk.tool.tool != t {
+                // the active tool is filled with its own colour, so green and red cannot be mixed up
+                let active = self.mk.tool.tool == t;
+                let b = if active {
+                    egui::Button::new(RichText::new(format!("● {}", t.label())).strong().color(Color32::WHITE)).fill(tool_color(t).gamma_multiply(0.55))
+                } else {
+                    egui::Button::new(RichText::new(t.label()).color(tool_color(t))).frame(false)
+                };
+                if ui.add(b).clicked() && self.mk.tool.tool != t {
                     self.mk.tool.cancel();
                     self.mk.tool.tool = t;
                 }

@@ -43,7 +43,10 @@ impl PanoApp {
                     JobMsg::Aligned(a) => self.on_aligned(a),
                     JobMsg::Rendered(r) => match r {
                         Ok((p, ms, w, h)) => {
-                            self.set_status(format!("Panorama exported ({w} × {h} px) in {}: {}", fmt_ms(ms), p.display()), GOOD);
+                            match self.mask_hole_note() {
+                                Some(n) => self.set_status(format!("Panorama exported ({w} × {h} px) in {}: {}. {n}", fmt_ms(ms), p.display()), WARN),
+                                None => self.set_status(format!("Panorama exported ({w} × {h} px) in {}: {}", fmt_ms(ms), p.display()), GOOD),
+                            }
                             self.last_output = Some(p);
                             // the patch comparison data are released after the export
                             crate::patch_store::STORE.free_after_export();
@@ -100,8 +103,9 @@ impl PanoApp {
                 self.preview_rx = None;
                 self.set_status("The preview could not be made (internal error) – change the view to try again.", BAD);
             }
-            Some(Ready::Value((generation, img, view))) => {
+            Some(Ready::Value((generation, img, view, holes))) => {
                 self.preview_rx = None;
+                self.mask_hole_share = holes;
                 self.preview_size = img.size;
                 match &mut self.preview_tex {
                     Some(t) => t.set(img, egui::TextureOptions::LINEAR),
@@ -162,7 +166,9 @@ impl PanoApp {
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let px = stitch::render_preview(&rp, &view, w, h, true, prefer_detail);
-            let _ = tx.send((generation, egui::ColorImage::from_rgba_unmultiplied([w, h], &px), view));
+            // holes the masks make (checked on a coarse grid; only when a photo has a mask)
+            let holes = if rp.iter().any(|p| p.mask.is_some()) { stitch::mask_holes(&rp, &view, MASK_HOLE_GRID, ((MASK_HOLE_GRID as f64 / aspect) as usize).max(8)) } else { 0.0 };
+            let _ = tx.send((generation, egui::ColorImage::from_rgba_unmultiplied([w, h], &px), view, holes));
         });
         self.preview_rx = Some(rx);
         self.preview_dirty = false;
