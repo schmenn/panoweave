@@ -40,6 +40,7 @@ impl PanoApp {
         self.pe.selected = None;
         self.pe.sel.clear();
         self.pe.pending = None;
+        self.pe.fresh = None;
         self.pe.dragging = None;
         self.pe.drag_before = None;
         // the lists in the point window are cached by a fingerprint: build them again
@@ -135,15 +136,112 @@ impl PanoApp {
         kept
     }
 
+    /// Locks or unlocks the points at `idx` as one undo step; points that already are in that
+    /// state are left out. Returns how many were changed. Used by the editor key, the lock
+    /// buttons and the list of all points.
+    pub(super) fn lock_points(&mut self, mut idx: Vec<usize>, lock: bool) -> usize {
+        idx.sort_unstable();
+        idx.dedup();
+        idx.retain(|&k| self.cps.get(k).is_some_and(|c| c.locked != lock));
+        let n = idx.len();
+        if n == 0 {
+            return 0;
+        }
+        let what = match (n, lock) {
+            (1, true) => "protecting a point".to_string(),
+            (1, false) => "unlocking a point".to_string(),
+            (_, true) => format!("protecting {n} points"),
+            (_, false) => format!("unlocking {n} points"),
+        };
+        self.edit_cps(&what, |s| {
+            for k in idx {
+                s.cps[k].locked = lock;
+            }
+        });
+        n
+    }
+
+    /// Status text after `lock_points` (`n` = points changed).
+    pub(super) fn lock_status(&mut self, n: usize, lock: bool) {
+        let msg = match (n, lock) {
+            (0, true) => "Nothing to protect: the points are protected already.".to_string(),
+            (0, false) => "Nothing to unlock: none of the points is protected.".to_string(),
+            (1, true) => "Point protected: no bulk action touches it, and it can't be deleted or moved until unlocked.".to_string(),
+            (1, false) => "Point unlocked.".to_string(),
+            (n, true) => format!("{n} points protected. Ctrl+Z undoes it."),
+            (n, false) => format!("{n} points unlocked, they can be deleted or moved now. Ctrl+Z undoes it."),
+        };
+        self.set_status(msg, MUTED);
+    }
+
     /// Locks or unlocks the selected point (one undo step).
     pub(super) fn toggle_lock_selected(&mut self) {
         let Some(k) = self.pe.selected.filter(|&k| k < self.cps.len()) else { return };
         let lock = !self.cps[k].locked;
-        self.edit_cps(if lock { "protecting a point" } else { "unlocking a point" }, |s| s.cps[k].locked = lock);
-        self.set_status(if lock { "Point protected: no bulk action touches it, and it can't be deleted or moved until unlocked." } else { "Point unlocked." }, MUTED);
+        let n = self.lock_points(vec![k], lock);
+        self.lock_status(n, lock);
     }
 
-    pub(super) fn add_point_click(&mut self, pane: Pane, p: P2) {
+    /// A click in the add tool while the point that was just placed is still selected: moves
+    /// exactly the clicked half of that point instead of starting a second point. The match
+    /// search only corrects within a small radius around the click (`local_radius`) and keeps
+    /// the click spot when the match is weak or `snap` is off (Alt). Returns false when there is
+    /// no such point (the click then starts a new one).
+    pub(super) fn replace_fresh_side(&mut self, pane: Pane, p: P2, snap: bool) -> bool {
+        let Some(k) = self.pe.fresh.filter(|&k| self.pe.selected == Some(k) && k < self.cps.len()) else { return false };
+        let (a, b) = (self.pe.a, self.pe.b);
+        let c = self.cps[k];
+        if !((c.a == a && c.b == b) || (c.a == b && c.b == a)) {
+            return false;
+        }
+        if c.locked {
+            self.set_status("This point is protected: press L (or the lock button) to unlock it before moving it.", WARN);
+            return true;
+        }
+        let (this, other) = if pane == Pane::A { (a, b) } else { (b, a) };
+        let fixed_n = if c.a == other { c.pa } else { c.pb };
+        let mut final_p = p;
+        let mut snapped = false;
+        if snap {
+            let pf = self.to_px(other, fixed_n);
+            let j = match self.predict(other, this, pf) {
+                Some(x) => x.1,
+                None => self.rotation_guess(other, pf, this, p),
+            };
+            let r = self.local_radius(this);
+            if let Some((q, _)) = self.finetune(other, pf, this, p, j, r).filter(|r| r.1 >= guided::FINETUNE_MIN_NCC) {
+                final_p = q;
+                snapped = true;
+            }
+        }
+        let n = self.to_norm(this, final_p);
+        self.edit_cps("moving a point", |s| {
+            let c = &mut s.cps[k];
+            if c.a == this {
+                c.pa = n;
+            } else {
+                c.pb = n;
+            }
+            c.manual = true;
+        });
+        self.pe.moving = Some(pane);
+        self.set_status(
+            if snapped {
+                "Point moved to where you clicked (corrected slightly to the exact spot). Esc or Ctrl+click starts a new point."
+            } else {
+                "Point moved exactly to where you clicked. Esc or Ctrl+click starts a new point."
+            },
+            if snapped { GOOD } else { MUTED },
+        );
+        true
+    }
+
+    pub(super) fn add_point_click(&mut self, pane: Pane, p: P2, mods: egui::Modifiers) {
+        // the point that was just placed is still selected: correct it (Ctrl+click: new point)
+        if self.pe.pending.is_none() && !mods.command && self.replace_fresh_side(pane, p, !mods.alt) {
+            return;
+        }
+        let snap = !mods.alt;
         let (a, b) = (self.pe.a, self.pe.b);
         let this = if pane == Pane::A { a } else { b };
         let other = if pane == Pane::A { b } else { a };
@@ -157,20 +255,20 @@ impl PanoApp {
                     None => self.rotation_guess(fixed, pf, this, p),
                 };
                 let r = self.placing_radius(this);
-                let snapped = self.finetune(fixed, pf, this, p, j, r).filter(|r| r.1 >= guided::FINETUNE_MIN_NCC);
+                let snapped = if snap { self.finetune(fixed, pf, this, p, j, r).filter(|r| r.1 >= guided::FINETUNE_MIN_NCC) } else { None };
                 let final_p = snapped.map(|r| r.0).unwrap_or(p);
                 self.pe.pending = None;
                 let n_this = self.to_norm(this, final_p);
                 if snapped.is_some() {
                     self.set_status("Point added and snapped to the exact spot.", GOOD);
                 } else {
-                    self.set_status("Point added where you clicked (no clear detail to snap to).", WARN);
+                    self.set_status(if snap { "Point added where you clicked (no clear detail to snap to)." } else { "Point added exactly where you clicked (Alt: no snapping)." }, WARN);
                 }
                 self.push_manual(q, qn, n_this);
             }
             _ => {
                 let pn = self.to_norm(this, p);
-                if let Some((guess, j)) = self.predict(this, other, p) {
+                if let Some((guess, j)) = self.predict(this, other, p).filter(|_| snap) {
                     let r = self.placing_radius(other);
                     if let Some((pos, v)) = self.finetune(this, p, other, guess, j, r)
                         && v >= guided::FINETUNE_MIN_NCC {
@@ -226,6 +324,7 @@ impl PanoApp {
         self.push_undo("adding a point");
         self.cps.push(ControlPoint::new(a, b, pa, pb, true));
         self.pe.selected = Some(self.cps.len() - 1);
+        self.pe.fresh = self.pe.selected;
         self.needs_align = true;
         if self.auto_grow {
             let auto = self.cps.iter().filter(|c| !c.manual && ((c.a == a && c.b == b) || (c.a == b && c.b == a))).count();
@@ -327,7 +426,7 @@ impl PanoApp {
                         let p = px_of(pane, pos);
                         let (w, h) = (geo[pane.i()].w as f64, geo[pane.i()].h as f64);
                         if p.0 >= -0.5 && p.1 >= -0.5 && p.0 <= w - 0.5 && p.1 <= h - 0.5 {
-                            self.add_point_click(pane, p);
+                            self.add_point_click(pane, p, mods);
                         }
                     } else if self.pe.tool == PointTool::SelectBrush {
                         // a single click with the brush already selects the points under it
@@ -343,6 +442,7 @@ impl PanoApp {
                         }
                     } else {
                         self.pe.sel.clear();
+                        self.pe.fresh = None;
                         self.pe.selected = nearest(pane, pos);
                         if self.pe.selected.is_some() {
                             self.pe.moving = Some(pane);
@@ -385,6 +485,7 @@ impl PanoApp {
                                 continue;
                             }
                             self.pe.dragging = Some((k, pane));
+                            self.pe.drag_no_snap = mods.alt;
                             self.pe.drag_before = Some(self.cp_snapshot());
                             self.pe.moving = Some(pane);
                             continue;
@@ -431,7 +532,10 @@ impl PanoApp {
                         continue;
                     }
                     if let Some((k, pane)) = self.pe.dragging.take() {
-                        self.snap_point(k, pane);
+                        // Alt held at the start of the drag: the point stays exactly where it was dropped
+                        if !self.pe.drag_no_snap {
+                            self.snap_point(k, pane);
+                        }
                     }
                     // the whole drag (and the snap) is one step, none if the point did not move
                     if let Some(before) = self.pe.drag_before.take() {
@@ -515,6 +619,78 @@ mod undo_tests {
         app.pe.selected = Some(k);
         app.delete_selected();
         assert_eq!(app.cps.len(), 5);
+    }
+
+    #[test]
+    fn lock_points_unlocks_a_whole_set_as_one_undo_step() {
+        let mut app = setup();
+        for k in [1, 2, 5] {
+            app.cps[k].locked = true;
+        }
+        // unlocking 1, 2 and 4 (4 is not locked): two change, one step, then the delete works
+        assert_eq!(app.lock_points(vec![4, 2, 1, 2, 99], false), 2);
+        assert!(!app.cps[1].locked && !app.cps[2].locked && app.cps[5].locked);
+        assert_eq!(app.lock_points(vec![1, 2], false), 0, "nothing to do is no undo step");
+        assert_eq!(app.delete_points(vec![1, 2, 5], "deleting 3 points"), 1);
+        assert_eq!(app.cps.len(), 6);
+        app.undo_last();
+        app.undo_last();
+        assert!(app.cps[1].locked && app.cps[2].locked && app.cps[5].locked, "one undo brings the protection back");
+        assert_eq!(app.lock_points(vec![0, 1], true), 1);
+        assert!(app.cps[0].locked);
+    }
+
+    fn app_with_fresh_point() -> PanoApp {
+        let mut app = setup();
+        app.cps.clear();
+        app.auto_grow = false;
+        app.pe.a = 0;
+        app.pe.b = 1;
+        app.pe.tool = PointTool::Add;
+        app.push_manual(Pane::A, [0.0, 0.0], [0.1, 0.1]);
+        assert_eq!(app.pe.fresh, app.pe.selected);
+        app
+    }
+
+    #[test]
+    fn a_click_after_adding_moves_that_side_instead_of_adding_a_second_point() {
+        let mut app = app_with_fresh_point();
+        let old_a = app.cps[0].pa;
+        // Alt: no snapping at all, the point lands exactly on the click
+        app.add_point_click(Pane::B, (30.0, 20.0), egui::Modifiers::ALT);
+        assert_eq!(app.cps.len(), 1);
+        assert_eq!(app.cps[0].pb, app.to_norm(1, (30.0, 20.0)));
+        assert_eq!(app.cps[0].pa, old_a, "the other side stays");
+        assert!(app.cps[0].manual);
+        // again, on the other side, with snapping: stays near the click (small search radius only)
+        app.add_point_click(Pane::A, (50.0, 40.0), egui::Modifiers::NONE);
+        assert_eq!(app.cps.len(), 1);
+        let (x, y) = app.to_px(0, app.cps[0].pa);
+        assert!((x - 50.0).hypot(y - 40.0) <= app.local_radius(0) + 1.0, "moved to ({x}, {y})");
+        // each correction is one undo step
+        app.undo_last();
+        assert_eq!(app.cps[0].pb, app.to_norm(1, (30.0, 20.0)));
+        assert_eq!(app.cps[0].pa, old_a);
+    }
+
+    #[test]
+    fn ctrl_click_or_esc_state_starts_a_new_point_and_a_protected_point_is_not_moved() {
+        let mut app = app_with_fresh_point();
+        // Ctrl+click (Alt: no automatic partner search, so the test does not depend on the picture): first half of a second point, nothing moved
+        app.add_point_click(Pane::A, (10.0, 10.0), egui::Modifiers { alt: true, ..egui::Modifiers::COMMAND });
+        assert_eq!(app.cps.len(), 1);
+        assert!(app.pe.pending.is_some());
+        app.pe.pending = None;
+        // after "Esc" (fresh cleared) the next click starts a new point as well
+        app.pe.fresh = None;
+        app.add_point_click(Pane::A, (10.0, 10.0), egui::Modifiers::ALT);
+        assert!(app.pe.pending.is_some());
+        // a protected fresh point is not moved by a click
+        let mut app = app_with_fresh_point();
+        app.cps[0].locked = true;
+        let before = app.cps[0];
+        app.add_point_click(Pane::B, (30.0, 20.0), egui::Modifiers::ALT);
+        assert!(app.cps[0].pa == before.pa && app.cps[0].pb == before.pb && app.cps.len() == 1);
     }
 
     #[test]

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- Point list: protected points could not be unlocked there, so they could not be deleted from it. Each row has a lock to protect or unlock it (all selected rows when it is part of the selection), and "Unlock selected", "Unlock all listed" and "Protect selected" act on several; one undo step, status message. Editor key L and the list share one function. Unit-tested; not tried by clicking through the window.
+- "Find more points for these two photos" replaced all automatic points of the pair, also the ones the person had checked. It now only adds: existing points stay, a found point closer than 0.004 (normalised, about 6 px) to a point of the pair in either photo is skipped, and the message says "N new, M already there". Points moved by "Snap selected" now count as placed by hand (dragging already did). Unit-tested.
+- Point editor, add tool: a wrongly snapped side could not be corrected (every click went to the same spot, and clicking the first photo again made a second point). While the new point is still selected, a click in a photo moves exactly that side there; the snap only corrects within the small local search radius and never jumps back, a weak match keeps the click spot, Alt+click and Alt+drag do not snap at all, protected points are not moved. Esc or Ctrl+click starts a new point (hint line and status explain it). Unit-tested; not tried by clicking through the window.
+
 ## [0.3.0] - 2026-11-09
 
 ### Added
