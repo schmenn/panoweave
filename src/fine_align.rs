@@ -15,6 +15,7 @@
 //! working images (long side 1600 px), the same images the point finder uses.
 
 use crate::align::{self, AlignInput, ControlPoint, CpKind, Lens, OptimizeOptions};
+use crate::foliage::{self, FoliageConfig, FoliageMap};
 use crate::geometry::*;
 use crate::imgutil::{blur, Gray};
 use crate::patch_matcher::{self, MatchConfig, MatchResult, Region, SearchTrace};
@@ -90,6 +91,10 @@ pub struct FineConfig {
     /// closer to the border, where the lens distortion shows most.
     #[serde(default = "edge_search_share_default")]
     pub edge_search_share: f32,
+    /// Foliage (trees, bushes) moves between the shots: points and patches on it get a smaller weight in the
+    /// optimiser and areas are not preferably placed on it. `enabled = false` = exactly as before.
+    #[serde(default)]
+    pub foliage: FoliageConfig,
 }
 
 fn pick_textured_default() -> bool {
@@ -145,8 +150,14 @@ impl Default for FineConfig {
             pick_textured: pick_textured_default(),
             pick_reach: pick_reach_default(),
             edge_search_share: edge_search_share_default(),
+            foliage: FoliageConfig::default().with_env(),
         }
     }
+}
+
+/// Foliage maps of the photos.
+pub fn foliage_maps(photos: &[FaPhoto]) -> Vec<FoliageMap> {
+    foliage::maps_of(&photos.iter().map(|p| (&*p.rgb, &*p.gray)).collect::<Vec<_>>())
 }
 
 /// What the fine alignment needs from each photo.
@@ -431,13 +442,15 @@ pub fn measure_ex(
 struct Images<'a> {
     photos: &'a [FaPhoto],
     soft: HashMap<(usize, u32), Arc<Gray>>,
+    /// foliage map per photo (empty when the foliage rating is switched off)
+    fol: Vec<FoliageMap>,
 }
 
 impl<'a> Images<'a> {
     fn sigma_key(sigma: f64) -> u32 {
         (sigma * 10.0).round() as u32
     }
-    fn prepare(photos: &'a [FaPhoto], geos: &[Geo], pairs: &[(usize, usize)]) -> Self {
+    fn prepare(photos: &'a [FaPhoto], geos: &[Geo], pairs: &[(usize, usize)], foliage: bool) -> Self {
         let mut need: Vec<(usize, u32)> = Vec::new();
         for &(a, b) in pairs {
             let s = geos[a].pixel_angle().max(geos[b].pixel_angle());
@@ -455,7 +468,15 @@ impl<'a> Images<'a> {
             .par_iter()
             .map(|&(i, k)| ((i, k), Arc::new(blur(&photos[i].gray, k as f32 / 10.0))))
             .collect();
-        Images { photos, soft }
+        Images { photos, soft, fol: if foliage { foliage_maps(photos) } else { Vec::new() } }
+    }
+    /// Foliage maps in the shape `foliage::rate` takes (all None when switched off).
+    fn fol_maps(&self) -> Vec<Option<&FoliageMap>> {
+        (0..self.photos.len()).map(|i| self.fol.get(i)).collect()
+    }
+    /// Static foliage value around a spot of photo `i` (working-image pixels); 0 when switched off.
+    fn fol_at(&self, i: usize, p: (f64, f64)) -> f32 {
+        self.fol.get(i).map_or(0.0, |m| m.around(p.0 as f32, p.1 as f32))
     }
     fn get(&self, i: usize, geos: &[Geo], partner: usize) -> (&Gray, &RgbImage) {
         let s = geos[i].pixel_angle().max(geos[partner].pixel_angle());
@@ -584,15 +605,21 @@ fn measure_round(
                             // the spot with the most two-direction structure within reach of the grid point
                             let reach = (cfg.pick_reach as f64 * fine_step).floor() as i32;
                             let step = (reach / 4).max(2);
+                            // a spot on foliage counts less (moves between the shots): its structure is multiplied
+                            // by a factor below 1; 1 everywhere when the foliage rating is off
+                            let pen = |q: (f64, f64)| 1.0 - cfg.foliage.pick_penalty * imgs.fol_at(a, q);
                             let mut best = (m.at(p0.0, p0.1, half_win).1, p0);
+                            let mut best_adj = best.0 * pen(p0);
                             let mut oy = -reach;
                             while oy <= reach {
                                 let mut ox = -reach;
                                 while ox <= reach {
                                     let q = (p0.0 + ox as f64, p0.1 + oy as f64);
                                     let sc = m.at(q.0, q.1, half_win).1;
-                                    if sc > best.0 && in_b(q) {
+                                    let adj = sc * pen(q);
+                                    if adj > best_adj && in_b(q) {
                                         best = (sc, q);
+                                        best_adj = adj;
                                     }
                                     ox += step;
                                 }
@@ -602,7 +629,7 @@ fn measure_round(
                                 skipped += 1;
                                 continue;
                             }
-                            picked.push((best.0 as f64, gy * (nx + 1) + gx, best.1));
+                            picked.push((best_adj as f64, gy * (nx + 1) + gx, best.1));
                             continue;
                         }
                         let big = (((p0.0 / ga.w) * 4.0) as usize).min(3) + 4 * (((p0.1 / ga.h) * 4.0) as usize).min(3);
@@ -883,6 +910,7 @@ fn measure_round(
         }
     }
     STORE.end_round(crate::engine::cancelled());
+    foliage::rate(&mut out, &imgs.fol_maps(), &cfg.foliage);
     let mean = |v: &Vec<f32>| if v.is_empty() { 0.0 } else { v.iter().sum::<f32>() / v.len() as f32 };
     RoundOutcome {
         cps: out,
@@ -1006,7 +1034,7 @@ pub fn quality(photos: &[FaPhoto], lens_of: &[usize], lenses: &[Lens], rots: &[M
     let mut pairs: Vec<(usize, usize)> = spots.iter().map(|s| (s.0, s.1)).collect();
     pairs.sort();
     pairs.dedup();
-    let imgs = Images::prepare(photos, &geos, &pairs);
+    let imgs = Images::prepare(photos, &geos, &pairs, false);
     let r: Vec<Option<PatchMeasure>> = spots.par_iter().map(|&(a, b, p)| measure(&geos[a], &geos[b], imgs.get(a, &geos, b), imgs.get(b, &geos, a), geos[a].px_to_dir(p), mcfg)).collect();
     let mut shifts: Vec<f32> = Vec::new();
     let mut bins: [Vec<f32>; 3] = Default::default();
@@ -1089,7 +1117,12 @@ pub fn run(
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
     stats.err_before = err_stats(&cps);
     let geos = geos_of(&rots, &lenses);
-    let imgs = Images::prepare(photos, &geos, &pairs);
+    let imgs = Images::prepare(photos, &geos, &pairs, cfg.foliage.enabled);
+    let fol = imgs.fol_maps();
+    let rated = foliage::rate(&mut cps, &fol, &cfg.foliage);
+    if rated > 0 {
+        stats.log.push(format!("{rated} points and patches look like foliage and get a smaller weight"));
+    }
     let rounds = cfg.refine_iterations.max(1);
     report(0.0, "Fine alignment: comparing patches");
     let none = HashMap::new();
@@ -1160,6 +1193,8 @@ pub fn run(
         cps = next_cps.clone();
         report((round as f32 + 0.5) / (rounds as f32 + 1.0), &format!("Fine alignment: optimising (round {} of {})", round + 1, rounds));
         align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &opts, 40);
+        align::cp_errors(&inp, &rots, &lenses, &mut cps);
+        foliage::rate(&mut cps, &fol, &cfg.foliage);
         let geos = geos_of(&rots, &lenses);
         let (s, d, nv) = evaluate(&geos, &imgs, &test, &eval_cfg);
         stats.log.push(format!("round {}: mean remaining shift {:.3} px, mean difference {:.2} ({} valid)", round + 1, s, d, nv));
@@ -1197,6 +1232,7 @@ pub fn run(
         }
     }
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
+    foliage::rate(&mut cps, &fol, &cfg.foliage);
     stats.err_after = err_stats(&cps);
     stats.ms = t0.elapsed().as_millis();
     (rots, lenses, cps, stats)
@@ -1274,9 +1310,14 @@ pub fn reoptimize(
     let opts = OptimizeOptions { focal: opts_focal, distortion: opts_distortion, cauchy: cfg.robust_loss == RobustLoss::Cauchy };
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
     stats.err_before = err_stats(&cps);
+    // the list holds the patches as they were measured; the foliage weights are set again here
+    let fol_v = if cfg.foliage.enabled { foliage_maps(photos) } else { Vec::new() };
+    let fol: Vec<Option<&FoliageMap>> = (0..n).map(|i| fol_v.get(i)).collect();
+    foliage::rate(&mut cps, &fol, &cfg.foliage);
     report(0.1, "Optimising with the patches from the list");
     align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &opts, 40);
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
+    foliage::rate(&mut cps, &fol, &cfg.foliage);
     stats.err_after = err_stats(&cps);
     stats.rounds = 1;
     if crate::engine::cancelled() {
@@ -1288,7 +1329,7 @@ pub fn reoptimize(
     pairs.dedup();
     let geos: Vec<Geo> =
         (0..n).map(|i| Geo { lens: lenses[lens_of[i]], rot: rots[i], w: photos[i].gray.w as f64, h: photos[i].gray.h as f64 }).collect();
-    let imgs = Images::prepare(photos, &geos, &pairs);
+    let imgs = Images::prepare(photos, &geos, &pairs, cfg.foliage.enabled);
     let radius = data.iter().find(|d| d.kind == CpKind::Area).map(|d| d.cfg.search_radius).unwrap_or(cfg.matcher.search_radius);
     let mcfg = MatchConfig { search_radius: radius, ..cfg.matcher.clone() };
     report(0.5, "Comparing the patches again");
@@ -1424,7 +1465,7 @@ pub fn parallax_fields(
     let mut pairs: Vec<(usize, usize)> = cps.iter().map(|c| (c.a.min(c.b), c.a.max(c.b))).collect();
     pairs.sort();
     pairs.dedup();
-    let imgs = Images::prepare(photos, &geos, &pairs);
+    let imgs = Images::prepare(photos, &geos, &pairs, false);
     let mcfg = MatchConfig { search_radius: (pc.max_shift as f32).max(fine.min_search_radius), ..fine.matcher.clone() };
     let areas: Vec<&ControlPoint> = cps.iter().filter(|c| c.kind != CpKind::Point).collect();
     type Sample = (usize, usize, [f64; 2], [f64; 2], [f64; 2], [f64; 2], f64);
@@ -1623,6 +1664,25 @@ mod placement_tests {
         let off = FineConfig { record_patches: false, pick_textured: false, ..FineConfig::default() };
         let (_, st) = areas(&photos, &off);
         assert_eq!(st.cells_skipped, 0);
+    }
+
+    #[test]
+    fn foliage_rating_changes_nothing_on_photos_without_foliage_and_off_is_the_old_behaviour() {
+        // grey photos: no colour, so no foliage; areas and weights come out the same with the rating on or off
+        let (photos, _) = pair(true);
+        let on = FineConfig { record_patches: false, ..FineConfig::default() };
+        let off = FineConfig { foliage: FoliageConfig::enabled(false), ..on.clone() };
+        let sorted = |mut v: Vec<ControlPoint>| {
+            v.sort_by(|x, y| x.pa[0].total_cmp(&y.pa[0]).then(x.pa[1].total_cmp(&y.pa[1])));
+            v
+        };
+        let (a, _) = areas(&photos, &on);
+        let (b, _) = areas(&photos, &off);
+        let (a, b) = (sorted(a), sorted(b));
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(&b) {
+            assert!(x.pa == y.pa && x.weight == y.weight && x.fol_w == 1.0 && y.fol_w == 1.0, "{:?} {:?} {} {} {} {}", x.pa, y.pa, x.weight, y.weight, x.fol_w, y.fol_w);
+        }
     }
 
     #[test]

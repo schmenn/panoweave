@@ -27,6 +27,7 @@ mod points_click;
 mod points_edit;
 mod points_find;
 mod points_sky;
+mod points_foliage;
 mod points_panes;
 mod points_predict;
 mod points_select;

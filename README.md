@@ -60,6 +60,7 @@ The release `.exe` is not code-signed, so Windows SmartScreen may say "Windows p
 - **Formats:** JPEG, PNG, TIFF and RAW (via `imagepipe`, optional `raw` feature), EXIF rotation is respected
 - **Automatic control points:** multi-scale corner detection, rotation-aware descriptors, ratio-test matching, RANSAC and guided re-matching
 - **No points on sky or clouds** (can be switched off); points that still sit there (placed by hand, from patch click or old projects) can be found and removed later with "Find points on sky or cloud" in the point editor or the point list (threshold, one undo step, protected points stay)
+- **Trees and bushes count less:** points and patches on foliage (colour, very fine irregular structure, and above all restless residual errors after aligning) get a smaller weight in the alignment instead of being deleted; switchable, protected and hand-placed points are never touched, and "Foliage → Remove" deletes their points on request
 - **Point editor:** place a few points by hand and let PanoWeave find more, with sub-pixel snapping, zoom levels and a sortable point list; the patch-click mode uses the rotation and zoom of nearby points (and of the alignment), so slightly turned photos are matched too
 - **Selecting many points:** Shift/Ctrl+click in the photos or the point list, or the selection shapes inside "Select / edit" (Click, Rectangle, Lasso, Brush). "Delete selected" removes them in one undo step, "Snap selected" lets them all snap to the exact spot in the background (protected points are left alone).
 - **Protected points:** lock a point (key L) and no bulk action (clean up, delete all in a pair, outlier removal, duplicate removal, a new search, the fine alignment) removes or moves it; the fine alignment still measures it and says when one is more than 3 px off or cannot be found nearby; a locked point is also refused by single delete and drag until it is unlocked.
@@ -115,6 +116,7 @@ flowchart LR
 | `lensphoto` | Optional per-lens response curve and vignetting model |
 | `overlap`, `duplicate_points` | Overlap check sampling; detection of points on top of each other |
 | `sky_points` | Points on sky or cloud: which points to mark and which may be removed |
+| `foliage` | Foliage rating: colour, fine irregular structure and restless residual errors give points and patches on trees a smaller weight in the alignment |
 | `seams`, `masks` | Seam finder (graph cut) and the masks painted on photos |
 | `app` | The egui user interface, split into `types`, `state`, `jobs`, `demo`, `chrome`, `pipeline`, `points_*`, `photos`, `align`, `frame`, `export`, `exposure`, `connections` |
 | `main`, `accuracy_test` | Arguments and headless test drivers (`--accuracy`: the independent fit check) |

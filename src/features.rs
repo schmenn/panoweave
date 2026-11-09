@@ -693,11 +693,11 @@ pub const CLOUD_CHECK_SIZE: f32 = 800.0;
 pub const CLOUD_CHECK_RADIUS: f32 = 20.0;
 pub const CLOUD_THRESHOLD: f32 = 0.5;
 
-/// Share of the circle around (x, y) (work-image pixels) that is sky or cloud, 0..1.
-pub fn cloud_score(mask: &SkyMask, x: f32, y: f32, work_long: f32) -> f32 {
-    let r = CLOUD_CHECK_RADIUS * work_long / CLOUD_CHECK_SIZE;
+/// Mean of `f` over a circle of radius `r` around (x, y), sampled on a regular grid (13 x 13, the part inside
+/// the circle). Shared by the sky check and the foliage check.
+pub fn circle_mean(x: f32, y: f32, r: f32, f: impl Fn(f32, f32) -> f32) -> f32 {
     let steps = 6i32;
-    let mut hit = 0usize;
+    let mut sum = 0.0f32;
     let mut total = 0usize;
     for dy in -steps..=steps {
         for dx in -steps..=steps {
@@ -707,12 +707,16 @@ pub fn cloud_score(mask: &SkyMask, x: f32, y: f32, work_long: f32) -> f32 {
                 continue;
             }
             total += 1;
-            if mask.contains(x + fx * r, y + fy * r) {
-                hit += 1;
-            }
+            sum += f(x + fx * r, y + fy * r);
         }
     }
-    hit as f32 / total.max(1) as f32
+    sum / total.max(1) as f32
+}
+
+/// Share of the circle around (x, y) (work-image pixels) that is sky or cloud, 0..1.
+pub fn cloud_score(mask: &SkyMask, x: f32, y: f32, work_long: f32) -> f32 {
+    let r = CLOUD_CHECK_RADIUS * work_long / CLOUD_CHECK_SIZE;
+    circle_mean(x, y, r, |px, py| if mask.contains(px, py) { 1.0 } else { 0.0 })
 }
 
 /// Drop keypoints whose surroundings are mostly sky or cloud.

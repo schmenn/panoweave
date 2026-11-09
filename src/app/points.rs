@@ -271,6 +271,7 @@ impl PanoApp {
             }
             ui.separator();
             self.sky_ui(ui, false);
+            self.foliage_ui(ui);
         });
     }
 

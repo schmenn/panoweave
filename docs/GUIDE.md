@@ -85,6 +85,7 @@ Matching points (control points) are spots that show the same thing in two photo
 - **Remove points worse than … px → Clean up** deletes points with a large alignment error (after aligning). Protected points stay.
 - **Delete all in this pair** deletes the points of the pair on screen (protected points stay).
 - **Find points on sky or cloud** finds points that still sit on sky (placed by hand, from the patch click, from old projects). The photos are checked once ("Check N photos"); the threshold sets how much sky around a point counts. **Remove N** removes them as one undo step. Points placed by hand are only removed with "include points placed by hand"; protected points never. When nothing can be removed, the button says why.
+- **Foliage** (shown while "Count points and patches on foliage less" is on): the same for points on foliage. The threshold is the foliage value (0 to 1) from which a point counts; restless errors after aligning decide, so align first. "Check N photos" looks at the photos once; **Remove N** removes the automatic points on foliage as one undo step (hand-placed only with "include points placed by hand", protected never). Nothing is removed unless you press the button: by default foliage is only counted less.
 
 ### Step 3: Align
 
@@ -113,6 +114,8 @@ Next to **📐 Align photos**: **🔬 Patch comparison** (the patches of the fin
 - **Control area placement - Where the photo has structure** (on by default): each area is put at the spot with structure in **two directions** (a corner, gravel, leaves, a texture) near its grid point, instead of on a bare grid, so areas no longer line up in rows on trees or sit on smooth asphalt. Plain cells (smooth road, wall, a single straight edge) get no area; the number is shown under the summary ("N grid cells without structure were left out") and in the log. Patches that are measured but rejected for the same reason say "too little texture" or "structure in one direction only" in the list of reasons and in the patch comparison. Off = the plain grid of earlier versions.
 - **Parallax mode** (off by default): a local correction near the seams for close objects. It is saved in the project.
 - **Record patches for this window**: keeps the measured patches for the **🔬 Patch comparison** window. Switching it off saves time and memory and does not change the result.
+
+- **Count points and patches on foliage less** (on by default, step 3, above the fine alignment switches): leaves move between the shots, so points and patches on trees and bushes pull the photos apart. They are recognised by colour (green to brown), very fine irregular structure and, above all, by restless remaining errors after aligning (the neighbours of a point disagree with each other); they get a smaller weight (down to a quarter) in the alignment instead of being removed. Colour and structure alone only lower the weight a little, so a green sign, a green wall or a lawn that holds still keep their influence. Control areas are put away from foliage where the photo allows it. Protected points and points placed by hand are never touched. Off = exactly as before.
 
 The many numbers under "Fine alignment" are for difficult cases; **Reset to defaults** brings them back.
 
@@ -230,7 +233,7 @@ The **Exposure blend** mode (top of the window) merges photos of the same view t
 Some photos have no points to the others. Common reasons: too little overlap, very different zoom, a featureless overlap (sky, water, a white wall). Open the **Connections** window, use **Join photos …** or the patch click mode to place a few points between the groups by hand, then align again. A photo that does not belong to the panorama can be unticked ("use").
 
 **Points on clouds, water or moving people**
-They pull the photos apart, because those things moved between shots. Keep "Ignore sky & clouds" on, use **Find points on sky or cloud** to remove old ones, and delete points on people or waves by hand (select them with the lasso or brush and press Delete).
+They pull the photos apart, because those things moved between shots. Keep "Ignore sky & clouds" on, use **Find points on sky or cloud** to remove old ones, and delete points on people or waves by hand (select them with the lasso or brush and press Delete). Trees and bushes move too: they get a smaller weight automatically ("Count points and patches on foliage less"), and **Foliage → Remove** in the point editor deletes their points if you want them gone.
 
 **Seams or double edges on close objects (parallax)**
 The photos were not taken around the lens. Try the **Parallax mode** in the fine alignment, **Smart seams** and masks in the export, and avoid points on close objects (they cannot fit both the near and the far parts).
