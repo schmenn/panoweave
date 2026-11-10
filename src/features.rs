@@ -454,20 +454,19 @@ fn parallax_group(
         shift_px: shift,
         centre: (q(&xs, 0.5), q(&ys, 0.5)),
         bbox,
-        mask_a: mask_of(inl.iter().map(|&k| rs[k]), dims),
-        mask_b: mask_of(inl.iter().map(|&k| rd[k]), dims_b),
+        mask_a: counts_of(inl.iter().map(|&k| rs[k]), dims).mask(2),
+        mask_b: counts_of(inl.iter().map(|&k| rd[k]), dims_b).mask(2),
     })
 }
 
-/// Cells of a group of working-image points (`depth::Layers::from_hints` and `rate` use them; the object is larger
-/// than its points, `depth::DepthConfig::dilate` adds the rings around).
-fn mask_of(pts: impl Iterator<Item = (f64, f64)>, dims: (usize, usize)) -> crate::depth::CoarseMask {
-    let mut m = crate::depth::CoarseMask::default();
+/// How many points of a group lie in each cell (`depth::Layers::from_hints` and `rate` use the cells with at least 2;
+/// the object is larger than its points, `depth::DepthConfig::dilate` adds the rings around).
+fn counts_of(pts: impl Iterator<Item = (f64, f64)>, dims: (usize, usize)) -> crate::depth::CellCounts {
+    let mut c = crate::depth::CellCounts::default();
     for p in pts {
-        let (cx, cy) = crate::depth::CoarseMask::cell_of_px(p.0, p.1, dims.0, dims.1);
-        m.set(cx, cy);
+        c.add_px(p.0, p.1, dims);
     }
-    m
+    c
 }
 
 /// Full pair pipeline: descriptor matching, RANSAC, guided matching, thinning.

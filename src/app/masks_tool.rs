@@ -135,7 +135,7 @@ impl MaskTool {
             Ptr::Down(p) if !self.tool.is_lasso() => {
                 let f = to_frac(geo, p);
                 if inside(f) {
-                    self.stroke = Some(MaskStroke { kind: self.tool.kind(), points: vec![f], radius: self.radius, polygon: false });
+                    self.stroke = Some(MaskStroke { kind: self.tool.kind(), points: vec![f], radius: self.radius, polygon: false, auto: false });
                 }
                 false
             }
@@ -193,7 +193,7 @@ impl MaskTool {
     /// A finished lasso becomes a polygon stroke (corners as fractions of the photo).
     fn commit_lasso(&mut self, poly: Vec<(f64, f64)>, geo: &PaneGeo, mask: &mut PhotoMask, w: usize, h: usize) -> bool {
         let points: Vec<[f32; 2]> = poly.into_iter().map(|p| clamp01(px_to_frac(geo, p))).collect();
-        mask.commit(MaskStroke { kind: self.tool.kind(), points, radius: 0.0, polygon: true }, w, h)
+        mask.commit(MaskStroke { kind: self.tool.kind(), points, radius: 0.0, polygon: true, auto: false }, w, h)
     }
 }
 

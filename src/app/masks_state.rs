@@ -45,6 +45,22 @@ impl PhotoMask {
         true
     }
 
+    /// Replaces the automatic strokes (`auto`, proposed by the program) by `new` ones; strokes painted by hand stay.
+    /// One step to take back. Returns how many automatic strokes were taken away when `new` is empty, else how many
+    /// were added.
+    pub(super) fn replace_auto(&mut self, new: Vec<MaskStroke>, w: usize, h: usize) -> usize {
+        let old = self.strokes.iter().filter(|s| s.auto).count();
+        if old == 0 && new.is_empty() {
+            return 0;
+        }
+        self.snapshot();
+        self.strokes.retain(|s| !s.auto);
+        let added = new.len();
+        self.strokes.extend(new);
+        self.rebuild(w, h);
+        if added == 0 { old } else { added }
+    }
+
     /// Removes everything painted on this photo (can be taken back).
     pub(super) fn clear(&mut self, w: usize, h: usize) -> bool {
         if self.strokes.is_empty() {
@@ -98,7 +114,7 @@ mod tests {
     use crate::masks::MaskKind;
 
     fn dab(kind: MaskKind, x: f32) -> MaskStroke {
-        MaskStroke { kind, points: vec![[x, 0.5]], radius: 0.05, polygon: false }
+        MaskStroke { kind, points: vec![[x, 0.5]], radius: 0.05, polygon: false, auto: false }
     }
 
     #[test]
@@ -127,7 +143,7 @@ mod tests {
     #[test]
     fn clear_can_be_taken_back_and_empty_strokes_are_ignored() {
         let mut m = PhotoMask::default();
-        assert!(!m.commit(MaskStroke { kind: MaskKind::Positive, points: vec![], radius: 0.02, polygon: false }, 100, 100));
+        assert!(!m.commit(MaskStroke { kind: MaskKind::Positive, points: vec![], radius: 0.02, polygon: false, auto: false }, 100, 100));
         assert!(!m.clear(100, 100), "nothing to clear");
         m.commit(dab(MaskKind::Positive, 0.5), 100, 100);
         assert!(m.clear(100, 100));

@@ -33,6 +33,10 @@ pub struct MaskStroke {
     /// a filled polygon instead of a brush stroke
     #[serde(default)]
     pub polygon: bool,
+    /// proposed by the program (near objects, `near_seams.rs`) and accepted by the person; shown and changed like
+    /// any other stroke, and "Remove automatic masks" takes all of them away again
+    #[serde(default)]
+    pub auto: bool,
 }
 
 /// The mask of one photo as a picture (1 byte per pixel: `NEUTRAL`, `POSITIVE`, `NEGATIVE`).
@@ -144,7 +148,7 @@ mod tests {
     use super::*;
 
     fn brush(kind: MaskKind, pts: &[[f32; 2]], radius: f32) -> MaskStroke {
-        MaskStroke { kind, points: pts.to_vec(), radius, polygon: false }
+        MaskStroke { kind, points: pts.to_vec(), radius, polygon: false, auto: false }
     }
 
     #[test]
@@ -161,7 +165,7 @@ mod tests {
 
     #[test]
     fn a_polygon_is_filled_and_later_strokes_paint_over_earlier_ones() {
-        let square = MaskStroke { kind: MaskKind::Negative, points: vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]], radius: 0.0, polygon: true };
+        let square = MaskStroke { kind: MaskKind::Negative, points: vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]], radius: 0.0, polygon: true, auto: false };
         let m = rasterize(std::slice::from_ref(&square), 200, 200).unwrap();
         assert_eq!(m.at(100.0, 100.0, 200.0, 200.0), NEGATIVE);
         assert_eq!(m.at(20.0, 100.0, 200.0, 200.0), NEUTRAL);

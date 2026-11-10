@@ -74,6 +74,21 @@ impl PanoApp {
                 };
                 self.out_path = o;
             }
+            // experiments: PW_NEAR_SEAMS_APPLY=1 applies the near-object masks proposed for the alignment before exporting
+            if std::env::var("PW_NEAR_SEAMS_APPLY").is_ok_and(|v| v == "1") {
+                let layers = self.near_layers();
+                for r in &layers.regions {
+                    eprintln!("near seams: region {} ({:?} {:?} / {:?})", r.text(), r.source, r.mask_a.bbox(), r.mask_b.bbox());
+                }
+                let plan = crate::near_seams::plan(&layers, self.photos.len(), &crate::near_seams::NearSeamConfig::default().with_env());
+                for o in &plan {
+                    for (p, m) in &o.photos {
+                        eprintln!("near seams:   photo {}: {} cells, box {:?}", p + 1, m.cells().len(), m.bbox());
+                    }
+                    eprintln!("near seams: {}", o.text());
+                }
+                eprintln!("near seams: {} mask strokes added", self.apply_near_seams(&plan));
+            }
             self.run_render();
         }
         // PW_OUT2=<file>: after the first export, the same alignment is exported again (with another
@@ -228,16 +243,16 @@ impl PanoApp {
         self.mk.sel = sel;
         let (w, h) = (self.photos[sel].w as usize, self.photos[sel].h as usize);
         let strokes = [
-            MaskStroke { kind: MaskKind::Positive, points: vec![[0.30, 0.25], [0.34, 0.45], [0.38, 0.70], [0.40, 0.85]], radius: 0.03, polygon: false },
-            MaskStroke { kind: MaskKind::Negative, points: vec![[0.75, 0.30], [0.88, 0.35], [0.90, 0.60], [0.74, 0.65]], radius: 0.0, polygon: true },
-            MaskStroke { kind: MaskKind::Negative, points: vec![[0.55, 0.20], [0.60, 0.40], [0.58, 0.55]], radius: 0.02, polygon: false },
+            MaskStroke { kind: MaskKind::Positive, points: vec![[0.30, 0.25], [0.34, 0.45], [0.38, 0.70], [0.40, 0.85]], radius: 0.03, polygon: false, auto: false },
+            MaskStroke { kind: MaskKind::Negative, points: vec![[0.75, 0.30], [0.88, 0.35], [0.90, 0.60], [0.74, 0.65]], radius: 0.0, polygon: true, auto: false },
+            MaskStroke { kind: MaskKind::Negative, points: vec![[0.55, 0.20], [0.60, 0.40], [0.58, 0.55]], radius: 0.02, polygon: false, auto: false },
         ];
         for s in strokes {
             self.photos[sel].mask.commit(s, w, h);
         }
         if let Some(o) = self.photos.get_mut(sel.saturating_sub(1)).filter(|_| sel > 0) {
             let (w, h) = (o.w as usize, o.h as usize);
-            o.mask.commit(MaskStroke { kind: MaskKind::Negative, points: vec![[0.10, 0.50]], radius: 0.05, polygon: false }, w, h);
+            o.mask.commit(MaskStroke { kind: MaskKind::Negative, points: vec![[0.10, 0.50]], radius: 0.05, polygon: false, auto: false }, w, h);
         }
     }
 
