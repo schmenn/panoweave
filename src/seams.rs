@@ -27,6 +27,8 @@ pub const VALID: u8 = 1;
 pub const POSITIVE: u8 = 2;
 /// The person painted "do not use this photo here" over the block.
 pub const NEGATIVE: u8 = 4;
+/// No seam may cut through the block (a near object, `SeamConfig::guard_penalty`).
+pub const GUARD: u8 = 8;
 
 /// Photos whose rectangles come closer than this many blocks are not expanded side by side.
 const ROUND_GAP: usize = 3;
@@ -69,11 +71,14 @@ pub struct SeamConfig {
     pub coarse_min_side: usize,
     /// width (blocks, each side) of the band around the coarse seams that may still change in the second step
     pub band: usize,
+    /// extra cost of every seam edge at a block marked `GUARD` (a near object that must not be cut: the seam runs
+    /// round it; 0 = marks are ignored). Large against the colour difference (0..1), but not infinite.
+    pub guard_penalty: f32,
 }
 
 impl Default for SeamConfig {
     fn default() -> Self {
-        SeamConfig { enabled: false, max_side: 1536, data_weight: 0.05, smooth_weight: 1.0, cut_cost: 0.01, missing_diff: 0.5, diff_power: 1.0, cycles: 2, coarse_min_side: 256, band: 8 }
+        SeamConfig { enabled: false, max_side: 1536, data_weight: 0.05, smooth_weight: 1.0, cut_cost: 0.01, missing_diff: 0.5, diff_power: 1.0, cycles: 2, coarse_min_side: 256, band: 8, guard_penalty: 50.0 }
     }
 }
 
@@ -103,6 +108,9 @@ impl SeamConfig {
         }
         if let Some(v) = get("PW_SEAM_MISSING") {
             c.missing_diff = v;
+        }
+        if let Some(v) = get("PW_SEAM_GUARD") {
+            c.guard_penalty = v;
         }
         if let Some(v) = get("PW_SEAM_SIDE") {
             c.max_side = v as usize;
@@ -215,6 +223,8 @@ struct Problem<'a> {
     mode: Vec<u8>,
     /// per block: the best score among the photos that may be used
     best: Vec<f32>,
+    /// per block: a seam edge here is penalised (some photo marks it `GUARD`)
+    guard: Vec<bool>,
 }
 
 impl<'a> Problem<'a> {
@@ -222,12 +232,14 @@ impl<'a> Problem<'a> {
         let n = bw * bh;
         let mut mode = vec![0u8; n];
         let mut best = vec![0.0f32; n];
+        let mut guard = vec![false; n];
         for b in 0..n {
             let (bx, by) = (b % bw, b / bw);
             let (mut any, mut any_ok, mut any_pos) = (false, false, false);
             for p in photos {
                 if let Some(s) = p.at(bw, bx, by) {
                     any = true;
+                    guard[b] |= s.flags & GUARD != 0;
                     if s.flags & NEGATIVE == 0 {
                         any_ok = true;
                         any_pos |= s.flags & POSITIVE != 0;
@@ -243,7 +255,7 @@ impl<'a> Problem<'a> {
                     }
             }
         }
-        Problem { bw, bh, photos, cfg, mode, best }
+        Problem { bw, bh, photos, cfg, mode, best, guard }
     }
 
     #[inline]
@@ -290,7 +302,10 @@ impl<'a> Problem<'a> {
             return 0;
         }
         let f = |d: f32| if self.cfg.diff_power == 1.0 { d } else { d.powf(self.cfg.diff_power) };
-        let c = self.cfg.smooth_weight * 0.5 * (f(self.diff(a, b, p)) + f(self.diff(a, b, q))) + self.cfg.cut_cost;
+        let mut c = self.cfg.smooth_weight * 0.5 * (f(self.diff(a, b, p)) + f(self.diff(a, b, q))) + self.cfg.cut_cost;
+        if self.guard[p] || self.guard[q] {
+            c += self.cfg.guard_penalty;
+        }
         (c * SCALE) as i64
     }
 }
@@ -844,6 +859,35 @@ mod tests {
             let first_b = (0..BW).find(|&bx| l[by * BW + bx] == 1).unwrap();
             assert!((19..=21).contains(&first_b), "row {by}: seam at {first_b}");
         }
+    }
+
+    #[test]
+    fn a_guarded_object_is_not_cut_and_without_guards_nothing_changes() {
+        // two equal photos: the seam sits in the middle of the overlap (columns 19..21), through a guarded block
+        // 17..=23 x 6..=13; with the guard the seam goes round it (above or below, or beside it)
+        let grey = |_: usize, _: usize| [100, 100, 100];
+        let mut photos = [photo(0, 26, grey), photo(14, 40, grey)];
+        let plain = find(&photos, BW, BH, &cfg(), &never).unwrap();
+        let mut zero = cfg();
+        zero.guard_penalty = 0.0;
+        for p in photos.iter_mut() {
+            for by in 6..=13 {
+                for bx in 17..=23 {
+                    if let Some(s) = p.samples.get_mut(by * BW + bx) {
+                        s.flags |= GUARD;
+                    }
+                }
+            }
+        }
+        // a penalty of 0 (or no mark) leaves the labelling as it was
+        assert_eq!(find(&photos, BW, BH, &zero, &never).unwrap(), plain);
+        let l = find(&photos, BW, BH, &cfg(), &never).unwrap();
+        let cut_inside = |l: &[u16]| (6..=13).flat_map(|by| (17..23).map(move |bx| (bx, by))).filter(|&(bx, by)| l[by * BW + bx] != l[by * BW + bx + 1]).count();
+        assert!(cut_inside(&plain) > 0, "the plain seam goes through the object");
+        assert_eq!(cut_inside(&l), 0, "the guarded seam must not cut it");
+        // the rest still joins the two photos
+        assert_eq!(l[2], 0);
+        assert_eq!(l[BW * 10 + 38], 1);
     }
 
     #[test]

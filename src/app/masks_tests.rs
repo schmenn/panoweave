@@ -18,7 +18,7 @@ pub(super) fn app_with_photos(n: usize) -> PanoApp {
 }
 
 pub(super) fn stroke(kind: MaskKind) -> MaskStroke {
-    MaskStroke { kind, points: vec![[0.3, 0.4], [0.6, 0.5]], radius: 0.05, polygon: false }
+    MaskStroke { kind, points: vec![[0.3, 0.4], [0.6, 0.5]], radius: 0.05, polygon: false, auto: false }
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn masks_survive_saving_and_opening_a_project() {
     let mut app = app_with_photos(2);
     let (w, h) = (app.photos[0].w as usize, app.photos[0].h as usize);
     app.photos[0].mask.commit(stroke(MaskKind::Negative), w, h);
-    app.photos[0].mask.commit(MaskStroke { kind: MaskKind::Positive, points: vec![[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]], radius: 0.0, polygon: true }, w, h);
+    app.photos[0].mask.commit(MaskStroke { kind: MaskKind::Positive, points: vec![[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]], radius: 0.0, polygon: true, auto: false }, w, h);
     let dir = std::env::temp_dir().join(format!("pw_mask_roundtrip_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.pwproj");

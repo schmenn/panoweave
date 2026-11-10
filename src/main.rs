@@ -31,6 +31,7 @@ mod project;
 mod sample;
 #[allow(dead_code)] // the painting tool in the UI uses the rest
 mod masks;
+mod near_seams;
 mod overlap;
 mod seams;
 mod stitch;

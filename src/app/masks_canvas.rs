@@ -10,6 +10,7 @@ fn kind_color(k: MaskKind, alpha: u8) -> Color32 {
         MaskKind::Positive => MASK_GREEN,
         MaskKind::Negative => MASK_RED,
         MaskKind::Erase => Color32::WHITE,
+        MaskKind::Guard => ACCENT,
     };
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha)
 }
@@ -47,6 +48,11 @@ impl PanoApp {
             painter.image(t.id(), img_rect, full, Color32::WHITE);
         }
         self.paint_mask_overlay(ui.ctx(), &painter, img_rect);
+        // the proposed outlines of near objects, before Apply
+        for s in self.near_preview(sel) {
+            let (c, r) = (to_screen(&geo, s.points[0]), screen_radius(&geo, s.radius).max(2.0));
+            painter.circle_stroke(c, r, Stroke::new(1.5, kind_color(MaskKind::Guard, 200)));
+        }
         self.paint_unfinished(&painter, &geo, resp.hover_pos());
         painter.text(rect.left_top() + Vec2::new(10.0, 8.0), Align2::LEFT_TOP, format!("Photo {}  ·  {:.0} %", sel + 1, self.mk.view.zoom * 100.0), FontId::proportional(13.0), Color32::WHITE);
         self.mask_input(ui, &resp);

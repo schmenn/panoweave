@@ -12,6 +12,7 @@ mod frame;
 pub(crate) mod history;
 mod jobs;
 mod masks_canvas;
+mod masks_near;
 mod masks_seams;
 mod masks_state;
 #[cfg(test)]

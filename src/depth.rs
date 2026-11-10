@@ -43,6 +43,8 @@ pub struct DepthConfig {
     pub vector_tolerance: f32,
     /// share of the group that must lie in one connected region of the picture
     pub min_coherence: f32,
+    /// a cell belongs to a region when at least this many points of the group lie in it (strays do not count)
+    pub min_cell_points: usize,
     /// rings of cells added around the cells with group points (the object is larger than its points)
     pub dilate: usize,
     /// most layers searched per pair after aligning
@@ -51,7 +53,7 @@ pub struct DepthConfig {
 
 impl Default for DepthConfig {
     fn default() -> Self {
-        DepthConfig { enabled: true, min_weight: 0.25, min_error_px: 8.0, min_points: 8, min_share: 0.1, max_share: 0.6, vector_tolerance: 0.4, min_coherence: 0.7, dilate: 1, max_layers: 2 }
+        DepthConfig { enabled: true, min_weight: 0.25, min_error_px: 8.0, min_points: 8, min_share: 0.1, max_share: 0.6, vector_tolerance: 0.4, min_coherence: 0.7, min_cell_points: 2, dilate: 1, max_layers: 2 }
     }
 }
 
@@ -91,8 +93,11 @@ impl CoarseMask {
         let i = cy * GRID + cx;
         self.bits[i / 64] >> (i % 64) & 1 == 1
     }
+    /// Number of cells set in both masks.
+    pub fn overlap(&self, other: &CoarseMask) -> usize {
+        self.bits.iter().zip(&other.bits).map(|(a, b)| (a & b).count_ones() as usize).sum()
+    }
     /// Number of cells set.
-    #[cfg(test)]
     pub fn count(&self) -> usize {
         self.bits.iter().map(|b| b.count_ones() as usize).sum()
     }
@@ -102,10 +107,16 @@ impl CoarseMask {
         (f(x, w), f(y, h))
     }
     /// Cell of a normalised coordinate (long side = 1, see `engine::norm_coord`).
+    /// Place of a normalised coordinate as shares of the picture (0..1 across, 0..1 down).
+    pub fn frac_of_norm(p: [f64; 2], dims: (usize, usize)) -> [f32; 2] {
+        let l = dims.0.max(dims.1) as f64;
+        [((p[0] * l + dims.0 as f64 * 0.5) / dims.0.max(1) as f64) as f32, ((p[1] * l + dims.1 as f64 * 0.5) / dims.1.max(1) as f64) as f32]
+    }
     pub fn cell_of_norm(p: [f64; 2], dims: (usize, usize)) -> (usize, usize) {
         let l = dims.0.max(dims.1) as f64;
         Self::cell_of_px(p[0] * l + dims.0 as f64 * 0.5, p[1] * l + dims.1 as f64 * 0.5, dims.0, dims.1)
     }
+    #[cfg(test)]
     pub fn set_norm(&mut self, p: [f64; 2], dims: (usize, usize)) {
         let (cx, cy) = Self::cell_of_norm(p, dims);
         self.set(cx, cy);
@@ -113,6 +124,18 @@ impl CoarseMask {
     pub fn contains_norm(&self, p: [f64; 2], dims: (usize, usize)) -> bool {
         let (cx, cy) = Self::cell_of_norm(p, dims);
         self.get(cx, cy)
+    }
+    /// Cells set, as (cx, cy).
+    pub fn cells(&self) -> Vec<(usize, usize)> {
+        (0..GRID * GRID).map(|i| (i % GRID, i / GRID)).filter(|&(x, y)| self.get(x, y)).collect()
+    }
+    /// Bounding box of the set cells as shares of the picture (x0, y0, x1, y1); None when empty.
+    pub fn bbox(&self) -> Option<[f32; 4]> {
+        let c = self.cells();
+        let (x0, x1) = (c.iter().map(|p| p.0).min()?, c.iter().map(|p| p.0).max()?);
+        let (y0, y1) = (c.iter().map(|p| p.1).min()?, c.iter().map(|p| p.1).max()?);
+        let g = GRID as f32;
+        Some([x0 as f32 / g, y0 as f32 / g, (x1 + 1) as f32 / g, (y1 + 1) as f32 / g])
     }
     /// Whether a place given as shares of the picture (0..1 across, 0..1 down) lies in a cell that is set.
     pub fn contains_frac(&self, fx: f64, fy: f64) -> bool {
@@ -135,6 +158,40 @@ impl CoarseMask {
                         }
                     }
                 }
+            }
+        }
+        m
+    }
+}
+
+/// How many points of a group lie in each cell; `mask` keeps the cells with enough of them, so a few strays far from
+/// the object do not stretch the region over half the picture.
+#[derive(Clone)]
+pub struct CellCounts([u16; GRID * GRID]);
+
+impl Default for CellCounts {
+    fn default() -> Self {
+        CellCounts([0; GRID * GRID])
+    }
+}
+
+impl CellCounts {
+    pub fn add_px(&mut self, x: f64, y: f64, dims: (usize, usize)) {
+        let (cx, cy) = CoarseMask::cell_of_px(x, y, dims.0, dims.1);
+        self.0[cy * GRID + cx] += 1;
+    }
+    pub fn add_norm(&mut self, p: [f64; 2], dims: (usize, usize)) {
+        let (cx, cy) = CoarseMask::cell_of_norm(p, dims);
+        self.0[cy * GRID + cx] += 1;
+    }
+    /// The cells with at least `min` points; when the group is so small that none has that many, the cells with any.
+    pub fn mask(&self, min: usize) -> CoarseMask {
+        let strict = self.0.iter().any(|&c| c as usize >= min);
+        let need = if strict { min.max(1) } else { 1 };
+        let mut m = CoarseMask::default();
+        for (i, &c) in self.0.iter().enumerate() {
+            if c as usize >= need {
+                m.set(i % GRID, i / GRID);
             }
         }
         m
@@ -198,6 +255,12 @@ pub struct NearRegion {
     /// matches or points in the group
     pub count: usize,
     pub source: Source,
+    /// the points of the group in photo a and b as shares of the picture (only regions found from errors have them;
+    /// they give the tight outline of `near_seams.rs`)
+    #[serde(default)]
+    pub pts_a: Vec<[f32; 2]>,
+    #[serde(default)]
+    pub pts_b: Vec<[f32; 2]>,
 }
 
 impl NearRegion {
@@ -267,6 +330,8 @@ impl Layers {
                     shift_px: h.group.shift_px as f32,
                     count: h.group.count,
                     source: Source::Matches,
+                    pts_a: Vec::new(),
+                    pts_b: Vec::new(),
                 })
                 .collect(),
         }
@@ -342,11 +407,12 @@ pub fn detect_after(cps: &[ControlPoint], resid: &[[f64; 4]], dims: &[(usize, us
             let background = total - group.len();
             let enough_fit = share <= cfg.max_share && fits as f32 >= 0.2 * total as f32 && background >= cfg.min_points;
             if coherent && enough_fit {
-                let (mut ma, mut mb) = (CoarseMask::default(), CoarseMask::default());
+                let (mut ma, mut mb) = (CellCounts::default(), CellCounts::default());
                 for &i in &group {
-                    ma.set_norm(cps[i].pa, dims[a]);
-                    mb.set_norm(cps[i].pb, dims[b]);
+                    ma.add_norm(cps[i].pa, dims[a]);
+                    mb.add_norm(cps[i].pb, dims[b]);
                 }
+                let (ma, mb) = (ma.mask(cfg.min_cell_points), mb.mask(cfg.min_cell_points));
                 let mut mags: Vec<f64> = group.iter().map(|&i| mag(vec_of(i))).collect();
                 mags.sort_by(f64::total_cmp);
                 out.push(NearRegion {
@@ -359,6 +425,8 @@ pub fn detect_after(cps: &[ControlPoint], resid: &[[f64; 4]], dims: &[(usize, us
                     shift_px: mags[mags.len() / 2] as f32,
                     count: group.len(),
                     source: Source::Residuals,
+                    pts_a: group.iter().map(|&i| CoarseMask::frac_of_norm(cps[i].pa, dims[a])).collect(),
+                    pts_b: group.iter().map(|&i| CoarseMask::frac_of_norm(cps[i].pb, dims[b])).collect(),
                 });
             }
             bad.retain(|i| !group.contains(i));
@@ -554,7 +622,7 @@ mod tests {
         ma.set_norm([0.0, 0.0], DIMS);
         let mut mb = CoarseMask::default();
         mb.set_norm([0.3, 0.0], DIMS);
-        let r = NearRegion { a: 0, b: 1, mask_a: ma, mask_b: mb, dims_a: DIMS, dims_b: DIMS, shift_px: 10.0, count: 9, source: Source::Residuals };
+        let r = NearRegion { a: 0, b: 1, mask_a: ma, mask_b: mb, dims_a: DIMS, dims_b: DIMS, shift_px: 10.0, count: 9, source: Source::Residuals, pts_a: Vec::new(), pts_b: Vec::new() };
         let fwd = ControlPoint::new(0, 1, [0.0, 0.0], [0.3, 0.0], false);
         let rev = ControlPoint::new(1, 0, [0.3, 0.0], [0.0, 0.0], false);
         let other = ControlPoint::new(0, 2, [0.0, 0.0], [0.3, 0.0], false);

@@ -157,7 +157,7 @@ mod tests {
             version: 1,
             photos: vec![
                 ProjectPhoto { path: PathBuf::from("a.jpg"), lens: 0, rot: IDENTITY, enabled: true, field: None, masks: Vec::new() },
-                ProjectPhoto { path: PathBuf::from("b.jpg"), lens: 0, rot: crate::geometry::rodrigues([0.0, 0.2, 0.0]), enabled: false, field: Some(DisplacementField { gw: 2, gh: 2, d: vec![[0.001, -0.002], [0.0, 0.0], [0.003, 0.004], [-0.005, 0.0]] }), masks: vec![MaskStroke { kind: crate::masks::MaskKind::Negative, points: vec![[0.2, 0.3], [0.4, 0.5]], radius: 0.02, polygon: false }] },
+                ProjectPhoto { path: PathBuf::from("b.jpg"), lens: 0, rot: crate::geometry::rodrigues([0.0, 0.2, 0.0]), enabled: false, field: Some(DisplacementField { gw: 2, gh: 2, d: vec![[0.001, -0.002], [0.0, 0.0], [0.003, 0.004], [-0.005, 0.0]] }), masks: vec![MaskStroke { kind: crate::masks::MaskKind::Negative, points: vec![[0.2, 0.3], [0.4, 0.5]], radius: 0.02, polygon: false, auto: false }] },
             ],
             lenses: vec![Lens::from_hfov_deg(60.0)],
             cps: vec![ControlPoint::new(0, 1, [0.1, 0.2], [-0.3, 0.05], true)],
