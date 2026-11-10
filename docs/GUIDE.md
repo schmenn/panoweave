@@ -244,6 +244,7 @@ Some photos have no points to the others. Common reasons: too little overlap, ve
 They pull the photos apart, because those things moved between shots. Keep "Ignore sky & clouds" on, use **Find points on sky or cloud** to remove old ones, and delete points on people or waves by hand (select them with the lasso or brush and press Delete). Trees and bushes move too: they get a smaller weight automatically ("Count points and patches on foliage less"), and **Foliage → Remove** in the point editor deletes their points if you want them gone.
 
 **Seams or double edges on close objects (parallax)**
+If a nearer object (a car, a fence) does not fit the rest, **Find points** says so: "Photos 8 and 10: 412 matches on a nearer object do not fit the rest (about 25 px apart) – this looks like parallax." The same text is in step 3 (card **Nearby object**) and in the connection view. Those matches are not used as points; nothing is changed until you click **Turn on Parallax mode** (then align again) or **Open masks**. Pairs without such a group get no message (the log, line `parallax check:`, says how many pairs were checked). Switch: **Hint at nearby objects** next to **Find points in all photos**.
 The photos were not taken around the lens. Try the **Parallax mode** in the fine alignment, **Smart seams** and masks in the export, and avoid points on close objects (they cannot fit both the near and the far parts).
 
 **A high average error after aligning**
@@ -283,6 +284,7 @@ Nothing was changed. The status line names a `crash.log` file (in `%APPDATA%\Pan
 |---|---|
 | no overlap found (photo list) | The photo has no points to the main group. |
 | N points removed in M passes | The alignment dropped N points that did not fit, over M alignment passes; Ctrl+Z brings them back. |
+| Photos 8 and 10: N matches on a nearer object do not fit the rest (about X px apart) – this looks like parallax. | Many consistent matches of this pair do not fit the rotation model (a nearer object). They are not used as points. Turn on Parallax mode (step 3) or mask the object. |
 | Something changed – align again to update. | Points or photos changed after aligning. |
 | The last round was undone because it made the result worse. | Fine alignment kept the better earlier state. |
 | N protected point(s) are off by more than 3 px … | The fine alignment found a protected point elsewhere; the point was left alone. |

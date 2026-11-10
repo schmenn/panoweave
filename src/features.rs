@@ -345,10 +345,149 @@ pub struct Corr {
 pub struct PairMatch {
     pub h: [f64; 9],
     pub corrs: Vec<Corr>,
+    /// a group of consistent matches that the main model cannot explain (only with the parallax check on)
+    pub suspect: Option<ParallaxGroup>,
+}
+
+/// Settings of the parallax check: after the main RANSAC of a pair, the matches it rejected get a second RANSAC of
+/// their own. A large, coherent group that is consistent among itself but far from the main model is a nearer object
+/// (parallax). The group is only counted and reported, never turned into control points.
+#[derive(Clone, Copy, Debug)]
+pub struct ParallaxHintConfig {
+    /// off = no extra work at all
+    pub enabled: bool,
+    /// smallest size of the group (matches)
+    pub min_count: usize,
+    /// smallest share of all matches of the pair that the group must make up
+    pub min_share: f64,
+    /// smallest median distance of the group from the main model, in working-image pixels at 1600 px (scaled with the size)
+    pub min_shift_px: f64,
+    /// share of the group that must lie in one connected region of the picture
+    pub min_coherence: f64,
+}
+
+impl Default for ParallaxHintConfig {
+    fn default() -> Self {
+        ParallaxHintConfig { enabled: true, min_count: 40, min_share: 0.10, min_shift_px: 8.0, min_coherence: 0.7 }
+    }
+}
+
+/// A nearer object found in a pair: size and place of the group (working-image pixels of the first photo).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParallaxGroup {
+    pub count: usize,
+    /// share of all matches of the pair
+    pub share: f64,
+    /// median distance of the group from where the main model puts it, in working-image pixels
+    pub shift_px: f64,
+    pub centre: (f32, f32),
+    /// x0, y0, x1, y1 (10 % to 90 % of the points, so single strays do not widen it)
+    pub bbox: [f32; 4],
+}
+
+const HINT_GRID: usize = 8;
+
+/// Second RANSAC on the matches the main model rejected. `a_pts`/`b_pts` are all matches, `rejected` indexes the ones
+/// outside the main model `h`. Returns the group if it passes every limit of `cfg`.
+fn parallax_group(
+    a_pts: &[(f64, f64)],
+    b_pts: &[(f64, f64)],
+    rejected: &[usize],
+    h: &[f64; 9],
+    dims: (usize, usize),
+    thr: f64,
+    cfg: &ParallaxHintConfig,
+    seed: u64,
+) -> Option<ParallaxGroup> {
+    let total = a_pts.len();
+    let need = cfg.min_count.max((cfg.min_share * total as f64).ceil() as usize);
+    if rejected.len() < need || crate::engine::cancelled() {
+        return None;
+    }
+    let rs: Vec<(f64, f64)> = rejected.iter().map(|&i| a_pts[i]).collect();
+    let rd: Vec<(f64, f64)> = rejected.iter().map(|&i| b_pts[i]).collect();
+    let (_, inl) = ransac_h(&rs, &rd, thr, seed ^ 0x9e37_79b9)?;
+    if inl.len() < need {
+        return None;
+    }
+    let mut dev: Vec<f64> = inl
+        .iter()
+        .map(|&k| {
+            let (x, y) = h_apply(h, rs[k].0, rs[k].1);
+            ((x - rd[k].0).powi(2) + (y - rd[k].1).powi(2)).sqrt()
+        })
+        .collect();
+    dev.sort_by(|x, y| x.total_cmp(y));
+    let shift = dev[dev.len() / 2];
+    let long = dims.0.max(dims.1) as f64;
+    if shift < cfg.min_shift_px * long / 1600.0 {
+        return None;
+    }
+    // spatial coherence: the largest 8-connected region of occupied cells of a coarse grid must hold most of the group
+    let cell = |p: (f64, f64)| {
+        let gx = ((p.0 / dims.0 as f64 * HINT_GRID as f64) as isize).clamp(0, HINT_GRID as isize - 1) as usize;
+        let gy = ((p.1 / dims.1 as f64 * HINT_GRID as f64) as isize).clamp(0, HINT_GRID as isize - 1) as usize;
+        (gx, gy)
+    };
+    let mut cnt = [[0usize; HINT_GRID]; HINT_GRID];
+    for &k in &inl {
+        let (gx, gy) = cell(rs[k]);
+        cnt[gy][gx] += 1;
+    }
+    let mut seen = [[false; HINT_GRID]; HINT_GRID];
+    let mut best = 0usize;
+    for y0 in 0..HINT_GRID {
+        for x0 in 0..HINT_GRID {
+            if seen[y0][x0] || cnt[y0][x0] == 0 {
+                continue;
+            }
+            let (mut sum, mut stack) = (0usize, vec![(x0, y0)]);
+            seen[y0][x0] = true;
+            while let Some((x, y)) = stack.pop() {
+                sum += cnt[y][x];
+                for dy in -1isize..=1 {
+                    for dx in -1isize..=1 {
+                        let (nx, ny) = (x as isize + dx, y as isize + dy);
+                        if nx < 0 || ny < 0 || nx >= HINT_GRID as isize || ny >= HINT_GRID as isize {
+                            continue;
+                        }
+                        let (nx, ny) = (nx as usize, ny as usize);
+                        if !seen[ny][nx] && cnt[ny][nx] > 0 {
+                            seen[ny][nx] = true;
+                            stack.push((nx, ny));
+                        }
+                    }
+                }
+            }
+            best = best.max(sum);
+        }
+    }
+    if (best as f64) < cfg.min_coherence * inl.len() as f64 {
+        return None;
+    }
+    let mut xs: Vec<f64> = inl.iter().map(|&k| rs[k].0).collect();
+    let mut ys: Vec<f64> = inl.iter().map(|&k| rs[k].1).collect();
+    xs.sort_by(|x, y| x.total_cmp(y));
+    ys.sort_by(|x, y| x.total_cmp(y));
+    let q = |v: &[f64], f: f64| v[((v.len() - 1) as f64 * f) as usize] as f32;
+    let bbox = [q(&xs, 0.1), q(&ys, 0.1), q(&xs, 0.9), q(&ys, 0.9)];
+    Some(ParallaxGroup {
+        count: inl.len(),
+        share: inl.len() as f64 / total as f64,
+        shift_px: shift,
+        centre: (q(&xs, 0.5), q(&ys, 0.5)),
+        bbox,
+    })
 }
 
 /// Full pair pipeline: descriptor matching, RANSAC, guided matching, thinning.
 pub fn match_pair(a: &Features, b: &Features, max_points: usize, seed: u64) -> Option<PairMatch> {
+    match_pair_ex(a, b, max_points, seed, None)
+}
+
+/// `match_pair`; with `hint` (and `enabled`) the matches the model rejects are also checked for a nearer object.
+/// The matches and the model are the same either way.
+pub fn match_pair_ex(a: &Features, b: &Features, max_points: usize, seed: u64, hint: Option<&ParallaxHintConfig>) -> Option<PairMatch> {
     let m = match_descriptors(a, b, 0.85);
     if m.len() < 10 {
         return None;
@@ -388,8 +527,17 @@ pub fn match_pair(a: &Features, b: &Features, max_points: usize, seed: u64) -> O
             })
             .collect();
     }
+    let suspect = hint.filter(|c| c.enabled).and_then(|cfg| {
+        let rejected: Vec<usize> = (0..m.len())
+            .filter(|&k| {
+                let (x, y) = h_apply(&h2, src[k].0, src[k].1);
+                ((x - dst[k].0).powi(2) + (y - dst[k].1).powi(2)).sqrt() >= thr
+            })
+            .collect();
+        parallax_group(&src, &dst, &rejected, &h2, (a.w, a.h), thr, cfg, seed)
+    });
     let thinned = thin(final_c, a.w, a.h, max_points);
-    Some(PairMatch { h: h2, corrs: thinned })
+    Some(PairMatch { h: h2, corrs: thinned, suspect })
 }
 
 fn sane_h(h: &[f64; 9]) -> bool {
@@ -874,6 +1022,109 @@ mod tests {
         assert!(pm.corrs.len() >= 12 && pm.corrs.len() <= 100);
         let good = pm.corrs.iter().filter(|c| ((c.bx - (c.ax - 60.0)).powi(2) + (c.by - c.ay).powi(2)).sqrt() < 3.0).count();
         assert!(good as f32 >= 0.9 * pm.corrs.len() as f32, "{good} of {}", pm.corrs.len());
+    }
+
+    /// Background shifted by 60 px between the shots (a rotation seen from far away), optionally with a nearer object
+    /// that moves 25 px further than the background.
+    fn parallax_pair(near: bool) -> (Features, Features) {
+        let big = texture(520, 300, 24);
+        let mut a = crate::testutil::crop(&big, 0, 0, 400, 300);
+        let mut b = crate::testutil::crop(&big, 60, 0, 400, 300);
+        if near {
+            let obj = texture(150, 140, 77);
+            image::imageops::replace(&mut a, &obj, 200, 80);
+            // the background there moves by 60, the object by 85
+            image::imageops::replace(&mut b, &obj, 200 - 85, 80);
+        }
+        (detect(&to_gray(&a), 1500), detect(&to_gray(&b), 1500))
+    }
+
+    fn small_hint() -> ParallaxHintConfig {
+        // the test images are small: lower limits than for real photos
+        ParallaxHintConfig { min_count: 15, min_share: 0.05, ..Default::default() }
+    }
+
+    #[test]
+    fn near_object_is_reported_but_adds_no_points() {
+        let (fa, fb) = parallax_pair(true);
+        let pm = match_pair_ex(&fa, &fb, 200, 1, Some(&small_hint())).expect("background matches");
+        let g = pm.suspect.expect("the near object must be reported");
+        assert!(g.count >= 15 && (g.shift_px - 25.0).abs() < 4.0, "{g:?}");
+        // centre lies on the object (x 200..350, y 80..220)
+        assert!(g.centre.0 > 190.0 && g.centre.0 < 360.0 && g.centre.1 > 70.0 && g.centre.1 < 230.0, "{g:?}");
+        // the control points are those of the background model only
+        let plain = match_pair(&fa, &fb, 200, 1).unwrap();
+        assert_eq!(plain.corrs.len(), pm.corrs.len());
+        assert_eq!(plain.h, pm.h);
+        assert!(plain.suspect.is_none());
+    }
+
+    #[test]
+    fn no_near_object_no_hint() {
+        let (fa, fb) = parallax_pair(false);
+        let pm = match_pair_ex(&fa, &fb, 200, 1, Some(&small_hint())).expect("matches");
+        assert!(pm.suspect.is_none(), "{:?}", pm.suspect);
+    }
+
+    #[test]
+    fn switched_off_check_reports_nothing() {
+        let (fa, fb) = parallax_pair(true);
+        let off = ParallaxHintConfig { enabled: false, ..small_hint() };
+        assert!(match_pair_ex(&fa, &fb, 200, 1, Some(&off)).unwrap().suspect.is_none());
+    }
+
+    #[test]
+    fn random_outliers_are_no_parallax() {
+        // 300 matches of a pure shift plus 400 random wrong matches: nothing consistent among the wrong ones
+        let mut rng = crate::geometry::Rng(5);
+        let mut src = Vec::new();
+        let mut dst = Vec::new();
+        for _ in 0..300 {
+            let (x, y) = (rng.unit() * 1500.0, rng.unit() * 1100.0);
+            src.push((x, y));
+            dst.push((x - 60.0, y));
+        }
+        for _ in 0..400 {
+            src.push((rng.unit() * 1500.0, rng.unit() * 1100.0));
+            dst.push((rng.unit() * 1500.0, rng.unit() * 1100.0));
+        }
+        let h = [1.0, 0.0, -60.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let rejected: Vec<usize> = (300..700).collect();
+        let cfg = ParallaxHintConfig::default();
+        assert!(parallax_group(&src, &dst, &rejected, &h, (1600, 1200), 5.6, &cfg, 3).is_none());
+        // the same with a real second group (400 matches moved 25 px further, in one region) is found
+        let mut src2 = src.clone();
+        let mut dst2 = dst.clone();
+        for _ in 0..400 {
+            let (x, y) = (400.0 + rng.unit() * 300.0, 300.0 + rng.unit() * 250.0);
+            src2.push((x, y));
+            dst2.push((x - 85.0, y));
+        }
+        let rej2: Vec<usize> = (300..1100).collect();
+        let g = parallax_group(&src2, &dst2, &rej2, &h, (1600, 1200), 5.6, &cfg, 3).expect("group");
+        assert!(g.count >= 380 && (g.shift_px - 25.0).abs() < 1.0, "{g:?}");
+    }
+
+    #[test]
+    fn scattered_consistent_matches_are_not_a_coherent_group() {
+        // a consistent group spread as single points all over the picture (not one object) is refused
+        let mut rng = crate::geometry::Rng(9);
+        let mut src = Vec::new();
+        let mut dst = Vec::new();
+        for _ in 0..200 {
+            let (x, y) = (rng.unit() * 1500.0, rng.unit() * 1100.0);
+            src.push((x, y));
+            dst.push((x - 60.0, y));
+        }
+        // group in two far corners only
+        for i in 0..200 {
+            let (x, y) = if i % 2 == 0 { (50.0 + rng.unit() * 200.0, 50.0 + rng.unit() * 150.0) } else { (1250.0 + rng.unit() * 200.0, 900.0 + rng.unit() * 150.0) };
+            src.push((x, y));
+            dst.push((x - 85.0, y));
+        }
+        let h = [1.0, 0.0, -60.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let rejected: Vec<usize> = (200..400).collect();
+        assert!(parallax_group(&src, &dst, &rejected, &h, (1600, 1200), 5.6, &ParallaxHintConfig::default(), 3).is_none());
     }
 
     #[test]

@@ -123,6 +123,8 @@ impl PanoApp {
                 });
             ui.checkbox(&mut self.match_settings.ignore_sky, "Ignore sky & clouds")
                 .on_hover_text("Clouds move between shots, so points on them pull the photos apart. Turn off only if the sky is the only overlap.");
+            ui.checkbox(&mut self.match_settings.parallax_hint.enabled, "Hint at nearby objects")
+                .on_hover_text("Checks whether many consistent matches do not fit the rest of a pair (a nearer object, parallax) and says so in step 3. Nothing is changed. Off = no extra work.");
             ui.label("Points per pair:");
             ui.add(egui::DragValue::new(&mut self.match_settings.points_per_pair).range(8..=300));
             if let Some((k, d, m, pairs)) = self.last_match {
