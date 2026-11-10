@@ -125,6 +125,7 @@ impl PanoApp {
             acc: Default::default(),
             pair_summary: None,
             parallax_hints: Vec::new(),
+            layers: Default::default(),
             show_graph: false,
             graph_photo: None,
             click: ClickState::default(),

@@ -168,6 +168,8 @@ pub struct ParallaxHint {
     pub group: features::ParallaxGroup,
     /// size of the working images of photo a (to place the group in the picture)
     pub dims: (usize, usize),
+    /// the same for photo b
+    pub dims_b: (usize, usize),
 }
 
 impl ParallaxHint {
@@ -325,7 +327,7 @@ pub fn find_points(
     let mut parallax = Vec::new();
     for (a, b, c, suspect) in results {
         if let Some(group) = suspect {
-            let h = ParallaxHint { a, b, group, dims: (grays[a].w, grays[a].h) };
+            let h = ParallaxHint { a, b, group, dims: (grays[a].w, grays[a].h), dims_b: (grays[b].w, grays[b].h) };
             eprintln!("parallax check: {} The group lies {} {}, {:.0} % of the matches.", h.text(), h.place(), a + 1, group.share * 100.0);
             parallax.push(h);
         }
@@ -434,6 +436,8 @@ pub struct AlignResult {
     pub fields: Vec<Option<std::sync::Arc<crate::fine_align::DisplacementField>>>,
     /// geometric pair check (overlaps, searched pairs), if it ran
     pub pairs: Option<crate::pair_check::PairSummary>,
+    /// near objects found by the point finder and in the errors of this alignment
+    pub layers: crate::depth::Layers,
 }
 
 #[derive(Clone, Copy)]
@@ -492,7 +496,7 @@ pub fn align_all_from(
     report(0.1, "Estimating the lens");
     align::guess_fov(&inp, &mut lenses, &cps, anchor);
     if cancelled() {
-        return AlignResult { rots: vec![IDENTITY_ROT; n], lenses, cps, removed: 0, removal_passes: 0, ms: 0, mean_err: 0.0, max_err: 0.0, fine: None, fields: Vec::new(), pairs: None };
+        return AlignResult { rots: vec![IDENTITY_ROT; n], lenses, cps, removed: 0, removal_passes: 0, ms: 0, mean_err: 0.0, max_err: 0.0, fine: None, fields: Vec::new(), pairs: None, layers: Default::default() };
     }
     report(0.3, "Placing photos");
     let mut rots = match start {
@@ -524,7 +528,7 @@ pub fn align_all_from(
     }
     let mean_err = if cps.is_empty() { 0.0 } else { cps.iter().map(|c| c.err).sum::<f64>() / cps.len() as f64 };
     let max_err = cps.iter().map(|c| c.err).fold(0.0, f64::max);
-    AlignResult { rots, lenses, cps, removed, removal_passes: usize::from(removed > 0), ms: t0.elapsed().as_millis(), mean_err, max_err, fine: None, fields: Vec::new(), pairs: None }
+    AlignResult { rots, lenses, cps, removed, removal_passes: usize::from(removed > 0), ms: t0.elapsed().as_millis(), mean_err, max_err, fine: None, fields: Vec::new(), pairs: None, layers: Default::default() }
 }
 
 #[cfg(test)]

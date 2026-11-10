@@ -1206,6 +1206,7 @@ fn compute_labels(
                     | match p.mask_at(x, y) {
                         crate::masks::POSITIVE => crate::seams::POSITIVE,
                         crate::masks::NEGATIVE => crate::seams::NEGATIVE,
+                        crate::masks::GUARD => crate::seams::GUARD,
                         _ => 0,
                     };
                 *out = Sample { rgb: [to8(c[0]), to8(c[1]), to8(c[2])], flags, score };

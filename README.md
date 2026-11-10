@@ -60,6 +60,7 @@ The release `.exe` is not code-signed, so Windows SmartScreen may say "Windows p
 - **Formats:** JPEG, PNG, TIFF and RAW (via `imagepipe`, optional `raw` feature), EXIF rotation is respected
 - **Automatic control points:** multi-scale corner detection, rotation-aware descriptors, ratio-test matching, RANSAC and guided re-matching
 - **No points on sky or clouds** (can be switched off); points that still sit there (placed by hand, from patch click or old projects) can be found and removed later with "Find points on sky or cloud" in the point editor or the point list (threshold, one undo step, protected points stay)
+- **Near objects count less:** a car or railing close to the camera cannot line up with the background; points and patches on it (found from the matches the rotation model rejects and from the errors left after aligning) get a smaller weight in the alignment, so the background decides; switchable, protected and hand-placed points are never touched
 - **Trees and bushes count less:** points and patches on foliage (colour, very fine irregular structure, and above all restless residual errors after aligning) get a smaller weight in the alignment instead of being deleted; switchable, protected and hand-placed points are never touched, and "Foliage → Remove" deletes their points on request
 - **Point editor:** place a few points by hand and let PanoWeave find more, with sub-pixel snapping, zoom levels and a sortable point list; the patch-click mode uses the rotation and zoom of nearby points (and of the alignment), so slightly turned photos are matched too
 - **Area tool:** draw a rough rectangle round the same surface (sign, number plate, wall) in both photos and pull its four corners onto it (slanted surfaces too); the areas are compared exactly (patch matching, sub-pixel, projective map that also corrects corners that are a bit off) and points are proposed only on corners with real structure, with a score each, added after your click as one undo step
@@ -83,6 +84,7 @@ The release `.exe` is not code-signed, so Windows SmartScreen may say "Windows p
 - **Smooth brightness correction across each photo:** besides one gain per photo, a smooth correction field per photo (a coarse grid, solved from the overlaps, robust against clouds and people) evens out sky gradients, vignetting and automatic exposure, so the footprints of single photos no longer show as rectangles. On by default, switchable in the export dialog (Blending).
 - **Lens correction** (optional, off by default; Export step, Blending): a response curve (one exponent per colour channel) and a vignetting model per lens, solved from the overlaps of all photos. It helped on one test set and not on another, so it is an experiment, not a default.
 - **Smart seams** (optional, off by default): a graph-cut seam finder searches, once for the whole panorama, where the photos agree, so that close objects that two photos see from different sides (poles, lamps, people) are not cut in two. Found on a coarse grid in two steps, so the result does not depend on the strips either.
+- **Seams keep off near objects:** "Keep seams off near objects" in the mask editor proposes a tight outline of a car or railing close to the camera (drawn first, applied only on "Apply"); the seam finder then runs its seams round it instead of through it; removable again
 - **Masks:** paint "use here" (green) and "do not use here" (red) masks on a photo with a brush or lasso (Export step, Blending, "Edit masks..."). Green steers the seams; a red spot is left out of the panorama completely (nothing of it is blended in), and where every photo is red there is a hole, which the preview shows and the program warns about. Saved in the project file; a "Show seams" view shows which photo wins where.
 
 **Exposure fusion**
@@ -117,8 +119,10 @@ flowchart LR
 | `lensphoto` | Optional per-lens response curve and vignetting model |
 | `overlap`, `duplicate_points` | Overlap check sampling; detection of points on top of each other |
 | `sky_points` | Points on sky or cloud: which points to mark and which may be removed |
+| `depth` | Near objects: regions of a photo pair that a rotation-only camera cannot explain (from rejected matches and from residual errors); points and patches in them get a smaller weight in the alignment |
 | `foliage` | Foliage rating: colour, fine irregular structure and restless residual errors give points and patches on trees a smaller weight in the alignment |
 | `seams`, `masks` | Seam finder (graph cut) and the masks painted on photos |
+| `near_seams` | Proposal of tight outlines of near objects (from `depth`) that the seam finder must not cut through |
 | `app` | The egui user interface, split into `types`, `state`, `jobs`, `demo`, `chrome`, `pipeline`, `points_*`, `photos`, `align`, `frame`, `export`, `exposure`, `connections` |
 | `accuracy_search` | "Maximum accuracy": tries every way of placing the photos and rates each on the same spots |
 | `main`, `accuracy_test` | Arguments and headless test drivers (`--accuracy`: the independent fit check) |

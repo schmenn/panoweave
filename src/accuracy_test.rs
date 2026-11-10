@@ -51,6 +51,8 @@ pub struct Setup {
     pub lenses: Vec<align::Lens>,
     pub long: Vec<f64>,
     pub ms: engine::MatchSettings,
+    /// near objects the point finder reported (empty for a project: they are found in the errors then)
+    pub hints: Vec<engine::ParallaxHint>,
 }
 
 pub fn setup(files_in: &[PathBuf]) -> Setup {
@@ -112,12 +114,12 @@ pub fn setup(files_in: &[PathBuf]) -> Setup {
         Some(p) => (p.photos.iter().map(|ph| ph.lens).collect::<Vec<_>>(), p.lenses.clone()),
         None => (lens_of, lenses),
     };
-    Setup { files, photos, cps: m.cps, lens_of, lenses, long, ms }
+    Setup { files, photos, cps: m.cps, lens_of, lenses, long, ms, hints: m.parallax }
 }
 
 pub fn run(files_in: &[PathBuf]) {
     use rayon::prelude::*;
-    let Setup { files, photos, cps: cps0, lens_of, mut lenses, long, ms } = setup(files_in);
+    let Setup { files, photos, cps: cps0, lens_of, mut lenses, long, ms, hints } = setup(files_in);
     let files = &files[..];
     let fa_at = |size: u32| -> Vec<fine_align::FaPhoto> {
         if size == engine::WORK_SIZE {
@@ -186,10 +188,18 @@ pub fn run(files_in: &[PathBuf]) {
         let fol_v = if fine_cfg.foliage.enabled { fine_align::foliage_maps(&fa) } else { Vec::new() };
         let fol: Vec<Option<&crate::foliage::FoliageMap>> = (0..fa.len()).map(|i| fol_v.get(i)).collect();
         crate::foliage::rate(&mut cps, &fol, &fine_cfg.foliage);
+        // the same near-object rating as "Align photos" in the app
+        let dims: Vec<(usize, usize)> = fa.iter().map(|p| (p.gray.w, p.gray.h)).collect();
+        let mut layers = crate::depth::Layers::from_hints(&hints, &fine_cfg.depth);
+        crate::depth::rate(&mut cps, &layers, &fine_cfg.depth);
         let mut r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, &|_, _| {});
+        crate::depth::refresh(&mut layers, &lens_of, &long, &r0.lenses, &r0.rots, &r0.cps, &dims, &fine_cfg.depth);
         crate::foliage::rate(&mut r0.cps, &fol, &fine_cfg.foliage);
+        crate::depth::rate(&mut r0.cps, &layers, &fine_cfg.depth);
         let (mut r, psum) = pair_check::run_rounds(&fa, &lens_of, &lenses, &long, r0, &s, &used, &pc_cfg, &fine_cfg.matcher, ms, &|_, _| {});
+        crate::depth::refresh(&mut layers, &lens_of, &long, &r.lenses, &r.rots, &r.cps, &dims, &fine_cfg.depth);
         crate::foliage::rate(&mut r.cps, &fol, &fine_cfg.foliage);
+        crate::depth::rate(&mut r.cps, &layers, &fine_cfg.depth);
         let removed = r.removed;
         {
             // overlapping pairs (estimated from the geometry) that still have too few points
@@ -213,13 +223,31 @@ pub fn run(files_in: &[PathBuf]) {
                 q.valid, q.spots, q.mean, q.median, q.p90, q.diff, radius_text(&q)
             );
         }
-        let (rots, lenses2, cps2, st) = fine_align::run(&fa_fine, &lens_of, &long, &r.lenses, &r.rots, &r.cps, s.fine_tune_fov, s.distortion, &fine_cfg, &|_, _| {});
+        let run_cfg = fine_align::FineConfig { layers: layers.clone(), ..fine_cfg.clone() };
+        let (rots, lenses2, cps2, st) = fine_align::run(&fa_fine, &lens_of, &long, &r.lenses, &r.rots, &r.cps, s.fine_tune_fov, s.distortion, &run_cfg, &|_, _| {});
+        for reg in &st.layers.regions {
+            println!("  near object: {}", reg.text());
+        }
         r.rots = rots;
         r.lenses = lenses2;
         r.cps = cps2;
         let errs: Vec<f64> = r.cps.iter().filter(|c| c.kind == align::CpKind::Point).map(|c| c.err).collect();
         let mean_err = errs.iter().sum::<f64>() / errs.len().max(1) as f64;
         let q = scaled(fine_align::quality(&fa_check, &lens_of, &r.lenses, &r.rots, &spots, &qcfg));
+        // the near objects of the final alignment, found with the default limits whatever the switch says (so runs with
+        // the rating on and off are judged on the same kind of spots)
+        let mut layers_now = crate::depth::Layers::default();
+        let dims: Vec<(usize, usize)> = fa.iter().map(|p| (p.gray.w, p.gray.h)).collect();
+        crate::depth::refresh(&mut layers_now, &lens_of, &long, &r.lenses, &r.rots, &r.cps, &dims, &crate::depth::DepthConfig::default());
+        if !layers_now.is_empty() {
+            // the same spots without those on a near object (the background is what has to line up)
+            let bg: Vec<_> = spots.iter().copied().filter(|&(a, _, p)| !layers_now.covers_spot(a, p.0 / fa_check[a].gray.w as f64, p.1 / fa_check[a].gray.h as f64)).collect();
+            let qb = scaled(fine_align::quality(&fa_check, &lens_of, &r.lenses, &r.rots, &bg, &qcfg));
+            println!(
+                "  BACKGROUND (spots off near objects): {} of {} spots valid, shift mean {:.3} median {:.3} p90 {:.3} px",
+                qb.valid, qb.spots, qb.mean, qb.median, qb.p90
+            );
+        }
         println!(
             "pass {}: {:.1} s | points {} (removed {removed}), point error {mean_err:.3} px | fine {} rounds, areas {} | CHECK {} of {} spots valid, shift mean {:.3} median {:.3} p90 {:.3} px, diff {:.2} | median by radius {}",
             pass + 1,

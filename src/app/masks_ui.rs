@@ -27,6 +27,8 @@ pub(super) struct MaskUi {
     pub(super) seam_rx: Option<Receiver<Result<egui::ColorImage, String>>>,
     pub(super) seam_key: Option<u64>,
     pub(super) seam_err: Option<String>,
+    /// proposal of "Keep near objects from one photo" waiting for Apply (empty = none found)
+    pub(super) near: Option<Vec<crate::near_seams::NearObject>>,
 }
 
 /// The mask as a see-through picture: green where the photo must be used, red where it must not.
@@ -37,6 +39,7 @@ pub(super) fn overlay_image(m: &crate::masks::MaskBuf) -> egui::ColorImage {
         .map(|&v| match v {
             crate::masks::POSITIVE => Color32::from_rgba_unmultiplied(MASK_GREEN.r(), MASK_GREEN.g(), MASK_GREEN.b(), MASK_ALPHA),
             crate::masks::NEGATIVE => Color32::from_rgba_unmultiplied(MASK_RED.r(), MASK_RED.g(), MASK_RED.b(), MASK_ALPHA),
+            crate::masks::GUARD => Color32::from_rgba_unmultiplied(ACCENT.r(), ACCENT.g(), ACCENT.b(), MASK_ALPHA),
             _ => Color32::TRANSPARENT,
         })
         .collect();
@@ -48,6 +51,7 @@ fn tool_color(t: Tool) -> Color32 {
         crate::masks::MaskKind::Positive => MASK_GREEN,
         crate::masks::MaskKind::Negative => MASK_RED,
         crate::masks::MaskKind::Erase => Color32::WHITE,
+        crate::masks::MaskKind::Guard => ACCENT,
     }
 }
 
@@ -110,6 +114,7 @@ impl PanoApp {
             });
             ui.vertical(|ui| {
                 self.mask_toolbar(ui);
+                self.near_seams_ui(ui);
                 // the seam map is as wide as the panorama allows: under the photo, over the full width
                 // (in a side column a wide panorama was only a thin strip)
                 let full = ui.available_width();

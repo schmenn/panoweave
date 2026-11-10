@@ -60,6 +60,10 @@ pub struct ControlPoint {
     /// see `foliage.rs`. Never below 1 for protected points and points placed by hand.
     #[serde(default = "fol_one")]
     pub fol_w: f32,
+    /// weight factor of the near-object rating (1 = on the background); multiplied with `weight` by the optimiser,
+    /// see `depth.rs`. Never below 1 for protected points and points placed by hand.
+    #[serde(default = "fol_one")]
+    pub depth_w: f32,
 }
 
 fn fol_one() -> f32 {
@@ -84,7 +88,13 @@ pub enum CpKind {
 
 impl ControlPoint {
     pub fn new(a: usize, b: usize, pa: [f64; 2], pb: [f64; 2], manual: bool) -> Self {
-        ControlPoint { a, b, pa, pb, err: 0.0, manual, weight: 1.0, kind: CpKind::Point, conf: 0.0, shift: [0.0; 2], score: 0.0, locked: false, fol_w: 1.0 }
+        ControlPoint { a, b, pa, pb, err: 0.0, manual, weight: 1.0, kind: CpKind::Point, conf: 0.0, shift: [0.0; 2], score: 0.0, locked: false, fol_w: 1.0, depth_w: 1.0 }
+    }
+    /// What the optimiser multiplies the loss of this point with, before the robust factor and the protection boost:
+    /// its own weight times the foliage and the near-object factor (the one place that combines them).
+    #[inline]
+    pub fn opt_weight(&self) -> f64 {
+        self.weight * self.fol_w as f64 * self.depth_w as f64
     }
 }
 
@@ -291,11 +301,17 @@ fn cp_residual(cp: &ControlPoint, ra: &M3, rb: &M3, la: &Lens, lb: &Lens) -> [f6
     [r1[0], r1[1], r2[0], r2[1]]
 }
 
+/// Residual vectors of all control points: predicted minus placed position, in the second photo
+/// (`[0..2]`) and in the first (`[2..4]`), normalised units.
+pub fn cp_residuals(inp: &AlignInput, rots: &[M3], lenses: &[Lens], cps: &[ControlPoint]) -> Vec<[f64; 4]> {
+    cps.iter().map(|cp| cp_residual(cp, &rots[cp.a], &rots[cp.b], &lenses[inp.lens_of[cp.a]], &lenses[inp.lens_of[cp.b]])).collect()
+}
+
 pub fn total_cost(rots: &[M3], lens_of: &[usize], lenses: &[Lens], cps: &[ControlPoint]) -> f64 {
     cps.iter()
         .map(|cp| {
             let r = cp_residual(cp, &rots[cp.a], &rots[cp.b], &lenses[lens_of[cp.a]], &lenses[lens_of[cp.b]]);
-            cp.weight * cp.fol_w as f64 * r.iter().map(|v| v * v).sum::<f64>()
+            cp.opt_weight() * r.iter().map(|v| v * v).sum::<f64>()
         })
         .sum()
 }
@@ -319,7 +335,7 @@ fn robust_cost(rots: &[M3], lens_of: &[usize], lenses: &[Lens], cps: &[ControlPo
             } else {
                 2.0 * k * rn - k * k
             };
-            rho * cp.weight * if boost { opts.locked_weight } else { 1.0 }
+            rho * cp.weight * cp.depth_w as f64 * if boost { opts.locked_weight } else { 1.0 }
         })
         .sum()
 }
@@ -432,7 +448,7 @@ pub fn optimize(
             let k = if boost { LOCKED_ROBUST_K } else { ROBUST_K };
             // protected points are never put on the Cauchy loss, which would let go of them far out
             let robust = if opts.cauchy && !boost { 1.0 / (1.0 + (rn / k) * (rn / k)) } else if rn < k { 1.0 } else { k / rn };
-            let wgt = robust * cp.weight * cp.fol_w as f64 * if boost { opts.locked_weight } else { 1.0 };
+            let wgt = robust * cp.opt_weight() * if boost { opts.locked_weight } else { 1.0 };
             let mut cols: Vec<(usize, [f64; 4])> = Vec::with_capacity(10);
             for (img, which) in [(cp.a, 0), (cp.b, 1)] {
                 let pi = rot_idx[img];

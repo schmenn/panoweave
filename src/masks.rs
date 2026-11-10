@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub const NEUTRAL: u8 = 0;
 pub const POSITIVE: u8 = 1;
 pub const NEGATIVE: u8 = 2;
+/// "A seam must not cut through here" (near objects, `near_seams.rs`): neither photo is preferred or forbidden.
+pub const GUARD: u8 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MaskKind {
@@ -19,6 +21,8 @@ pub enum MaskKind {
     Negative,
     /// remove the mask below
     Erase,
+    /// no seam may cut through here (a near object that must not be doubled); which photo shows it is left to the seam finder
+    Guard,
 }
 
 /// One brush stroke (a line of points with a round brush) or one filled polygon (lasso).
@@ -33,6 +37,10 @@ pub struct MaskStroke {
     /// a filled polygon instead of a brush stroke
     #[serde(default)]
     pub polygon: bool,
+    /// proposed by the program (near objects, `near_seams.rs`) and accepted by the person; shown and changed like
+    /// any other stroke, and "Remove automatic masks" takes all of them away again
+    #[serde(default)]
+    pub auto: bool,
 }
 
 /// The mask of one photo as a picture (1 byte per pixel: `NEUTRAL`, `POSITIVE`, `NEGATIVE`).
@@ -67,6 +75,7 @@ fn value_of(kind: MaskKind) -> u8 {
         MaskKind::Positive => POSITIVE,
         MaskKind::Negative => NEGATIVE,
         MaskKind::Erase => NEUTRAL,
+        MaskKind::Guard => GUARD,
     }
 }
 
@@ -144,7 +153,7 @@ mod tests {
     use super::*;
 
     fn brush(kind: MaskKind, pts: &[[f32; 2]], radius: f32) -> MaskStroke {
-        MaskStroke { kind, points: pts.to_vec(), radius, polygon: false }
+        MaskStroke { kind, points: pts.to_vec(), radius, polygon: false, auto: false }
     }
 
     #[test]
@@ -161,7 +170,7 @@ mod tests {
 
     #[test]
     fn a_polygon_is_filled_and_later_strokes_paint_over_earlier_ones() {
-        let square = MaskStroke { kind: MaskKind::Negative, points: vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]], radius: 0.0, polygon: true };
+        let square = MaskStroke { kind: MaskKind::Negative, points: vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]], radius: 0.0, polygon: true, auto: false };
         let m = rasterize(std::slice::from_ref(&square), 200, 200).unwrap();
         assert_eq!(m.at(100.0, 100.0, 200.0, 200.0), NEGATIVE);
         assert_eq!(m.at(20.0, 100.0, 200.0, 200.0), NEUTRAL);
