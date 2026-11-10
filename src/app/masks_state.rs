@@ -56,7 +56,8 @@ impl PhotoMask {
         self.snapshot();
         self.strokes.retain(|s| !s.auto);
         let added = new.len();
-        self.strokes.extend(new);
+        // in front: strokes painted by hand later paint over them
+        self.strokes.splice(0..0, new);
         self.rebuild(w, h);
         if added == 0 { old } else { added }
     }

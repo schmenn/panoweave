@@ -84,7 +84,7 @@ The release `.exe` is not code-signed, so Windows SmartScreen may say "Windows p
 - **Smooth brightness correction across each photo:** besides one gain per photo, a smooth correction field per photo (a coarse grid, solved from the overlaps, robust against clouds and people) evens out sky gradients, vignetting and automatic exposure, so the footprints of single photos no longer show as rectangles. On by default, switchable in the export dialog (Blending).
 - **Lens correction** (optional, off by default; Export step, Blending): a response curve (one exponent per colour channel) and a vignetting model per lens, solved from the overlaps of all photos. It helped on one test set and not on another, so it is an experiment, not a default.
 - **Smart seams** (optional, off by default): a graph-cut seam finder searches, once for the whole panorama, where the photos agree, so that close objects that two photos see from different sides (poles, lamps, people) are not cut in two. Found on a coarse grid in two steps, so the result does not depend on the strips either.
-- **Near objects from one photo:** "Keep near objects from one photo" in the mask editor proposes to take a car or railing close to the camera from exactly one photo (green) and keep the others out there (red), so the seam runs round it; listed first, applied only on "Apply", removable again
+- **Seams keep off near objects:** "Keep seams off near objects" in the mask editor proposes a tight outline of a car or railing close to the camera (drawn first, applied only on "Apply"); the seam finder then runs its seams round it instead of through it; removable again
 - **Masks:** paint "use here" (green) and "do not use here" (red) masks on a photo with a brush or lasso (Export step, Blending, "Edit masks..."). Green steers the seams; a red spot is left out of the panorama completely (nothing of it is blended in), and where every photo is red there is a hole, which the preview shows and the program warns about. Saved in the project file; a "Show seams" view shows which photo wins where.
 
 **Exposure fusion**
@@ -122,7 +122,7 @@ flowchart LR
 | `depth` | Near objects: regions of a photo pair that a rotation-only camera cannot explain (from rejected matches and from residual errors); points and patches in them get a smaller weight in the alignment |
 | `foliage` | Foliage rating: colour, fine irregular structure and restless residual errors give points and patches on trees a smaller weight in the alignment |
 | `seams`, `masks` | Seam finder (graph cut) and the masks painted on photos |
-| `near_seams` | Proposal of masks that keep each near object (from `depth`) from one photo |
+| `near_seams` | Proposal of tight outlines of near objects (from `depth`) that the seam finder must not cut through |
 | `app` | The egui user interface, split into `types`, `state`, `jobs`, `demo`, `chrome`, `pipeline`, `points_*`, `photos`, `align`, `frame`, `export`, `exposure`, `connections` |
 | `accuracy_search` | "Maximum accuracy": tries every way of placing the photos and rates each on the same spots |
 | `main`, `accuracy_test` | Arguments and headless test drivers (`--accuracy`: the independent fit check) |

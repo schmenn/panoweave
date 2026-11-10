@@ -97,12 +97,6 @@ impl CoarseMask {
     pub fn overlap(&self, other: &CoarseMask) -> usize {
         self.bits.iter().zip(&other.bits).map(|(a, b)| (a & b).count_ones() as usize).sum()
     }
-    /// Adds the cells of `other`.
-    pub fn merge(&mut self, other: &CoarseMask) {
-        for (a, b) in self.bits.iter_mut().zip(&other.bits) {
-            *a |= b;
-        }
-    }
     /// Number of cells set.
     pub fn count(&self) -> usize {
         self.bits.iter().map(|b| b.count_ones() as usize).sum()
@@ -113,6 +107,11 @@ impl CoarseMask {
         (f(x, w), f(y, h))
     }
     /// Cell of a normalised coordinate (long side = 1, see `engine::norm_coord`).
+    /// Place of a normalised coordinate as shares of the picture (0..1 across, 0..1 down).
+    pub fn frac_of_norm(p: [f64; 2], dims: (usize, usize)) -> [f32; 2] {
+        let l = dims.0.max(dims.1) as f64;
+        [((p[0] * l + dims.0 as f64 * 0.5) / dims.0.max(1) as f64) as f32, ((p[1] * l + dims.1 as f64 * 0.5) / dims.1.max(1) as f64) as f32]
+    }
     pub fn cell_of_norm(p: [f64; 2], dims: (usize, usize)) -> (usize, usize) {
         let l = dims.0.max(dims.1) as f64;
         Self::cell_of_px(p[0] * l + dims.0 as f64 * 0.5, p[1] * l + dims.1 as f64 * 0.5, dims.0, dims.1)
@@ -256,6 +255,12 @@ pub struct NearRegion {
     /// matches or points in the group
     pub count: usize,
     pub source: Source,
+    /// the points of the group in photo a and b as shares of the picture (only regions found from errors have them;
+    /// they give the tight outline of `near_seams.rs`)
+    #[serde(default)]
+    pub pts_a: Vec<[f32; 2]>,
+    #[serde(default)]
+    pub pts_b: Vec<[f32; 2]>,
 }
 
 impl NearRegion {
@@ -325,6 +330,8 @@ impl Layers {
                     shift_px: h.group.shift_px as f32,
                     count: h.group.count,
                     source: Source::Matches,
+                    pts_a: Vec::new(),
+                    pts_b: Vec::new(),
                 })
                 .collect(),
         }
@@ -418,6 +425,8 @@ pub fn detect_after(cps: &[ControlPoint], resid: &[[f64; 4]], dims: &[(usize, us
                     shift_px: mags[mags.len() / 2] as f32,
                     count: group.len(),
                     source: Source::Residuals,
+                    pts_a: group.iter().map(|&i| CoarseMask::frac_of_norm(cps[i].pa, dims[a])).collect(),
+                    pts_b: group.iter().map(|&i| CoarseMask::frac_of_norm(cps[i].pb, dims[b])).collect(),
                 });
             }
             bad.retain(|i| !group.contains(i));
@@ -613,7 +622,7 @@ mod tests {
         ma.set_norm([0.0, 0.0], DIMS);
         let mut mb = CoarseMask::default();
         mb.set_norm([0.3, 0.0], DIMS);
-        let r = NearRegion { a: 0, b: 1, mask_a: ma, mask_b: mb, dims_a: DIMS, dims_b: DIMS, shift_px: 10.0, count: 9, source: Source::Residuals };
+        let r = NearRegion { a: 0, b: 1, mask_a: ma, mask_b: mb, dims_a: DIMS, dims_b: DIMS, shift_px: 10.0, count: 9, source: Source::Residuals, pts_a: Vec::new(), pts_b: Vec::new() };
         let fwd = ControlPoint::new(0, 1, [0.0, 0.0], [0.3, 0.0], false);
         let rev = ControlPoint::new(1, 0, [0.3, 0.0], [0.0, 0.0], false);
         let other = ControlPoint::new(0, 2, [0.0, 0.0], [0.3, 0.0], false);

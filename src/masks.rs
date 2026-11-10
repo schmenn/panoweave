@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub const NEUTRAL: u8 = 0;
 pub const POSITIVE: u8 = 1;
 pub const NEGATIVE: u8 = 2;
+/// "A seam must not cut through here" (near objects, `near_seams.rs`): neither photo is preferred or forbidden.
+pub const GUARD: u8 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MaskKind {
@@ -19,6 +21,8 @@ pub enum MaskKind {
     Negative,
     /// remove the mask below
     Erase,
+    /// no seam may cut through here (a near object that must not be doubled); which photo shows it is left to the seam finder
+    Guard,
 }
 
 /// One brush stroke (a line of points with a round brush) or one filled polygon (lasso).
@@ -71,6 +75,7 @@ fn value_of(kind: MaskKind) -> u8 {
         MaskKind::Positive => POSITIVE,
         MaskKind::Negative => NEGATIVE,
         MaskKind::Erase => NEUTRAL,
+        MaskKind::Guard => GUARD,
     }
 }
 

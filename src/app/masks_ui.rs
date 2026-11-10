@@ -39,6 +39,7 @@ pub(super) fn overlay_image(m: &crate::masks::MaskBuf) -> egui::ColorImage {
         .map(|&v| match v {
             crate::masks::POSITIVE => Color32::from_rgba_unmultiplied(MASK_GREEN.r(), MASK_GREEN.g(), MASK_GREEN.b(), MASK_ALPHA),
             crate::masks::NEGATIVE => Color32::from_rgba_unmultiplied(MASK_RED.r(), MASK_RED.g(), MASK_RED.b(), MASK_ALPHA),
+            crate::masks::GUARD => Color32::from_rgba_unmultiplied(ACCENT.r(), ACCENT.g(), ACCENT.b(), MASK_ALPHA),
             _ => Color32::TRANSPARENT,
         })
         .collect();
@@ -50,6 +51,7 @@ fn tool_color(t: Tool) -> Color32 {
         crate::masks::MaskKind::Positive => MASK_GREEN,
         crate::masks::MaskKind::Negative => MASK_RED,
         crate::masks::MaskKind::Erase => Color32::WHITE,
+        crate::masks::MaskKind::Guard => ACCENT,
     }
 }
 

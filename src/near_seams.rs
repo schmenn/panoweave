@@ -1,15 +1,15 @@
 //! Near objects in the export: a car 3 m in front of the camera is seen from slightly different places in
-//! neighbouring photos, so where two photos are blended it shows twice or blurred. It has to come from exactly one
-//! photo, with the seam running round it.
+//! neighbouring photos, so where two photos are blended it shows twice or blurred. The seam must not cut through it,
+//! it has to run round it.
 //!
-//! The seam finder is steered by masks (green = "use this photo here", red = "do not use it here"), so this module
-//! only *proposes* masks: per near object (found by `depth.rs`) one photo that keeps it - the one that shows it whole
-//! (no cell on the picture edge) and nearest to its middle - gets green, every other photo that sees it gets red, as
-//! filled polygons round the object's cells. Nothing is applied until the person accepts (`app/masks_near.rs`); the
-//! strokes carry `auto = true`, are shown and can be changed in the mask editor like any other, and one button removes
-//! them all again.
+//! This module only *proposes*: per near object (found by `depth.rs`) a tight outline in every photo that sees it,
+//! built from the matched points of the object (a small disc round each point, so things standing beside it, such as a
+//! van that moved away between two shots, are not inside). Applied (`app/masks_near.rs`) the outline becomes mask
+//! strokes of the kind `Guard`: the seam finder (`seams.rs`) gets a high cost for every seam edge there (so the seam
+//! goes round) but is otherwise free: which photo shows which part is decided as before. Only objects that are sure
+//! enough are proposed (several photo pairs agree or many points, a clear shift, points that lie together).
 
-use crate::depth::{CoarseMask, Layers, GRID};
+use crate::depth::{Layers, NearRegion, Source};
 use crate::masks::{MaskKind, MaskStroke};
 
 /// Settings of the proposal.
@@ -18,56 +18,58 @@ use crate::masks::{MaskKind, MaskStroke};
 pub struct NearSeamConfig {
     /// off = nothing is proposed
     pub enabled: bool,
-    /// an object smaller than this (cells of the 16 x 16 grid of its photo) is not worth a mask
-    pub min_cells: usize,
-    /// also paint the other photos red where they see the object (a red spot is left out completely, so a stray cell
-    /// can let another photo's different content in: off, green on the keeper alone steers the seam)
-    pub avoid_others: bool,
+    /// a region needs at least this many points (found from errors, with outline points)
+    pub min_points: usize,
     /// an object that shifts less than this between the photos (working-image pixels at 1600 px, the largest of its
     /// regions) only blurs a little and is not worth a mask
     pub min_shift_px: f32,
-    /// an object larger than this share of a photo is no single object (a whole hillside shifting a little): not proposed
+    /// an object must be found in this many photo pairs ...
+    pub min_regions: usize,
+    /// ... or have at least this many points in all (one pair with very many points is sure enough)
+    pub strong_points: usize,
+    /// a region that covers more than this share of a photo (cells of its coarse mask) is no single object
     pub max_share: f32,
+    /// radius of the disc round every point of the outline, as a share of the long side of the photo
+    pub outline_radius: f32,
+    /// a point belongs to the outline only when another point lies within this many radii (strays stay out)
+    pub neighbour_reach: f32,
 }
 
 impl Default for NearSeamConfig {
     fn default() -> Self {
-        NearSeamConfig { enabled: true, min_cells: 3, avoid_others: false, min_shift_px: 12.0, max_share: 0.25 }
+        NearSeamConfig { enabled: true, min_points: 12, min_shift_px: 12.0, min_regions: 2, strong_points: 40, max_share: 0.25, outline_radius: 0.02, neighbour_reach: 3.0 }
     }
 }
 
 impl NearSeamConfig {
-    /// Environment `PW_NEAR_SEAMS=0` switches the proposal off (experiments).
+    /// Environment `PW_NEAR_SEAMS=0` switches the proposal off, `PW_NEAR_RADIUS=<share>` sets the outline radius
+    /// (experiments).
     pub fn with_env(mut self) -> Self {
         if std::env::var("PW_NEAR_SEAMS").is_ok_and(|v| v == "0") {
             self.enabled = false;
         }
-        if std::env::var("PW_NEAR_RED").is_ok_and(|v| v == "1") {
-            self.avoid_others = true;
+        if let Some(r) = std::env::var("PW_NEAR_RADIUS").ok().and_then(|v| v.parse().ok()) {
+            self.outline_radius = r;
         }
         self
     }
 }
 
-/// One near object: where it is in every photo that sees it, and the photo proposed to keep it.
+/// One near object: its outline points (shares of the picture) in every photo that sees it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NearObject {
-    /// photo and the cells the object covers in it
-    pub photos: Vec<(usize, CoarseMask)>,
-    /// the photo that keeps it, or None with `why_not` set
-    pub keeper: Option<usize>,
-    pub why_not: &'static str,
+    pub photos: Vec<(usize, Vec<[f32; 2]>)>,
     /// the largest shift of its regions (working-image pixels at 1600 px)
     pub shift_px: f32,
+    /// photo pairs that found it, and points in all
+    pub regions: usize,
+    pub points: usize,
 }
 
 impl NearObject {
     pub fn text(&self) -> String {
         let list = self.photos.iter().map(|(p, _)| (p + 1).to_string()).collect::<Vec<_>>().join(", ");
-        match self.keeper {
-            Some(k) => format!("Near object in photos {list}: keep it from photo {}.", k + 1),
-            None => format!("Near object in photos {list}: not proposed ({}).", self.why_not),
-        }
+        format!("Near object in photos {list} (about {:.0} px shift, {} photo pair{}, {} points): seams will not cut through it.", self.shift_px, self.regions, if self.regions == 1 { "" } else { "s" }, self.points)
     }
 }
 
@@ -93,110 +95,88 @@ impl Uf {
 /// share of the larger one (a huge region must not swallow every small one that lies inside it).
 const SAME_OBJECT_OVERLAP: f32 = 0.5;
 
-/// Groups the regions of `layers` into objects and proposes a keeper for each. A region says that the same thing lies
-/// on its cells in both photos of a pair; two regions that share a photo are the same object when their cells in that
-/// photo overlap enough (a car seen in photos 8, 10 and 14 gives regions 8-10 and 8-14 that overlap in photo 8).
+/// Points closer than this (share of the picture) count as one when the outline is made.
+const THIN: f32 = 0.006;
+
+/// Groups the regions of `layers` into objects and keeps the sure ones. A region says that the same thing lies on its
+/// points in both photos of a pair; two regions that share a photo are the same object when their cells in that photo
+/// overlap enough (a car seen in photos 8, 10 and 14 gives regions 8-10 and 8-14 that overlap in photo 8).
 pub fn plan(layers: &Layers, n_photos: usize, cfg: &NearSeamConfig) -> Vec<NearObject> {
     if !cfg.enabled || layers.is_empty() {
         return Vec::new();
     }
-    // a region that covers more of a photo than one object can is a wide shift (a hillside, a badly matched pair), not an
-    // object: it would also tie unrelated objects together, so it is left out
-    let limit = (cfg.max_share * (GRID * GRID) as f32) as usize;
-    let regions: Vec<&crate::depth::NearRegion> = layers.regions.iter().filter(|r| r.a < n_photos && r.b < n_photos && r.mask_a.count() <= limit && r.mask_b.count() <= limit).collect();
+    let limit = (cfg.max_share * (crate::depth::GRID * crate::depth::GRID) as f32) as usize;
+    let regions: Vec<&NearRegion> = layers
+        .regions
+        .iter()
+        .filter(|r| r.source == Source::Residuals && r.a < n_photos && r.b < n_photos && r.pts_a.len() >= cfg.min_points && r.pts_b.len() >= cfg.min_points && r.mask_a.count() <= limit && r.mask_b.count() <= limit)
+        .collect();
     let mut uf = Uf((0..regions.len()).collect());
     for i in 0..regions.len() {
         for j in i + 1..regions.len() {
-            let sides = |r: &crate::depth::NearRegion| [(r.a, r.mask_a), (r.b, r.mask_b)];
+            let sides = |r: &NearRegion| [(r.a, r.mask_a), (r.b, r.mask_b)];
             let same = sides(regions[i]).iter().any(|(p, m)| sides(regions[j]).iter().any(|(q, n)| p == q && m.overlap(n) as f32 >= SAME_OBJECT_OVERLAP * m.count().max(n.count()) as f32));
             if same {
                 uf.union(i, j);
             }
         }
     }
-    // cells of every cluster in every photo
-    let mut clusters: std::collections::BTreeMap<usize, (f32, Vec<(usize, CoarseMask)>)> = Default::default();
+    struct Cluster {
+        shift: f32,
+        regions: usize,
+        points: usize,
+        photos: Vec<(usize, Vec<[f32; 2]>)>,
+    }
+    let mut clusters: std::collections::BTreeMap<usize, Cluster> = Default::default();
     for (i, r) in regions.iter().enumerate() {
-        let (shift, v) = clusters.entry(uf.find(i)).or_default();
-        *shift = shift.max(r.shift_px);
-        for (p, m) in [(r.a, r.mask_a), (r.b, r.mask_b)] {
-            match v.iter_mut().find(|(q, _)| *q == p) {
-                Some((_, u)) => u.merge(&m),
-                None => v.push((p, m)),
+        let c = clusters.entry(uf.find(i)).or_insert(Cluster { shift: 0.0, regions: 0, points: 0, photos: Vec::new() });
+        c.shift = c.shift.max(r.shift_px);
+        c.regions += 1;
+        c.points += r.count;
+        for (p, pts) in [(r.a, &r.pts_a), (r.b, &r.pts_b)] {
+            match c.photos.iter_mut().find(|(q, _)| *q == p) {
+                Some((_, v)) => v.extend_from_slice(pts),
+                None => c.photos.push((p, pts.clone())),
             }
         }
     }
-    let mut out: Vec<NearObject> = clusters
-        .into_values()
-        .map(|(shift_px, mut photos)| {
-            photos.sort_by_key(|p| p.0);
-            judge(photos, shift_px, cfg)
-        })
-        // small or hardly shifting things are not worth listing
-        .filter(|o| !matches!(o.why_not, "too small" | "shifts too little to matter"))
-        .collect();
+    let mut out = Vec::new();
+    for c in clusters.into_values() {
+        let sure = c.shift >= cfg.min_shift_px && (c.regions >= cfg.min_regions || c.points >= cfg.strong_points);
+        if !sure {
+            continue;
+        }
+        let mut photos: Vec<(usize, Vec<[f32; 2]>)> = c.photos.into_iter().map(|(p, v)| (p, outline_points(v, cfg))).filter(|(_, v)| !v.is_empty()).collect();
+        photos.sort_by_key(|p| p.0);
+        if photos.len() >= 2 {
+            out.push(NearObject { photos, shift_px: c.shift, regions: c.regions, points: c.points });
+        }
+    }
     out.sort_by_key(|o| o.photos.first().map(|p| p.0));
     out
 }
 
-/// Whether the object reaches the edge of the picture (then it may be cut off there).
-fn clipped(m: &CoarseMask) -> bool {
-    m.cells().iter().any(|&(x, y)| x == 0 || y == 0 || x == GRID - 1 || y == GRID - 1)
-}
-
-/// How far the middle of the cells is from the middle of the picture (0 = in the middle, about 0.7 = in a corner).
-fn off_centre(m: &CoarseMask) -> f32 {
-    let c = m.cells();
-    let n = c.len().max(1) as f32;
-    let (mx, my) = (c.iter().map(|p| p.0 as f32 + 0.5).sum::<f32>() / n / GRID as f32, c.iter().map(|p| p.1 as f32 + 0.5).sum::<f32>() / n / GRID as f32);
-    ((mx - 0.5).powi(2) + (my - 0.5).powi(2)).sqrt()
-}
-
-fn judge(photos: Vec<(usize, CoarseMask)>, shift_px: f32, cfg: &NearSeamConfig) -> NearObject {
-    let biggest = photos.iter().map(|(_, m)| m.cells().len()).max().unwrap_or(0);
-    let why = if biggest < cfg.min_cells {
-        Some("too small")
-    } else if shift_px < cfg.min_shift_px {
-        Some("shifts too little to matter")
-    } else if biggest as f32 > cfg.max_share * (GRID * GRID) as f32 {
-        Some("too large for one object")
-    } else {
-        None
-    };
-    // the keeper shows it whole (no cell on the edge) and nearest to the middle; ties go to the lower number
-    let keeper = match why {
-        Some(_) => None,
-        None => photos.iter().filter(|(_, m)| !clipped(m)).min_by(|x, y| off_centre(&x.1).total_cmp(&off_centre(&y.1))).map(|p| p.0),
-    };
-    let why_not = why.unwrap_or(if keeper.is_none() { "no photo shows it whole" } else { "" });
-    NearObject { photos, keeper, why_not, shift_px }
-}
-
-/// The masks proposed for one object, as (photo, stroke): green on the keeper, red on every other photo, one filled
-/// rectangle per run of cells in a row (the object's cells, so a few cells wider than its points).
-pub fn strokes(obj: &NearObject, cfg: &NearSeamConfig) -> Vec<(usize, MaskStroke)> {
-    let Some(keeper) = obj.keeper else { return Vec::new() };
-    let mut out = Vec::new();
-    for (p, m) in &obj.photos {
-        if *p != keeper && !cfg.avoid_others {
-            continue;
+/// The points that make the outline: thinned out, and without strays (a point needs a neighbour within
+/// `neighbour_reach` radii), so the discs round them cover the object and not what stands beside it.
+fn outline_points(pts: Vec<[f32; 2]>, cfg: &NearSeamConfig) -> Vec<[f32; 2]> {
+    let mut thin: Vec<[f32; 2]> = Vec::new();
+    for p in pts {
+        if !thin.iter().any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < THIN) {
+            thin.push(p);
         }
-        let kind = if *p == keeper { MaskKind::Positive } else { MaskKind::Negative };
-        for cy in 0..GRID {
-            let mut cx = 0;
-            while cx < GRID {
-                if !m.get(cx, cy) {
-                    cx += 1;
-                    continue;
-                }
-                let x0 = cx;
-                while cx < GRID && m.get(cx, cy) {
-                    cx += 1;
-                }
-                let g = GRID as f32;
-                let (l, r, t, b) = (x0 as f32 / g, cx as f32 / g, cy as f32 / g, (cy + 1) as f32 / g);
-                out.push((*p, MaskStroke { kind, points: vec![[l, t], [r, t], [r, b], [l, b]], radius: 0.0, polygon: true, auto: true }));
-            }
+    }
+    let reach = cfg.neighbour_reach * cfg.outline_radius;
+    let keep: Vec<[f32; 2]> = thin.iter().copied().filter(|p| thin.iter().any(|q| q != p && (q[0] - p[0]).hypot(q[1] - p[1]) <= reach)).collect();
+    keep
+}
+
+/// The mask strokes of an object, as (photo, stroke): a disc of `Guard` round every outline point of every photo that
+/// sees it (a seam must not cut through it in any of them).
+pub fn strokes(obj: &NearObject, cfg: &NearSeamConfig) -> Vec<(usize, MaskStroke)> {
+    let mut out = Vec::new();
+    for (p, pts) in &obj.photos {
+        for pt in pts {
+            out.push((*p, MaskStroke { kind: MaskKind::Guard, points: vec![*pt], radius: cfg.outline_radius, polygon: false, auto: true }));
         }
     }
     out
@@ -205,88 +185,104 @@ pub fn strokes(obj: &NearObject, cfg: &NearSeamConfig) -> Vec<(usize, MaskStroke
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::depth::{NearRegion, Source};
+    use crate::depth::CoarseMask;
 
     const DIMS: (usize, usize) = (1600, 1200);
 
-    fn mask(cells: &[(usize, usize)]) -> CoarseMask {
+    fn cells(x0: usize, y0: usize, w: usize, h: usize) -> CoarseMask {
         let mut m = CoarseMask::default();
-        for &(x, y) in cells {
-            m.set(x, y);
+        for y in y0..y0 + h {
+            for x in x0..x0 + w {
+                m.set(x, y);
+            }
         }
         m
     }
 
-    fn block(x0: usize, y0: usize, w: usize, h: usize) -> CoarseMask {
-        let v: Vec<(usize, usize)> = (y0..y0 + h).flat_map(|y| (x0..x0 + w).map(move |x| (x, y))).collect();
-        mask(&v)
+    /// points on a grid of 0.03 spacing inside a box (shares of the picture)
+    fn pts(x0: f32, y0: f32, n: usize) -> Vec<[f32; 2]> {
+        (0..n).map(|i| [x0 + 0.03 * (i % 5) as f32, y0 + 0.03 * (i / 5) as f32]).collect()
     }
 
-    fn region(a: usize, b: usize, ma: CoarseMask, mb: CoarseMask) -> NearRegion {
-        NearRegion { a, b, mask_a: ma, mask_b: mb, dims_a: DIMS, dims_b: DIMS, shift_px: 20.0, count: 30, source: Source::Residuals }
+    fn region(a: usize, b: usize, ca: CoarseMask, cb: CoarseMask, pa: Vec<[f32; 2]>, pb: Vec<[f32; 2]>, shift: f32) -> NearRegion {
+        NearRegion { a, b, mask_a: ca, mask_b: cb, dims_a: DIMS, dims_b: DIMS, shift_px: shift, count: pa.len(), source: Source::Residuals, pts_a: pa, pts_b: pb }
+    }
+
+    fn car() -> Layers {
+        // a car seen in photos 0, 1, 2: regions 0-1 and 1-2 overlap in photo 1
+        Layers {
+            regions: vec![
+                region(0, 1, cells(10, 6, 3, 3), cells(5, 6, 3, 3), pts(0.64, 0.4, 15), pts(0.33, 0.4, 15), 20.0),
+                region(1, 2, cells(5, 6, 3, 3), cells(1, 6, 3, 3), pts(0.33, 0.4, 15), pts(0.07, 0.4, 15), 20.0),
+            ],
+        }
     }
 
     #[test]
-    fn one_object_seen_in_three_photos_is_kept_from_the_most_central_whole_view() {
-        // photo 1: the car in the middle; photo 0: at the right edge (cut); photo 2: left but whole
-        let (c0, c1, c2) = (block(13, 6, 3, 3), block(6, 6, 3, 3), block(1, 6, 3, 3));
-        let layers = Layers { regions: vec![region(0, 1, c0, c1), region(1, 2, c1, c2)] };
-        let o = plan(&layers, 3, &NearSeamConfig::default());
+    fn a_car_seen_in_three_photos_is_one_object_with_a_tight_outline() {
+        let o = plan(&car(), 3, &NearSeamConfig::default());
         assert_eq!(o.len(), 1, "{o:?}");
         assert_eq!(o[0].photos.iter().map(|p| p.0).collect::<Vec<_>>(), vec![0, 1, 2]);
-        assert_eq!(o[0].keeper, Some(1));
-        let red = NearSeamConfig { avoid_others: true, ..Default::default() };
-        let s = strokes(&o[0], &red);
-        // by default only the keeper gets green
-        assert!(strokes(&o[0], &NearSeamConfig::default()).iter().all(|(p, st)| *p == 1 && st.kind == MaskKind::Positive));
-        assert!(s.iter().filter(|(p, _)| *p == 1).all(|(_, st)| st.kind == MaskKind::Positive && st.auto && st.polygon));
-        assert!(s.iter().filter(|(p, _)| *p != 1).all(|(_, st)| st.kind == MaskKind::Negative && st.auto));
-        // one rectangle per row of cells and photo: 3 rows x 3 photos
-        assert_eq!(s.len(), 9);
-        // every stroke is a rectangle inside the picture
-        assert!(s.iter().all(|(_, st)| st.points.len() == 4 && st.points.iter().all(|p| (0.0..=1.0).contains(&p[0]) && (0.0..=1.0).contains(&p[1]))));
+        assert_eq!((o[0].regions, o[0].points), (2, 30));
+        let s = strokes(&o[0], &NearSeamConfig::default());
+        assert!(s.iter().all(|(_, st)| st.kind == MaskKind::Guard && st.auto && st.points.len() == 1 && st.radius == 0.02));
+        // the outline lies on the points, not on a neighbour 0.2 away
+        assert!(s.iter().filter(|(p, _)| *p == 1).all(|(_, st)| (0.33..=0.5).contains(&st.points[0][0]) && (0.4..=0.5).contains(&st.points[0][1])));
+    }
+
+    #[test]
+    fn strays_far_from_the_group_stay_out_of_the_outline() {
+        let mut l = car();
+        l.regions[0].pts_a.push([0.1, 0.9]);
+        l.regions[0].count += 1;
+        let o = plan(&l, 3, &NearSeamConfig::default());
+        assert!(o[0].photos[0].1.iter().all(|p| p[1] < 0.6), "{:?}", o[0].photos[0].1);
+    }
+
+    #[test]
+    fn only_sure_objects_are_proposed() {
+        let cfg = NearSeamConfig::default();
+        // a single pair with few points: not sure
+        let one = Layers { regions: vec![car().regions.remove(0)] };
+        assert!(plan(&one, 3, &cfg).is_empty());
+        // the same pair with very many points is sure enough
+        let mut strong = car().regions.remove(0);
+        strong.count = 60;
+        assert_eq!(plan(&Layers { regions: vec![strong] }, 3, &cfg).len(), 1);
+        // two pairs but a slight shift (a moving tree): not proposed
+        let mut slight = car();
+        slight.regions.iter_mut().for_each(|r| r.shift_px = 6.0);
+        assert!(plan(&slight, 3, &cfg).is_empty());
+        // too few points per region
+        let mut few = car();
+        few.regions.iter_mut().for_each(|r| {
+            r.pts_a.truncate(5);
+            r.pts_b.truncate(5);
+        });
+        assert!(plan(&few, 3, &cfg).is_empty());
+        // regions from rejected matches carry no points and are not used
+        let mut m = car();
+        m.regions.iter_mut().for_each(|r| r.source = Source::Matches);
+        assert!(plan(&m, 3, &cfg).is_empty());
     }
 
     #[test]
     fn regions_that_only_share_a_photo_but_not_its_cells_are_different_objects() {
-        // photo 1 shows two things: a car on the left (seen with photo 0) and a railing on the right (seen with photo 2)
-        let layers = Layers { regions: vec![region(0, 1, block(8, 6, 3, 3), block(1, 6, 3, 3)), region(1, 2, block(10, 8, 3, 3), block(2, 8, 3, 3))] };
-        let o = plan(&layers, 3, &NearSeamConfig::default());
+        // photo 1 shows two things: a car on the left (with photo 0) and a railing on the right (with photo 2)
+        let mut l = car();
+        l.regions[1].mask_a = cells(11, 9, 3, 3);
+        l.regions[1].pts_a = pts(0.7, 0.6, 15);
+        let o = plan(&l, 3, &NearSeamConfig { min_regions: 1, ..Default::default() });
         assert_eq!(o.len(), 2, "{o:?}");
-        // the two regions of one pair that overlap are one object
-        let one = Layers { regions: vec![region(0, 1, block(5, 5, 3, 3), block(5, 5, 3, 3)), region(0, 1, block(6, 5, 3, 3), block(6, 5, 3, 3))] };
-        assert_eq!(plan(&one, 2, &NearSeamConfig::default()).len(), 1);
     }
 
     #[test]
-    fn two_separate_objects_stay_two() {
-        let layers = Layers {
-            regions: vec![region(0, 1, block(2, 2, 3, 3), block(3, 2, 3, 3)), region(0, 1, block(10, 10, 3, 3), block(11, 10, 3, 3))],
-        };
-        let o = plan(&layers, 2, &NearSeamConfig::default());
-        assert_eq!(o.len(), 2);
-        assert!(o.iter().all(|x| x.keeper.is_some()));
-    }
-
-    #[test]
-    fn objects_that_are_cut_off_everywhere_or_too_big_or_too_small_are_not_proposed() {
-        let cut = Layers { regions: vec![region(0, 1, block(13, 6, 3, 3), block(0, 6, 3, 3))] };
-        let o = plan(&cut, 2, &NearSeamConfig::default());
-        assert_eq!((o.len(), o[0].keeper, o[0].why_not), (1, None, "no photo shows it whole"));
-        assert!(strokes(&o[0], &NearSeamConfig::default()).is_empty());
-        let big = Layers { regions: vec![region(0, 1, block(2, 2, 12, 8), block(2, 2, 12, 8))] };
-        // a region that large is a wide shift, not an object: it is dropped before objects are formed
-        assert!(plan(&big, 2, &NearSeamConfig::default()).is_empty());
-        let small = Layers { regions: vec![region(0, 1, block(5, 5, 1, 1), block(5, 5, 1, 1))] };
-        assert!(plan(&small, 2, &NearSeamConfig::default()).is_empty(), "too small to list");
-        let slight = Layers { regions: vec![NearRegion { shift_px: 5.0, ..region(0, 1, block(5, 5, 3, 3), block(5, 5, 3, 3)) }] };
-        assert!(plan(&slight, 2, &NearSeamConfig::default()).is_empty(), "shifts too little to list");
-    }
-
-    #[test]
-    fn switched_off_or_nothing_found_proposes_nothing() {
-        let layers = Layers { regions: vec![region(0, 1, block(5, 5, 3, 3), block(5, 5, 3, 3))] };
-        assert!(plan(&layers, 2, &NearSeamConfig { enabled: false, ..Default::default() }).is_empty());
-        assert!(plan(&Layers::default(), 2, &NearSeamConfig::default()).is_empty());
+    fn huge_regions_switched_off_and_nothing_found_propose_nothing() {
+        let mut l = car();
+        l.regions[0].mask_a = cells(0, 0, 14, 8);
+        l.regions[1].mask_a = cells(0, 0, 14, 8);
+        assert!(plan(&l, 3, &NearSeamConfig::default()).is_empty());
+        assert!(plan(&car(), 3, &NearSeamConfig { enabled: false, ..Default::default() }).is_empty());
+        assert!(plan(&Layers::default(), 3, &NearSeamConfig::default()).is_empty());
     }
 }

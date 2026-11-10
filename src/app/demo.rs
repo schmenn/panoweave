@@ -83,7 +83,7 @@ impl PanoApp {
                 let plan = crate::near_seams::plan(&layers, self.photos.len(), &crate::near_seams::NearSeamConfig::default().with_env());
                 for o in &plan {
                     for (p, m) in &o.photos {
-                        eprintln!("near seams:   photo {}: {} cells, box {:?}", p + 1, m.cells().len(), m.bbox());
+                        eprintln!("near seams:   photo {}: {} outline points", p + 1, m.len());
                     }
                     eprintln!("near seams: {}", o.text());
                 }
