@@ -443,6 +443,8 @@ pub struct PanoApp {
     pub(super) pair_summary: Option<crate::pair_check::PairSummary>,
     /// pairs where a nearer object does not fit the rotation model (from the last "Find points", memory only)
     pub(super) parallax_hints: Vec<engine::ParallaxHint>,
+    /// near objects found by the last alignment (memory only; found again after every alignment)
+    pub(super) layers: crate::depth::Layers,
     /// connection view (graph + warning list)
     pub(super) show_graph: bool,
     pub(super) graph_photo: Option<usize>,

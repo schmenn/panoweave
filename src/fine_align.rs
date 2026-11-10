@@ -15,6 +15,7 @@
 //! working images (long side 1600 px), the same images the point finder uses.
 
 use crate::align::{self, AlignInput, ControlPoint, CpKind, Lens, OptimizeOptions};
+use crate::depth::{self, DepthConfig, Layers};
 use crate::foliage::{self, FoliageConfig, FoliageMap};
 use crate::geometry::*;
 use crate::imgutil::{blur, Gray};
@@ -95,6 +96,14 @@ pub struct FineConfig {
     /// optimiser and areas are not preferably placed on it. `enabled = false` = exactly as before.
     #[serde(default)]
     pub foliage: FoliageConfig,
+    /// Near objects (a car close to the camera): points and patches on them get a smaller weight, the background
+    /// decides. `enabled = false` = exactly as before.
+    #[serde(default)]
+    pub depth: DepthConfig,
+    /// Near objects known before the run (from the point finder); the run adds what the errors show.
+    /// Not saved: the regions are found again after every alignment.
+    #[serde(skip)]
+    pub layers: Layers,
     /// weight factor of protected points in the optimisation (`align::LOCKED_WEIGHT`; 1 = like any point).
     /// The app sets it from the alignment options.
     #[serde(default = "locked_weight_default")]
@@ -160,6 +169,8 @@ impl Default for FineConfig {
             pick_reach: pick_reach_default(),
             edge_search_share: edge_search_share_default(),
             foliage: FoliageConfig::default().with_env(),
+            depth: DepthConfig::default().with_env(),
+            layers: Layers::default(),
         }
     }
 }
@@ -167,6 +178,20 @@ impl Default for FineConfig {
 /// Foliage maps of the photos.
 pub fn foliage_maps(photos: &[FaPhoto]) -> Vec<FoliageMap> {
     foliage::maps_of(&photos.iter().map(|p| (&*p.rgb, &*p.gray)).collect::<Vec<_>>())
+}
+
+/// Sets the factors of the optimiser weight: foliage and near objects (the one place that does both).
+fn rate_weights(cps: &mut [ControlPoint], fol: &[Option<&FoliageMap>], layers: &Layers, cfg: &FineConfig) -> usize {
+    let n = foliage::rate(cps, fol, &cfg.foliage);
+    depth::rate(cps, layers, &cfg.depth);
+    n
+}
+
+/// Looks for near objects in the errors the alignment leaves and puts them into `layers`.
+#[allow(clippy::too_many_arguments)]
+fn refresh_layers(layers: &mut Layers, photos: &[FaPhoto], lens_of: &[usize], long_side: &[f64], lenses: &[Lens], rots: &[M3], cps: &[ControlPoint], cfg: &FineConfig) {
+    let dims: Vec<(usize, usize)> = photos.iter().map(|p| (p.gray.w, p.gray.h)).collect();
+    depth::refresh(layers, lens_of, long_side, lenses, rots, cps, &dims, &cfg.depth);
 }
 
 /// What the fine alignment needs from each photo.
@@ -216,6 +241,8 @@ pub struct FineStats {
     pub rolled_back: bool,
     pub ms: u128,
     pub log: Vec<String>,
+    /// near objects at the end of the run (known from before plus found in the errors)
+    pub layers: Layers,
 }
 
 /// Camera model of one photo in working-image pixels.
@@ -589,6 +616,7 @@ fn measure_round(
     mcfg: &MatchConfig,
     pairs: &[(usize, usize)],
     ov: &HashMap<Key, Override>,
+    layers: &Layers,
     label: &str,
 ) -> RoundOutcome {
     let mut reasons: HashMap<&'static str, usize> = HashMap::new();
@@ -971,7 +999,7 @@ fn measure_round(
         }
     }
     STORE.end_round(crate::engine::cancelled());
-    foliage::rate(&mut out, &imgs.fol_maps(), &cfg.foliage);
+    rate_weights(&mut out, &imgs.fol_maps(), layers, cfg);
     let mean = |v: &Vec<f32>| if v.is_empty() { 0.0 } else { v.iter().sum::<f32>() / v.len() as f32 };
     RoundOutcome {
         cps: out,
@@ -1204,14 +1232,22 @@ pub fn run(
     let geos = geos_of(&rots, &lenses);
     let imgs = Images::prepare(photos, &geos, &pairs, cfg.foliage.enabled);
     let fol = imgs.fol_maps();
-    let rated = foliage::rate(&mut cps, &fol, &cfg.foliage);
+    let mut layers = cfg.layers.clone();
+    refresh_layers(&mut layers, photos, lens_of, long_side, &lenses, &rots, &cps, cfg);
+    let rated = rate_weights(&mut cps, &fol, &layers, cfg);
+    if !layers.is_empty() && cfg.depth.enabled {
+        for r in &layers.regions {
+            stats.log.push(format!("near object: {}", r.text()));
+        }
+        stats.log.push(format!("{} points and patches lie on near objects and get a smaller weight", cps.iter().filter(|c| c.depth_w < 0.999).count()));
+    }
     if rated > 0 {
         stats.log.push(format!("{rated} points and patches look like foliage and get a smaller weight"));
     }
     let rounds = cfg.refine_iterations.max(1);
     report(0.0, "Fine alignment: comparing patches");
     let none = HashMap::new();
-    let o = measure_round(&geos, &imgs, &cps, cfg, &cfg.matcher, &pairs, &none, "Fine alignment, round 1");
+    let o = measure_round(&geos, &imgs, &cps, cfg, &cfg.matcher, &pairs, &none, &layers, "Fine alignment, round 1");
     stats.list_total = o.total;
     stats.list_valid = o.valid;
     stats.list_areas = o.areas;
@@ -1280,7 +1316,8 @@ pub fn run(
         report((round as f32 + 0.5) / (rounds as f32 + 1.0), &format!("Fine alignment: optimising (round {} of {})", round + 1, rounds));
         align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &opts, 40);
         align::cp_errors(&inp, &rots, &lenses, &mut cps);
-        foliage::rate(&mut cps, &fol, &cfg.foliage);
+        refresh_layers(&mut layers, photos, lens_of, long_side, &lenses, &rots, &cps, cfg);
+        rate_weights(&mut cps, &fol, &layers, cfg);
         let geos = geos_of(&rots, &lenses);
         let (s, d, nv) = evaluate(&geos, &imgs, &test, &eval_cfg);
         stats.log.push(format!("round {}: mean remaining shift {:.3} px, mean difference {:.2} ({} valid)", round + 1, s, d, nv));
@@ -1304,7 +1341,7 @@ pub fn run(
             let radius = (cfg.matcher.search_radius / (2u32 << round.min(8)) as f32).max(cfg.min_search_radius);
             let mcfg = MatchConfig { search_radius: radius, ..cfg.matcher.clone() };
             report((round as f32 + 1.0) / (rounds as f32 + 1.0), &format!("Fine alignment: comparing patches (search {radius:.0} px)"));
-            let o = measure_round(&geos, &imgs, &cps, cfg, &mcfg, &pairs, &none, &format!("Fine alignment, round {}", round + 2));
+            let o = measure_round(&geos, &imgs, &cps, cfg, &mcfg, &pairs, &none, &layers, &format!("Fine alignment, round {}", round + 2));
             stats.list_total = o.total;
             stats.list_valid = o.valid;
             stats.list_areas = o.areas;
@@ -1319,7 +1356,9 @@ pub fn run(
         }
     }
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
-    foliage::rate(&mut cps, &fol, &cfg.foliage);
+    refresh_layers(&mut layers, photos, lens_of, long_side, &lenses, &rots, &cps, cfg);
+    rate_weights(&mut cps, &fol, &layers, cfg);
+    stats.layers = layers;
     stats.err_after = err_stats(&cps);
     stats.ms = t0.elapsed().as_millis();
     (rots, lenses, cps, stats)
@@ -1400,11 +1439,15 @@ pub fn reoptimize(
     // the list holds the patches as they were measured; the foliage weights are set again here
     let fol_v = if cfg.foliage.enabled { foliage_maps(photos) } else { Vec::new() };
     let fol: Vec<Option<&FoliageMap>> = (0..n).map(|i| fol_v.get(i)).collect();
-    foliage::rate(&mut cps, &fol, &cfg.foliage);
+    let mut layers = cfg.layers.clone();
+    refresh_layers(&mut layers, photos, lens_of, long_side, &lenses, &rots, &cps, cfg);
+    rate_weights(&mut cps, &fol, &layers, cfg);
     report(0.1, "Optimising with the patches from the list");
     align::optimize(&inp, &mut rots, &mut lenses, &cps, anchor, &opts, 40);
     align::cp_errors(&inp, &rots, &lenses, &mut cps);
-    foliage::rate(&mut cps, &fol, &cfg.foliage);
+    refresh_layers(&mut layers, photos, lens_of, long_side, &lenses, &rots, &cps, cfg);
+    rate_weights(&mut cps, &fol, &layers, cfg);
+    stats.layers = layers.clone();
     stats.err_after = err_stats(&cps);
     stats.rounds = 1;
     if crate::engine::cancelled() {
@@ -1424,7 +1467,7 @@ pub fn reoptimize(
     // points disabled by hand are measured and listed again (still disabled), not used
     let mut to_measure = cps.clone();
     to_measure.extend(states.iter().filter(|st| st.status == Status::DisabledManual).filter_map(|st| st.cp).filter(|c| c.kind != CpKind::Area));
-    let o = measure_round(&geos, &imgs, &to_measure, cfg, &mcfg, &pairs, &ov, "After restarting the optimisation");
+    let o = measure_round(&geos, &imgs, &to_measure, cfg, &mcfg, &pairs, &ov, &layers, "After restarting the optimisation");
     stats.list_total = o.total;
     stats.list_valid = o.valid;
     stats.list_areas = o.areas;

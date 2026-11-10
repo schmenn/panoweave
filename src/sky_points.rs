@@ -169,6 +169,7 @@ mod tests {
             score: 0.0,
             locked: false,
             fol_w: 1.0,
+            depth_w: 1.0,
         }
     }
 

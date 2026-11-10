@@ -383,6 +383,9 @@ pub struct ParallaxGroup {
     pub centre: (f32, f32),
     /// x0, y0, x1, y1 (10 % to 90 % of the points, so single strays do not widen it)
     pub bbox: [f32; 4],
+    /// cells of the group in the first and in the second photo (a near object as a region, see `depth.rs`)
+    pub mask_a: crate::depth::CoarseMask,
+    pub mask_b: crate::depth::CoarseMask,
 }
 
 const HINT_GRID: usize = 8;
@@ -395,6 +398,7 @@ fn parallax_group(
     rejected: &[usize],
     h: &[f64; 9],
     dims: (usize, usize),
+    dims_b: (usize, usize),
     thr: f64,
     cfg: &ParallaxHintConfig,
     seed: u64,
@@ -434,34 +438,7 @@ fn parallax_group(
         let (gx, gy) = cell(rs[k]);
         cnt[gy][gx] += 1;
     }
-    let mut seen = [[false; HINT_GRID]; HINT_GRID];
-    let mut best = 0usize;
-    for y0 in 0..HINT_GRID {
-        for x0 in 0..HINT_GRID {
-            if seen[y0][x0] || cnt[y0][x0] == 0 {
-                continue;
-            }
-            let (mut sum, mut stack) = (0usize, vec![(x0, y0)]);
-            seen[y0][x0] = true;
-            while let Some((x, y)) = stack.pop() {
-                sum += cnt[y][x];
-                for dy in -1isize..=1 {
-                    for dx in -1isize..=1 {
-                        let (nx, ny) = (x as isize + dx, y as isize + dy);
-                        if nx < 0 || ny < 0 || nx >= HINT_GRID as isize || ny >= HINT_GRID as isize {
-                            continue;
-                        }
-                        let (nx, ny) = (nx as usize, ny as usize);
-                        if !seen[ny][nx] && cnt[ny][nx] > 0 {
-                            seen[ny][nx] = true;
-                            stack.push((nx, ny));
-                        }
-                    }
-                }
-            }
-            best = best.max(sum);
-        }
-    }
+    let best = crate::depth::largest_component(&cnt);
     if (best as f64) < cfg.min_coherence * inl.len() as f64 {
         return None;
     }
@@ -477,7 +454,20 @@ fn parallax_group(
         shift_px: shift,
         centre: (q(&xs, 0.5), q(&ys, 0.5)),
         bbox,
+        mask_a: mask_of(inl.iter().map(|&k| rs[k]), dims),
+        mask_b: mask_of(inl.iter().map(|&k| rd[k]), dims_b),
     })
+}
+
+/// Cells of a group of working-image points (`depth::Layers::from_hints` and `rate` use them; the object is larger
+/// than its points, `depth::DepthConfig::dilate` adds the rings around).
+fn mask_of(pts: impl Iterator<Item = (f64, f64)>, dims: (usize, usize)) -> crate::depth::CoarseMask {
+    let mut m = crate::depth::CoarseMask::default();
+    for p in pts {
+        let (cx, cy) = crate::depth::CoarseMask::cell_of_px(p.0, p.1, dims.0, dims.1);
+        m.set(cx, cy);
+    }
+    m
 }
 
 /// Full pair pipeline: descriptor matching, RANSAC, guided matching, thinning.
@@ -534,7 +524,7 @@ pub fn match_pair_ex(a: &Features, b: &Features, max_points: usize, seed: u64, h
                 ((x - dst[k].0).powi(2) + (y - dst[k].1).powi(2)).sqrt() >= thr
             })
             .collect();
-        parallax_group(&src, &dst, &rejected, &h2, (a.w, a.h), thr, cfg, seed)
+        parallax_group(&src, &dst, &rejected, &h2, (a.w, a.h), (b.w, b.h), thr, cfg, seed)
     });
     let thinned = thin(final_c, a.w, a.h, max_points);
     Some(PairMatch { h: h2, corrs: thinned, suspect })
@@ -1091,7 +1081,7 @@ mod tests {
         let h = [1.0, 0.0, -60.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let rejected: Vec<usize> = (300..700).collect();
         let cfg = ParallaxHintConfig::default();
-        assert!(parallax_group(&src, &dst, &rejected, &h, (1600, 1200), 5.6, &cfg, 3).is_none());
+        assert!(parallax_group(&src, &dst, &rejected, &h, (1600, 1200), (1600, 1200), 5.6, &cfg, 3).is_none());
         // the same with a real second group (400 matches moved 25 px further, in one region) is found
         let mut src2 = src.clone();
         let mut dst2 = dst.clone();
@@ -1101,8 +1091,11 @@ mod tests {
             dst2.push((x - 85.0, y));
         }
         let rej2: Vec<usize> = (300..1100).collect();
-        let g = parallax_group(&src2, &dst2, &rej2, &h, (1600, 1200), 5.6, &cfg, 3).expect("group");
+        let g = parallax_group(&src2, &dst2, &rej2, &h, (1600, 1200), (1600, 1200), 5.6, &cfg, 3).expect("group");
         assert!(g.count >= 380 && (g.shift_px - 25.0).abs() < 1.0, "{g:?}");
+        // the region of the object in both photos (the second shifted by 85 px)
+        assert!(g.mask_a.contains_frac(550.0 / 1600.0, 425.0 / 1200.0) && !g.mask_a.contains_frac(1400.0 / 1600.0, 1000.0 / 1200.0));
+        assert!(g.mask_b.contains_frac(465.0 / 1600.0, 425.0 / 1200.0));
     }
 
     #[test]
@@ -1124,7 +1117,7 @@ mod tests {
         }
         let h = [1.0, 0.0, -60.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
         let rejected: Vec<usize> = (200..400).collect();
-        assert!(parallax_group(&src, &dst, &rejected, &h, (1600, 1200), 5.6, &ParallaxHintConfig::default(), 3).is_none());
+        assert!(parallax_group(&src, &dst, &rejected, &h, (1600, 1200), (1600, 1200), 5.6, &ParallaxHintConfig::default(), 3).is_none());
     }
 
     #[test]

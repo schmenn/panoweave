@@ -299,7 +299,7 @@ pub fn factor(value: f32, cfg: &FoliageConfig) -> f32 {
 }
 
 /// Whether the rating may change this pair: protected points and points placed by hand never.
-fn rateable(c: &ControlPoint) -> bool {
+pub(crate) fn rateable(c: &ControlPoint) -> bool {
     !c.locked && !c.manual && c.kind != CpKind::AreaManual
 }
 

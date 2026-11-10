@@ -12,6 +12,17 @@ pub(super) fn protected_fit_note(cps: &[ControlPoint]) -> String {
     format!(" {} protected points fit to {mean:.2} px on average (largest {max:.1} px).", errs.len())
 }
 
+/// " Near objects in photo pairs 8-10: N points and patches count less." – empty when none were found.
+fn near_note(layers: &crate::depth::Layers, cps: &[ControlPoint]) -> String {
+    if layers.is_empty() {
+        return String::new();
+    }
+    let n = cps.iter().filter(|c| c.depth_w < 0.999).count();
+    let mut pairs: Vec<String> = layers.regions.iter().map(|r| format!("{}-{}", r.a + 1, r.b + 1)).collect();
+    pairs.dedup();
+    format!(" Near objects in photo pairs {}: {n} points and patches count less.", pairs.join(", "))
+}
+
 impl PanoApp {
     pub(super) fn run_align(&mut self, chain: bool) {
         if self.busy() || self.photos.is_empty() {
@@ -42,16 +53,24 @@ impl PanoApp {
         let pc_cfg = self.pair_cfg.clone();
         let msettings = self.match_settings;
         let used: Vec<bool> = (0..self.photos.len()).map(|i| active.contains(&i)).collect();
+        let hints: Vec<engine::ParallaxHint> = self.parallax_hints.clone();
         self.start_job("Aligning photos", move |report, _| {
             let (focal, dist) = (s.fine_tune_fov, s.distortion);
             // foliage (moves between the shots) gets a smaller weight: first from colour and structure and the
             // errors of the last alignment, then again from the errors of this one
             let fol_v = if fine_cfg.foliage.enabled { fine_align::foliage_maps(&fa) } else { Vec::new() };
             let fol: Vec<Option<&crate::foliage::FoliageMap>> = (0..fa.len()).map(|i| fol_v.get(i)).collect();
+            // near objects (a car close to the camera) likewise: first from the matches the point finder could not
+            // explain, then from the errors of each alignment; the background decides
+            let dims: Vec<(usize, usize)> = fa.iter().map(|p| (p.gray.w, p.gray.h)).collect();
+            let mut layers = crate::depth::Layers::from_hints(&hints, &fine_cfg.depth);
             let mut cps = cps;
             crate::foliage::rate(&mut cps, &fol, &fine_cfg.foliage);
+            crate::depth::rate(&mut cps, &layers, &fine_cfg.depth);
             let mut r0 = engine::align_all(&lens_of, &lenses, &long, &cps, &s, report);
+            crate::depth::refresh(&mut layers, &lens_of, &long, &r0.lenses, &r0.rots, &r0.cps, &dims, &fine_cfg.depth);
             crate::foliage::rate(&mut r0.cps, &fol, &fine_cfg.foliage);
+            crate::depth::rate(&mut r0.cps, &layers, &fine_cfg.depth);
             // geometric pair check: overlapping pairs without enough points are searched again
             let (mut r, summary) = if pc_cfg.enabled {
                 crate::pair_check::run_rounds(&fa, &lens_of, &lenses, &long, r0, &s, &used, &pc_cfg, &fine_cfg.matcher, msettings, report)
@@ -63,7 +82,11 @@ impl PanoApp {
                 eprintln!("pair check: {l}");
             }
             r.pairs = Some(summary);
+            crate::depth::refresh(&mut layers, &lens_of, &long, &r.lenses, &r.rots, &r.cps, &dims, &fine_cfg.depth);
             crate::foliage::rate(&mut r.cps, &fol, &fine_cfg.foliage);
+            crate::depth::rate(&mut r.cps, &layers, &fine_cfg.depth);
+            r.layers = layers.clone();
+            let fine_cfg = crate::fine_align::FineConfig { layers, ..fine_cfg };
             if fine_cfg.enabled {
                 let (rots, lenses2, cps2, st) = fine_align::run(&fa, &lens_of, &long, &r.lenses, &r.rots, &r.cps, focal, dist, &fine_cfg, report);
                 r.rots = rots;
@@ -74,6 +97,7 @@ impl PanoApp {
                     r.mean_err = errs.iter().sum::<f64>() / errs.len() as f64;
                     r.max_err = errs.iter().cloned().fold(0.0, f64::max);
                 }
+                r.layers = st.layers.clone();
                 r.fine = Some(st);
                 if par_cfg.enabled {
                     report(0.97, "Parallax mode: measuring local corrections");
@@ -105,7 +129,7 @@ impl PanoApp {
         let rots: Vec<M3> = self.photos.iter().map(|p| p.rot).collect();
         let cps: Vec<ControlPoint> = self.cps.iter().filter(|c| active.contains(&c.a) && active.contains(&c.b)).copied().collect();
         let (focal, dist) = (self.align_settings.fine_tune_fov, self.align_settings.distortion);
-        let fine_cfg = fine_align::FineConfig { locked_weight: self.align_settings.locked_weight, ..self.fine_cfg.clone() };
+        let fine_cfg = fine_align::FineConfig { locked_weight: self.align_settings.locked_weight, layers: self.layers.clone(), ..self.fine_cfg.clone() };
         let par_cfg = self.parallax_cfg.clone();
         let old_fields = self.fields.clone();
         let fa: Vec<fine_align::FaPhoto> = self.photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
@@ -115,7 +139,7 @@ impl PanoApp {
             let errs: Vec<f64> = cps2.iter().filter(|c| c.kind == CpKind::Point).map(|c| c.err).collect();
             let (mean_err, max_err) = if errs.is_empty() { (0.0, 0.0) } else { (errs.iter().sum::<f64>() / errs.len() as f64, errs.iter().cloned().fold(0.0, f64::max)) };
             let fields = if par_cfg.enabled { fine_align::parallax_fields(&fa, &lens_of, &lenses2, &rots, &cps2, &fine_cfg, &par_cfg) } else { old_fields };
-            JobMsg::Aligned(AlignResult { rots, lenses: lenses2, cps: cps2, removed: 0, removal_passes: 0, ms: t0.elapsed().as_millis(), mean_err, max_err, fine: Some(st), fields, pairs: None })
+            JobMsg::Aligned(AlignResult { rots, lenses: lenses2, cps: cps2, removed: 0, removal_passes: 0, ms: t0.elapsed().as_millis(), mean_err, max_err, layers: st.layers.clone(), fine: Some(st), fields, pairs: None })
         });
     }
 
@@ -136,6 +160,7 @@ impl PanoApp {
             )
         });
         self.last_fine = a.fine.clone();
+        self.layers = a.layers.clone();
         self.fields = a.fields.clone();
         self.fields.resize(self.photos.len(), None);
         self.align_version += 1;
@@ -176,7 +201,7 @@ impl PanoApp {
         self.preview_dirty = true;
         let q = if a.mean_err < 1.5 { "excellent" } else if a.mean_err < 3.0 { "good" } else { "rough – check the points" };
         let fine_note = a.fine.as_ref().map(fine_attention).unwrap_or_default();
-        let fine_note = format!("{}{fine_note}", protected_fit_note(&self.cps));
+        let fine_note = format!("{}{}{fine_note}", protected_fit_note(&self.cps), near_note(&self.layers, &self.cps));
         self.set_status(
             format!(
                 "Aligned in {}: average error {:.2} px ({q}){}.{}{fine_note}",
@@ -342,6 +367,8 @@ impl PanoApp {
                         .small()
                         .color(MUTED),
                 );
+                ui.checkbox(&mut self.fine_cfg.depth.enabled, "Count points and patches on near objects less (a car or railing close to the camera)")
+                    .on_hover_text("An object much closer than the background shifts between the shots, which a camera that only turns cannot explain; points and patches on it pull the photos away from the background. They are found from the matches the point finder could not explain and from the errors left after aligning, and get a smaller weight (not removed), so the background decides. Protected points and points placed by hand are never touched. Off = exactly as before.");
                 ui.checkbox(&mut self.fine_cfg.foliage.enabled, "Count points and patches on foliage less (trees and bushes move between the shots)")
                     .on_hover_text("Colour (green to brown), very fine irregular structure and restless residual errors after aligning mark foliage; those points and patches get a smaller weight (not removed), areas are placed away from foliage if possible. Protected points and points placed by hand are never touched. Off = exactly as before.");
                 ui.add_enabled_ui(self.fine_cfg.enabled, |ui| {

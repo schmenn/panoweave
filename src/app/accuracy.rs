@@ -27,7 +27,7 @@ impl PanoApp {
         let long: Vec<f64> = self.photos.iter().map(|p| p.long()).collect();
         let lenses = self.lenses.clone();
         let s = self.align_settings;
-        let fine_cfg = fine_align::FineConfig { locked_weight: s.locked_weight, ..self.fine_cfg.clone() };
+        let fine_cfg = fine_align::FineConfig { locked_weight: s.locked_weight, layers: self.layers.clone(), ..self.fine_cfg.clone() };
         let fa: Vec<fine_align::FaPhoto> = self.photos.iter().map(|p| fine_align::FaPhoto { gray: p.gray.clone(), rgb: p.work.clone() }).collect();
         let sources: Vec<Source> = self.photos.iter().map(|p| p.source.clone()).collect();
         let current = if self.aligned { Some((self.photos.iter().map(|p| p.rot).collect::<Vec<M3>>(), self.lenses.clone())) } else { None };

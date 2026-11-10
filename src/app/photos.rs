@@ -203,6 +203,7 @@ impl PanoApp {
         self.area = Default::default();
         self.pair_summary = None;
         self.parallax_hints.clear();
+        self.layers = Default::default();
         self.sky_cache = None;
         self.dup_cache = None;
         self.cp_rows_cache = None;

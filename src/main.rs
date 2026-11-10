@@ -2,6 +2,7 @@
 
 mod accuracy_search;
 mod accuracy_test;
+mod depth;
 mod align;
 mod duplicate_points;
 mod sky_points;
