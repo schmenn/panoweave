@@ -184,13 +184,14 @@ impl PanoApp {
         self.lock_status(n, lock);
     }
 
-    /// A click in the add tool while the point that was just placed is still selected: moves
-    /// exactly the clicked half of that point instead of starting a second point. The match
-    /// search only corrects within a small radius around the click (`local_radius`) and keeps
-    /// the click spot when the match is weak or `snap` is off (Alt). Returns false when there is
-    /// no such point (the click then starts a new one).
+    /// A click in the add tool while the point that was just placed is still selected, in the
+    /// photo where the program searched the partner (not the start side): corrects that half of
+    /// the point instead of starting a second point. The match search only corrects within a
+    /// small radius around the click (`local_radius`) and keeps the click spot when the match is
+    /// weak or `snap` is off (Alt). Returns false when there is no such point or the click is in
+    /// the start side (the click then starts a new point).
     pub(super) fn replace_fresh_side(&mut self, pane: Pane, p: P2, snap: bool) -> bool {
-        let Some(k) = self.pe.fresh.filter(|&k| self.pe.selected == Some(k) && k < self.cps.len()) else { return false };
+        let Some(k) = self.pe.fresh.filter(|&(k, start)| start != pane && self.pe.selected == Some(k) && k < self.cps.len()).map(|f| f.0) else { return false };
         let (a, b) = (self.pe.a, self.pe.b);
         let c = self.cps[k];
         if !((c.a == a && c.b == b) || (c.a == b && c.b == a)) {
@@ -226,9 +227,9 @@ impl PanoApp {
         self.pe.moving = Some(pane);
         self.set_status(
             if snapped {
-                "Point moved to where you clicked (corrected slightly to the exact spot). Esc or Ctrl+click starts a new point."
+                "Point moved to where you clicked (corrected slightly to the exact spot). A click in the first photo starts a new point."
             } else {
-                "Point moved exactly to where you clicked. Esc or Ctrl+click starts a new point."
+                "Point moved exactly to where you clicked. A click in the first photo starts a new point."
             },
             if snapped { GOOD } else { MUTED },
         );
@@ -236,7 +237,8 @@ impl PanoApp {
     }
 
     pub(super) fn add_point_click(&mut self, pane: Pane, p: P2, mods: egui::Modifiers) {
-        // the point that was just placed is still selected: correct it (Ctrl+click: new point)
+        // the point that was just placed is still selected: a click in the other photo than the
+        // start side corrects the proposed match (Ctrl+click or a click in the start side: new point)
         if self.pe.pending.is_none() && !mods.command && self.replace_fresh_side(pane, p, !mods.alt) {
             return;
         }
@@ -317,7 +319,7 @@ impl PanoApp {
         self.push_undo("adding a point");
         self.cps.push(ControlPoint::new(a, b, pa, pb, true));
         self.pe.selected = Some(self.cps.len() - 1);
-        self.pe.fresh = self.pe.selected;
+        self.pe.fresh = self.pe.selected.map(|k| (k, p1));
         // the half placed second is the one that followed, whichever photo it is in
         self.pe.moving = Some(p1.other());
         self.needs_align = true;
@@ -657,7 +659,7 @@ mod undo_tests {
         app.pe.b = 1;
         app.pe.tool = PointTool::Add;
         app.push_manual(Pane::A, [0.0, 0.0], [0.1, 0.1]);
-        assert_eq!(app.pe.fresh, app.pe.selected);
+        assert_eq!(app.pe.fresh, app.pe.selected.map(|k| (k, Pane::A)));
         app
     }
 
@@ -669,17 +671,50 @@ mod undo_tests {
         app.add_point_click(Pane::B, (30.0, 20.0), egui::Modifiers::ALT);
         assert_eq!(app.cps.len(), 1);
         assert_eq!(app.cps[0].pb, app.to_norm(1, (30.0, 20.0)));
-        assert_eq!(app.cps[0].pa, old_a, "the other side stays");
+        assert_eq!(app.cps[0].pa, old_a, "the other side (the start side) stays");
         assert!(app.cps[0].manual);
-        // again, on the other side, with snapping: stays near the click (small search radius only)
-        app.add_point_click(Pane::A, (50.0, 40.0), egui::Modifiers::NONE);
+        // again in the same pane, far away from the wrong proposal, with snapping: stays near the click (small search radius only)
+        app.add_point_click(Pane::B, (50.0, 40.0), egui::Modifiers::NONE);
         assert_eq!(app.cps.len(), 1);
-        let (x, y) = app.to_px(0, app.cps[0].pa);
-        assert!((x - 50.0).hypot(y - 40.0) <= app.local_radius(0) + 1.0, "moved to ({x}, {y})");
+        let (x, y) = app.to_px(1, app.cps[0].pb);
+        assert!((x - 50.0).hypot(y - 40.0) <= app.local_radius(1) + 1.0, "moved to ({x}, {y})");
+        assert_eq!(app.cps[0].pa, old_a);
         // each correction is one undo step
         app.undo_last();
         assert_eq!(app.cps[0].pb, app.to_norm(1, (30.0, 20.0)));
         assert_eq!(app.cps[0].pa, old_a);
+    }
+
+    #[test]
+    fn a_click_in_the_start_side_begins_a_new_point() {
+        let mut app = app_with_fresh_point();
+        assert_eq!(app.pe.fresh.map(|f| f.1), Some(Pane::A));
+        let before = app.cps[0];
+        app.add_point_click(Pane::A, (10.0, 12.0), egui::Modifiers::ALT);
+        assert_eq!(app.cps.len(), 1, "no second point yet, only its first half");
+        assert!(app.pe.pending.is_some_and(|p| p.0 == Pane::A));
+        assert!(app.cps[0].pa == before.pa && app.cps[0].pb == before.pb, "the first point is not moved");
+        app.add_point_click(Pane::B, (40.0, 30.0), egui::Modifiers::ALT);
+        assert_eq!(app.cps.len(), 2);
+        // the new point has its own start side, started in the other pane it is mirrored
+        assert_eq!(app.pe.fresh, Some((1, Pane::A)));
+        // a click in the other pane corrects this point, it does not begin one
+        app.add_point_click(Pane::B, (60.0, 50.0), egui::Modifiers::ALT);
+        assert!(app.pe.pending.is_none() && app.cps.len() == 2);
+        // after Esc a point is started on the right
+        app.pe.fresh = None;
+        app.add_point_click(Pane::B, (60.0, 50.0), egui::Modifiers::ALT);
+        assert!(app.pe.pending.is_some_and(|p| p.0 == Pane::B), "now the right photo is the start side of a new point");
+        app.add_point_click(Pane::A, (20.0, 22.0), egui::Modifiers::ALT);
+        assert_eq!(app.cps.len(), 3);
+        assert_eq!(app.pe.fresh, Some((2, Pane::B)));
+        // start right: a click on the left corrects, a click on the right begins a new point
+        app.add_point_click(Pane::A, (70.0, 60.0), egui::Modifiers::ALT);
+        assert_eq!(app.cps.len(), 3);
+        assert_eq!(app.cps[2].pa, app.to_norm(0, (70.0, 60.0)));
+        app.add_point_click(Pane::B, (5.0, 5.0), egui::Modifiers::ALT);
+        assert_eq!(app.cps.len(), 3);
+        assert!(app.pe.pending.is_some_and(|p| p.0 == Pane::B));
     }
 
     /// The point's position in photo `idx` (whichever of its two sides that is).
@@ -709,22 +744,30 @@ mod undo_tests {
                 assert_eq!(side_of(&app.cps[0], other), app.to_norm(other, (40.0, 30.0)));
                 // the frame of the new point shows the first-placed half as the fixed one
                 assert_eq!(app.pe.moving, Some(pane.other()));
-                // a click in either pane moves exactly that side, the other stays
-                for click in [pane, pane.other()] {
-                    let ci = if click == Pane::A { a } else { b };
-                    let oi = if click == Pane::A { b } else { a };
-                    let keep = side_of(&app.cps[0], oi);
-                    app.add_point_click(click, (25.0, 33.0), egui::Modifiers::ALT);
+                assert_eq!(app.pe.fresh, Some((0, pane)), "the start side is remembered");
+                // a click in the other pane (where the program searched) corrects exactly that side, as often as wanted
+                let click = pane.other();
+                let ci = other;
+                let oi = idx;
+                let keep = side_of(&app.cps[0], oi);
+                for (pt, mods) in [((25.0, 33.0), egui::Modifiers::ALT), ((80.0, 70.0), egui::Modifiers::ALT)] {
+                    app.add_point_click(click, pt, mods);
                     assert_eq!(app.cps.len(), 1);
-                    assert_eq!(side_of(&app.cps[0], ci), app.to_norm(ci, (25.0, 33.0)));
+                    assert_eq!(side_of(&app.cps[0], ci), app.to_norm(ci, pt));
                     assert_eq!(side_of(&app.cps[0], oi), keep);
                     assert_eq!(app.pe.moving, Some(click));
-                    // snapping on: stays within the small local radius of the click
-                    app.add_point_click(click, (50.0, 40.0), egui::Modifiers::NONE);
-                    let (x, y) = app.to_px(ci, side_of(&app.cps[0], ci));
-                    assert!((x - 50.0).hypot(y - 40.0) <= app.local_radius(ci) + 1.0);
-                    assert_eq!(side_of(&app.cps[0], oi), keep);
                 }
+                // snapping on: stays within the small local radius of the click
+                app.add_point_click(click, (50.0, 40.0), egui::Modifiers::NONE);
+                let (x, y) = app.to_px(ci, side_of(&app.cps[0], ci));
+                assert!((x - 50.0).hypot(y - 40.0) <= app.local_radius(ci) + 1.0);
+                assert_eq!(side_of(&app.cps[0], oi), keep);
+                // a click in the start pane begins a new point and moves nothing
+                let before = app.cps[0];
+                app.add_point_click(pane, (60.0, 61.0), egui::Modifiers::ALT);
+                assert_eq!(app.cps.len(), 1);
+                assert!(app.pe.pending.is_some_and(|p| p.0 == pane));
+                assert!(app.cps[0].pa == before.pa && app.cps[0].pb == before.pb);
             }
         }
     }
@@ -733,7 +776,7 @@ mod undo_tests {
     fn ctrl_click_or_esc_state_starts_a_new_point_and_a_protected_point_is_not_moved() {
         let mut app = app_with_fresh_point();
         // Ctrl+click (Alt: no automatic partner search, so the test does not depend on the picture): first half of a second point, nothing moved
-        app.add_point_click(Pane::A, (10.0, 10.0), egui::Modifiers { alt: true, ..egui::Modifiers::COMMAND });
+        app.add_point_click(Pane::B, (10.0, 10.0), egui::Modifiers { alt: true, ..egui::Modifiers::COMMAND });
         assert_eq!(app.cps.len(), 1);
         assert!(app.pe.pending.is_some());
         app.pe.pending = None;

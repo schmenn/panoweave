@@ -175,7 +175,7 @@ The point editor (step 2) shows two photos side by side.
 - **Delete selected** removes all selected points as one undo step.
 - **🧲 Snap selected** lets all selected points snap to the exact spot in the background (only results with at least 80 % match are taken; protected points are left alone).
 
-**➕ Add point:** click a distinctive spot (a corner, a sharp detail) in either photo, then the same spot in the other; the other side looks for the matching spot, and both sides behave the same whether you start left or right. With **then find more automatically** PanoWeave grows more points around it. **If a side snapped wrongly,** the new point stays selected: click in that photo again and exactly that side moves to your click (the snap only corrects within a few pixels of it, and a weak match leaves it exactly where you clicked, so it cannot jump back). **Alt+click** never snaps. **Esc** (or **Ctrl+click**) finishes the point, and the next click starts a new one. Points you moved, dragged or snapped count as placed by hand.
+**➕ Add point:** click a distinctive spot (a corner, a sharp detail) in either photo, then the same spot in the other; the other side looks for the matching spot, and both sides behave the same whether you start left or right. **The photo you start in is the start side.** With **then find more automatically** PanoWeave grows more points around it. **If the other side snapped wrongly,** the new point stays selected: click in the photo where PanoWeave searched and that side moves to your click, as often as you like and also far from the wrong proposal (the snap only corrects within a few pixels of your click, and a weak match leaves it exactly where you clicked, so it cannot jump back). A click in the photo you started in begins the next point; you correct the start side itself by dragging it. **Alt+click** never snaps. **Esc** or **Ctrl+click** also begin the next point, but are no longer needed. Points you moved, dragged or snapped count as placed by hand.
 
 **🎯 Patch click:** click roughly the same spot in both photos. PanoWeave uses the rotation and zoom of nearby points (and of the alignment) to find the exact spot, even when the photos are turned or zoomed differently, and suggests more pairs around it. Check the suggestions and press **✔ Accept** or **✖ Discard**. Nothing is added without your click.
 
@@ -327,7 +327,7 @@ Shortcuts do nothing while a text or number field has the keyboard focus (there 
 | Brush: click or paint | Select the points under the brush; Ctrl takes out |
 | Delete or Backspace | Delete the selected point(s); protected points stay and are named |
 | L | Protect / unprotect the selected point (the one clicked last, not a multiple selection) |
-| Esc | **Add point**: cancel a half-placed point (the first click), or finish the point just placed so the next click starts a new one; pressed again, or in any other tool, back to **Select / edit**. **Area**: cancel the drag, then clear the rectangles, then back to **Select / edit** |
+| Esc | **Add point**: cancel a half-placed point (the first click), or finish the point just placed so the next click starts a new one (a click in the photo you started in does the same); pressed again, or in any other tool, back to **Select / edit**. **Area**: cancel the drag, then clear the rectangles, then back to **Select / edit** |
 | Area: drag | Draw a rectangle (outside one), pull a corner dot, or move the area (inside it); right mouse button moves the photo |
 
 **All points list (F3)**

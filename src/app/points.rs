@@ -304,7 +304,7 @@ impl PanoApp {
             match self.pe.pending {
                 Some((Pane::A, _)) => "Now click the same spot in the RIGHT photo – it snaps to the exact spot.",
                 Some((Pane::B, _)) => "Now click the same spot in the LEFT photo – it snaps to the exact spot.",
-                None if self.pe.fresh.is_some() && self.pe.fresh == self.pe.selected => "The new point is still selected: a click in either photo moves that side of it (Alt: no snapping). Esc or Ctrl+click starts the next point.",
+                None if self.pe.fresh.is_some_and(|f| Some(f.0) == self.pe.selected) => "The new point is still selected: a click in the photo where the program searched corrects its proposal (Alt: no snapping); a click in the photo you started in begins the next point.",
                 None => "Click a distinctive spot (a corner, a sharp detail) in either photo. Esc cancels. Alt+click: no snapping.",
             }
         } else {
